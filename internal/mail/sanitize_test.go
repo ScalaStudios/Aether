@@ -1,8 +1,12 @@
 package mail
 
 import (
+	"bytes"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/emersion/go-message/mail"
 )
 
 func TestSanitizeHTMLRemovesActiveAndRemoteContent(t *testing.T) {
@@ -17,5 +21,36 @@ func TestSanitizeHTMLRemovesActiveAndRemoteContent(t *testing.T) {
 		if !strings.Contains(out, kept) {
 			t.Errorf("sanitized output lost %q: %s", kept, out)
 		}
+	}
+}
+
+func TestBuildWithAttachmentRoundTrips(t *testing.T) {
+	o := Outgoing{
+		From: Address{Address: "a@example.test"}, To: []Address{{Address: "b@example.test"}}, Subject: "files",
+		Text: "see attached", HTML: "<p>see attached</p>",
+		Attachments: []OutgoingAttachment{{Filename: "report.pdf", ContentType: "application/pdf", Data: []byte("%PDF-1.7 bytes")}},
+	}
+	raw, _, err := o.Build("mail.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for {
+		p, err := r.NextPart()
+		if err != nil {
+			break
+		}
+		if h, ok := p.Header.(*mail.AttachmentHeader); ok {
+			name, _ := h.Filename()
+			body, _ := io.ReadAll(p.Body)
+			found = name == "report.pdf" && string(body) == "%PDF-1.7 bytes"
+		}
+	}
+	if !found {
+		t.Fatalf("attachment missing or corrupted:\n%s", raw)
 	}
 }

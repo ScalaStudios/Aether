@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
 
 func TestSafeReturnToRejectsOffsiteTargets(t *testing.T) {
@@ -70,5 +72,21 @@ func TestVerifySignature(t *testing.T) {
 	}
 	if verifySignature("", body, secret, now) || verifySignature("t=1,v1=zz", body, secret, now) {
 		t.Fatal("malformed header accepted")
+	}
+}
+
+func TestValidateAttachments(t *testing.T) {
+	list := []mailpkg.OutgoingAttachment{{Filename: `..\..\etc/passwd`, ContentType: "text/plain; charset=x", Data: []byte("x")}, {Filename: "a.bin", ContentType: "nonsense"}}
+	if msg := validateAttachments(list); msg != "" {
+		t.Fatal(msg)
+	}
+	if list[0].Filename != "passwd" || list[0].ContentType != "text/plain" || list[1].ContentType != "application/octet-stream" {
+		t.Fatalf("not normalized: %+v", list)
+	}
+	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "a\r\nBcc: x", ContentType: "text/plain"}}) == "" {
+		t.Fatal("header injection in filename accepted")
+	}
+	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "big", Data: make([]byte, maxAttachmentBytes+1)}}) == "" {
+		t.Fatal("oversized attachments accepted")
 	}
 }

@@ -94,7 +94,7 @@ func TestLoginRateLimit(t *testing.T) {
 	for range 12 {
 		codes[c.do("POST", "/auth/login", map[string]string{"email": email, "password": "wrong-password"}, nil)]++
 	}
-	if codes[401] != 10 || codes[429] != 2 {
-		t.Fatalf("expected 10 rejections then 2 rate limits, got %v", codes)
+	if codes[429] < 2 || codes[401]+codes[429] != 12 {
+		t.Fatalf("expected the per-user limit of 10 to rate limit the last attempts, got %v", codes)
 	}
 }

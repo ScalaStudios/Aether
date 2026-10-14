@@ -135,7 +135,7 @@ export function MailView() {
   function startCompose(mode: ComposeMode) {
     if (!mailbox) return
     if (mode !== "new" && !message.data) return
-    setCompose({ key: Date.now(), draft: buildDraft(mode, message.data, mailbox.address) })
+    setCompose({ key: Date.now(), draft: buildDraft(mode, message.data, mailbox.address, folder) })
   }
 
   function selectFolder(name: string) {

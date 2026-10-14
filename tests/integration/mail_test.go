@@ -159,6 +159,42 @@ func TestMailMilestone(t *testing.T) {
 		}
 	})
 
+	t.Run("attachments are sent, downloaded, and forwarded", func(t *testing.T) {
+		subject := "attachment " + randomSuffix()
+		payload := []byte("binary\x00payload " + randomSuffix())
+		w.bob.must("POST", "/mailboxes/"+w.bobMailbox+"/send", map[string]any{
+			"to": []map[string]string{{"address": alice}}, "subject": subject, "text": "see file",
+			"attachments": []map[string]any{{"filename": "report.bin", "contentType": "application/octet-stream", "data": payload}},
+		}, nil, 202)
+		var uid uint32
+		waitFor(t, "alice to receive the attachment", func() bool { uid = findInAPI(w.alice, w.aliceMailbox, "INBOX", subject); return uid != 0 })
+		var msg struct {
+			Attachments []struct {
+				Part     string `json:"part"`
+				Filename string `json:"filename"`
+			} `json:"attachments"`
+		}
+		base := "/mailboxes/" + w.aliceMailbox + "/messages/" + strconv.FormatUint(uint64(uid), 10)
+		w.alice.must("GET", base, nil, &msg, 200)
+		if len(msg.Attachments) != 1 || msg.Attachments[0].Filename != "report.bin" {
+			t.Fatalf("attachment metadata: %+v", msg.Attachments)
+		}
+		if got := w.alice.raw("GET", base+"/attachments/"+msg.Attachments[0].Part); !bytes.Equal(got, payload) {
+			t.Fatalf("downloaded %q, want %q", got, payload)
+		}
+		fwd := "Fwd: " + subject
+		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{
+			"to": []map[string]string{{"address": bob}}, "subject": fwd, "text": "forwarding",
+			"forwardFrom": map[string]any{"folder": "INBOX", "uid": uid},
+		}, nil, 202)
+		var fuid uint32
+		waitFor(t, "bob to receive the forward", func() bool { fuid = findInAPI(w.bob, w.bobMailbox, "INBOX", fwd); return fuid != 0 })
+		w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages/"+strconv.FormatUint(uint64(fuid), 10), nil, &msg, 200)
+		if len(msg.Attachments) != 1 || msg.Attachments[0].Filename != "report.bin" {
+			t.Fatalf("forward lost the attachment: %+v", msg.Attachments)
+		}
+	})
+
 	t.Run("spam is filed into Junk", func(t *testing.T) {
 		subject := "gtube " + randomSuffix()
 		body := "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"

@@ -4,8 +4,8 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
-import { Bold, Italic, Link2, List, ListOrdered, Send } from "lucide-react"
-import { useState } from "react"
+import { Bold, Italic, Link2, List, ListOrdered, Paperclip, Send, X } from "lucide-react"
+import { useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { api } from "@/lib/api"
-import { formatAddress } from "@/lib/format"
+import { formatAddress, formatBytes } from "@/lib/format"
 import type { Draft } from "@/lib/mail"
 import type { Mailbox, OutgoingMessage } from "@/lib/types"
 
@@ -31,6 +31,30 @@ const schema = z.object({
 })
 
 type Values = z.infer<typeof schema>
+
+const maxAttachmentBytes = 20 * 1024 * 1024
+
+function readBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).slice(String(reader.result).indexOf(",") + 1))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function AttachmentChip({ name, size, onRemove }: { name: string; size: number; onRemove: () => void }) {
+  return (
+    <li className="flex min-h-10 max-w-[280px] items-center gap-2 rounded-lg border border-strong py-1 pr-1 pl-3 text-sm">
+      <Paperclip aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
+      <span className="truncate">{name}</span>
+      <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(size)}</span>
+      <IconButton type="button" label={`Remove ${name}`} size="icon-sm" onClick={onRemove}>
+        <X />
+      </IconButton>
+    </li>
+  )
+}
 
 const titles: Record<Draft["mode"], string> = { new: "New message", reply: "Reply", replyAll: "Reply all", forward: "Forward" }
 
@@ -76,6 +100,22 @@ function Toolbar({ editor }: { editor: Editor }) {
 export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft: Draft; onClose: () => void }) {
   const qc = useQueryClient()
   const [showCopies, setShowCopies] = useState(draft.cc.length > 0)
+  const [files, setFiles] = useState<File[]>([])
+  const [forwarded, setForwarded] = useState(draft.forwardFrom?.attachments ?? [])
+  const [dragging, setDragging] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const totalBytes = files.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
+
+  function addFiles(list: FileList | null) {
+    if (!list?.length) return
+    const next = [...files, ...Array.from(list)]
+    const size = next.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
+    if (next.length + forwarded.length > 20 || size > maxAttachmentBytes) {
+      toast.error("Attachments can total at most 20 files and 20 MB per message.")
+      return
+    }
+    setFiles(next)
+  }
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject },
@@ -106,14 +146,17 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
     },
   })
 
-  const submit = form.handleSubmit((values) => {
+  const submit = form.handleSubmit(async (values) => {
     if (!editor) return
+    const attachments = await Promise.all(files.map(async (f) => ({ filename: f.name, contentType: f.type || "application/octet-stream", data: await readBase64(f) })))
     send.mutate({
       ...values,
       html: editor.getHTML(),
       text: editor.getText({ blockSeparator: "\n\n" }),
       inReplyTo: draft.inReplyTo,
       references: draft.references?.length ? draft.references : undefined,
+      attachments: attachments.length ? attachments : undefined,
+      forwardFrom: draft.forwardFrom && forwarded.length ? { folder: draft.forwardFrom.folder, uid: draft.forwardFrom.uid } : undefined,
     })
   })
 
@@ -131,12 +174,28 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 sm:max-w-[800px]">
+      <SheetContent side="right" className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[800px]">
         <SheetHeader className="border-b border-border p-6">
           <SheetTitle>{titles[draft.mode]}</SheetTitle>
           <SheetDescription>From {formatAddress({ name: mailbox.displayName, address: mailbox.address })}</SheetDescription>
         </SheetHeader>
-        <form onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
+        <form
+          onSubmit={submit}
+          noValidate
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes("Files")) return
+            e.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return
+            e.preventDefault()
+            setDragging(false)
+            addFiles(e.dataTransfer.files)
+          }}
+          className={`flex min-h-0 flex-1 flex-col transition-colors duration-160 ${dragging ? "bg-primary/5" : ""}`}
+        >
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
             {recipientField("to", "To")}
             {showCopies ? (
@@ -156,8 +215,29 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
               {editor && <Toolbar editor={editor} />}
               <EditorContent editor={editor} />
             </div>
+            {(files.length > 0 || forwarded.length > 0) && (
+              <ul aria-label="Attachments" className="flex flex-wrap gap-2">
+                {forwarded.map((a) => (
+                  <AttachmentChip key={a.part} name={a.filename} size={a.size} onRemove={() => setForwarded([])} />
+                ))}
+                {files.map((f, i) => (
+                  <AttachmentChip key={`${f.name}-${i}`} name={f.name} size={f.size} onRemove={() => setFiles(files.filter((_, j) => j !== i))} />
+                ))}
+              </ul>
+            )}
           </div>
-          <div className="flex justify-end gap-3 border-t border-border p-6">
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border p-6">
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => {
+              addFiles(e.target.files)
+              e.target.value = ""
+            }} />
+            <div className="mr-auto flex items-center gap-3">
+              <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()}>
+                <Paperclip aria-hidden />
+                Attach
+              </Button>
+              {totalBytes > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{formatBytes(totalBytes)} of 20 MB</span>}
+            </div>
             <Button type="button" variant="secondary" onClick={onClose}>
               Discard
             </Button>

@@ -170,6 +170,8 @@ export interface OutgoingMessage {
   html?: string
   inReplyTo?: string
   references?: string[]
+  attachments?: { filename: string; contentType: string; data: string }[]
+  forwardFrom?: { folder: string; uid: number }
 }
 
 export interface GroupMapping {

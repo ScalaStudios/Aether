@@ -830,6 +830,24 @@ components:
         html: { type: string }
         inReplyTo: { type: string }
         references: { type: array, items: { type: string } }
+        attachments:
+          type: array
+          maxItems: 20
+          description: Up to 20 files and 20 MB in total, including forwarded attachments.
+          items:
+            type: object
+            required: [filename, data]
+            properties:
+              filename: { type: string }
+              contentType: { type: string }
+              data: { type: string, format: byte, description: Base64-encoded file contents }
+        forwardFrom:
+          type: object
+          description: Attach every attachment of this message in the same mailbox, read on the server.
+          required: [folder, uid]
+          properties:
+            folder: { type: string }
+            uid: { type: integer }
     IdentityProvider:
       type: object
       required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]

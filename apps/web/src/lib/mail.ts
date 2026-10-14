@@ -1,7 +1,7 @@
 import { Archive, File, Folder as FolderIcon, Inbox, OctagonAlert, Send, Trash2, type LucideIcon } from "lucide-react"
 
 import { formatAddress, formatDateTime } from "@/lib/format"
-import type { Address, Folder, Message, SpecialUse } from "@/lib/types"
+import type { Address, Attachment, Folder, Message, SpecialUse } from "@/lib/types"
 
 export const folderIcons: Record<SpecialUse, LucideIcon> = {
   inbox: Inbox,
@@ -34,6 +34,7 @@ export interface Draft {
   html: string
   inReplyTo?: string
   references?: string[]
+  forwardFrom?: { folder: string; uid: number; attachments: Attachment[] }
 }
 
 function escapeHtml(text: string) {
@@ -67,7 +68,7 @@ function withoutSelf(addresses: Address[], self: string) {
   })
 }
 
-export function buildDraft(mode: ComposeMode, source: Message | undefined, self: string): Draft {
+export function buildDraft(mode: ComposeMode, source: Message | undefined, self: string, folder: string): Draft {
   const empty: Draft = { mode, to: [], cc: [], bcc: [], subject: "", html: "" }
   if (mode === "new" || !source) return { ...empty, mode: "new" }
 
@@ -84,6 +85,7 @@ export function buildDraft(mode: ComposeMode, source: Message | undefined, self:
     return {
       ...empty,
       subject: prefixed("Fwd", source.subject),
+      forwardFrom: source.attachments.length ? { folder, uid: source.uid, attachments: source.attachments } : undefined,
       html: `<p></p><p>${header.map(escapeHtml).join("<br>")}</p>${textToHtml(bodyText(source))}`,
     }
   }

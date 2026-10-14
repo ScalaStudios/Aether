@@ -2,8 +2,10 @@ package api
 
 import (
 	"errors"
+	"mime"
 	"net/http"
 	"net/mail"
+	"path"
 	"strconv"
 	"strings"
 
@@ -224,16 +226,25 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	var in struct {
-		To         []mailpkg.Address `json:"to"`
-		Cc         []mailpkg.Address `json:"cc"`
-		Bcc        []mailpkg.Address `json:"bcc"`
-		Subject    string            `json:"subject"`
-		Text       string            `json:"text"`
-		HTML       string            `json:"html"`
-		InReplyTo  string            `json:"inReplyTo"`
-		References []string          `json:"references"`
+		To          []mailpkg.Address `json:"to"`
+		Cc          []mailpkg.Address `json:"cc"`
+		Bcc         []mailpkg.Address `json:"bcc"`
+		Subject     string            `json:"subject"`
+		Text        string            `json:"text"`
+		HTML        string            `json:"html"`
+		InReplyTo   string            `json:"inReplyTo"`
+		References  []string          `json:"references"`
+		Attachments []struct {
+			Filename    string `json:"filename"`
+			ContentType string `json:"contentType"`
+			Data        []byte `json:"data"`
+		} `json:"attachments"`
+		ForwardFrom *struct {
+			Folder string `json:"folder"`
+			UID    uint32 `json:"uid"`
+		} `json:"forwardFrom"`
 	}
-	if !decode(w, r, 10<<20, &in) {
+	if !decode(w, r, 30<<20, &in) {
 		return
 	}
 	out := mailpkg.Outgoing{From: mailpkg.Address{Name: m.DisplayName, Address: m.Address}, Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo}
@@ -263,6 +274,33 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if in.HTML != "" {
 		out.HTML = mailpkg.SanitizeHTML(in.HTML)
 	}
+	for _, a := range in.Attachments {
+		out.Attachments = append(out.Attachments, mailpkg.OutgoingAttachment{Filename: a.Filename, ContentType: a.ContentType, Data: a.Data})
+	}
+	if in.ForwardFrom != nil {
+		original, err := s.mail.Get(m.Address, in.ForwardFrom.Folder, in.ForwardFrom.UID)
+		if err != nil {
+			s.mailError(w, r, err)
+			return
+		}
+		for _, meta := range original.Attachments {
+			var part []int
+			for _, seg := range strings.Split(meta.Part, ".") {
+				n, _ := strconv.Atoi(seg)
+				part = append(part, n)
+			}
+			a, err := s.mail.Attachment(m.Address, in.ForwardFrom.Folder, in.ForwardFrom.UID, part)
+			if err != nil {
+				s.mailError(w, r, err)
+				return
+			}
+			out.Attachments = append(out.Attachments, mailpkg.OutgoingAttachment{Filename: a.Filename, ContentType: a.ContentType, Data: a.Body})
+		}
+	}
+	if msg := validateAttachments(out.Attachments); msg != "" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_attachments", msg)
+		return
+	}
 	raw, messageID, err := out.Build(s.cfg.MailHostname)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -280,6 +318,35 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		s.mail.MarkAnswered(m.Address, out.InReplyTo)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"messageId": messageID})
+}
+
+const (
+	maxAttachments     = 20
+	maxAttachmentBytes = 20 << 20
+)
+
+func validateAttachments(list []mailpkg.OutgoingAttachment) string {
+	if len(list) > maxAttachments {
+		return "Attach 20 files or fewer per message."
+	}
+	total := 0
+	for i := range list {
+		a := &list[i]
+		total += len(a.Data)
+		a.Filename = strings.TrimSpace(path.Base(strings.ReplaceAll(a.Filename, "\\", "/")))
+		if a.Filename == "" || a.Filename == "." || a.Filename == "/" || strings.ContainsAny(a.Filename, "\r\n\x00") || len(a.Filename) > 255 {
+			return "One of the attachments has an invalid file name."
+		}
+		if mt, _, err := mime.ParseMediaType(a.ContentType); err != nil || !strings.Contains(mt, "/") {
+			a.ContentType = "application/octet-stream"
+		} else {
+			a.ContentType = mt
+		}
+	}
+	if total > maxAttachmentBytes {
+		return "Attachments can total at most 20 MB per message."
+	}
+	return ""
 }
 
 func validMessageID(v string) bool {

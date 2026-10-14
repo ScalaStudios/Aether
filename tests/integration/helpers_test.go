@@ -88,6 +88,18 @@ func (c *apiClient) do(method, path string, body any, out any) int {
 	return resp.StatusCode
 }
 
+func (c *apiClient) raw(method, path string) []byte {
+	c.t.Helper()
+	req, _ := http.NewRequest(method, c.base+path, nil)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return body
+}
+
 func (c *apiClient) must(method, path string, body any, out any, want int) {
 	c.t.Helper()
 	if got := c.do(method, path, body, out); got != want {

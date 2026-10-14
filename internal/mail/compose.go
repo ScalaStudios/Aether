@@ -10,16 +10,23 @@ import (
 	"github.com/emersion/go-message/mail"
 )
 
+type OutgoingAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 type Outgoing struct {
-	From       Address
-	To         []Address
-	Cc         []Address
-	Bcc        []Address
-	Subject    string
-	Text       string
-	HTML       string
-	InReplyTo  string
-	References []string
+	From        Address
+	To          []Address
+	Cc          []Address
+	Bcc         []Address
+	Subject     string
+	Text        string
+	HTML        string
+	InReplyTo   string
+	References  []string
+	Attachments []OutgoingAttachment
 }
 
 func mailAddresses(in []Address) []*mail.Address {
@@ -59,7 +66,7 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	}
 	h.Set("User-Agent", "Aether")
 	var buf bytes.Buffer
-	if o.HTML == "" {
+	if len(o.Attachments) == 0 && o.HTML == "" {
 		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 		w, err := mail.CreateSingleInlineWriter(&buf, h)
 		if err != nil {
@@ -68,19 +75,62 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 		w.Write([]byte(o.Text))
 		return buf.Bytes(), messageID, w.Close()
 	}
-	w, err := mail.CreateInlineWriter(&buf, h)
+	if len(o.Attachments) == 0 {
+		w, err := mail.CreateInlineWriter(&buf, h)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := o.writeBody(w); err != nil {
+			return nil, "", err
+		}
+		return buf.Bytes(), messageID, w.Close()
+	}
+	w, err := mail.CreateWriter(&buf, h)
 	if err != nil {
 		return nil, "", err
 	}
-	for _, part := range []struct{ typ, body string }{{"text/plain", o.Text}, {"text/html", o.HTML}} {
+	iw, err := w.CreateInline()
+	if err != nil {
+		return nil, "", err
+	}
+	if err := o.writeBody(iw); err != nil {
+		return nil, "", err
+	}
+	if err := iw.Close(); err != nil {
+		return nil, "", err
+	}
+	for _, a := range o.Attachments {
+		var ah mail.AttachmentHeader
+		ah.SetContentType(a.ContentType, nil)
+		ah.SetFilename(a.Filename)
+		aw, err := w.CreateAttachment(ah)
+		if err != nil {
+			return nil, "", err
+		}
+		aw.Write(a.Data)
+		if err := aw.Close(); err != nil {
+			return nil, "", err
+		}
+	}
+	return buf.Bytes(), messageID, w.Close()
+}
+
+func (o *Outgoing) writeBody(w *mail.InlineWriter) error {
+	parts := []struct{ typ, body string }{{"text/plain", o.Text}}
+	if o.HTML != "" {
+		parts = append(parts, struct{ typ, body string }{"text/html", o.HTML})
+	}
+	for _, part := range parts {
 		var ph mail.InlineHeader
 		ph.SetContentType(part.typ, map[string]string{"charset": "utf-8"})
 		pw, err := w.CreatePart(ph)
 		if err != nil {
-			return nil, "", err
+			return err
 		}
 		pw.Write([]byte(part.body))
-		pw.Close()
+		if err := pw.Close(); err != nil {
+			return err
+		}
 	}
-	return buf.Bytes(), messageID, w.Close()
+	return nil
 }
