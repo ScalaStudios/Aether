@@ -61,7 +61,7 @@ We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because 
 | Boundary | Control |
 | --- | --- |
 | Internet → Postfix 25 | `mynetworks` is loopback only. Unauthenticated clients may relay only to Aether's own verified domains. Unknown recipients are rejected. |
-| Internet → submission 587/465 | TLS is required before AUTH. SASL is checked by Dovecot against SHA-256 hashes of app passwords; Dovecot computes the hash, so the plaintext never reaches PostgreSQL. `reject_sender_login_mismatch` binds MAIL FROM to the authenticated mailbox. |
+| Internet → submission 587/465 | TLS is required before AUTH. SASL is checked by Dovecot against SHA-256 hashes of app passwords; Dovecot computes the hash, so the plaintext never reaches PostgreSQL. `reject_sender_login_mismatch` binds MAIL FROM to the authenticated mailbox, and an Rspamd rule rejects authenticated mail whose header From differs from MAIL FROM. |
 | Internet → IMAP 143/993 | `ssl = required`, and plaintext auth is disabled without TLS. Only app passwords are accepted. Web passwords and OIDC tokens are not mail credentials. |
 | Browser → API | The `aether_session` cookie is HttpOnly and SameSite=Lax, and also Secure when the public URL uses https. The database stores only a SHA-256 of the session token. Every state-changing request needs an `X-CSRF-Token` header that is bound to the session. |
 | API → Dovecot / Postfix | The API connects over TLS and verifies the mail certificate against `AETHER_MAIL_TLS_CA_FILE` or the system roots. It logs in as `<mailbox>*aether-webmail` with the Dovecot master password, and Dovecot accepts that login only from private networks. The API opens a mailbox only when the signed-in user owns it. |
@@ -106,5 +106,4 @@ There is no benchmark harness yet; it is part of Phase 4. In development, the in
 
 - The API opens one IMAP connection per request, with no pooling. This is adequate for small installations and will be replaced with a pooled connection per user.
 - The login and send rate limits are in-process. With several API replicas, the limits apply per replica.
-- Postfix applies sender-login checks to the envelope sender. Rspamd signs with DKIM only when the header From domain matches the authenticated user's domain, but it does not reject mail whose header From is forged.
 - Forwarding aliases to external addresses do not rewrite the sender (no SRS), so strict SPF at the receiver may reject forwarded mail.

@@ -1,6 +1,7 @@
 FROM rspamd/rspamd:latest
 USER root
 COPY local.d/ /etc/rspamd/local.d/
+COPY rspamd.local.lua /etc/rspamd/rspamd.local.lua
 COPY entrypoint.sh /usr/local/bin/aether-rspamd-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/aether-rspamd-entrypoint.sh \
  && touch /etc/rspamd/local.d/redis.conf \
