@@ -103,7 +103,15 @@ func serve(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
+	if cfg.MetricsListen != "" {
+		metrics := &http.Server{Addr: cfg.MetricsListen, Handler: api.MetricsHandler(), ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			log.Info("metrics listening", "addr", cfg.MetricsListen)
+			errCh <- metrics.ListenAndServe()
+		}()
+		defer metrics.Close()
+	}
 	go func() {
 		log.Info("aether api listening", "addr", cfg.Listen, "public_url", cfg.PublicURL.String())
 		errCh <- httpServer.ListenAndServe()

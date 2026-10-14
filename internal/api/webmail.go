@@ -58,6 +58,7 @@ func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "The folder or message no longer exists. It may have been moved or deleted from another client.")
 		return
 	}
+	mailBackendErrs.Inc()
 	s.log.Error("mail backend request failed", "path", r.URL.Path, "err", err)
 	writeError(w, http.StatusBadGateway, "mail_unavailable", "The mail server did not respond as expected. Try again in a moment.")
 }
@@ -323,10 +324,12 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	if err := s.mail.Send(out.From, out.Recipients(), raw); err != nil {
+		mailSends.WithLabelValues("rejected").Inc()
 		s.log.Warn("submission rejected", "mailbox", m.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "send_failed", "The mail server did not accept the message: "+err.Error())
 		return
 	}
+	mailSends.WithLabelValues("accepted").Inc()
 	if err := s.mail.SaveSent(m.Address, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", m.ID, "err", err)
 	}

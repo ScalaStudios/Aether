@@ -41,6 +41,7 @@ func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *princip
 		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address))
 	})
 	if err != nil {
+		mailBackendErrs.Inc()
 		s.log.Error("installing mail rules failed", "mailbox", m.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "rules_not_saved", "The settings could not be installed on the mail server. Nothing was changed; try again.")
 		return

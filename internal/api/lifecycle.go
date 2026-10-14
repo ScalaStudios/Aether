@@ -127,6 +127,7 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
 	if err != nil || !verifySignature(r.Header.Get("Halo-Signature"), body, secret, time.Now()) {
+		webhookEvents.WithLabelValues("rejected").Inc()
 		writeError(w, http.StatusUnauthorized, "invalid_signature", "The webhook signature is missing, expired, or wrong.")
 		return
 	}
@@ -178,6 +179,7 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	webhookEvents.WithLabelValues("applied").Inc()
 	s.audit(r.Context(), r, nil, nil, "identity_provider.event", "user", userID, map[string]any{"event": event.Type, "eventId": event.ID})
 	w.WriteHeader(http.StatusNoContent)
 }

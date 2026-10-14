@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	Listen                string
+	MetricsListen         string
 	DatabaseURL           string
 	PublicURL             *url.URL
 	SecretKey             []byte
@@ -31,6 +32,7 @@ type Config struct {
 func Load() (*Config, error) {
 	c := &Config{
 		Listen:                env("AETHER_LISTEN", ":8080"),
+		MetricsListen:         os.Getenv("AETHER_METRICS_LISTEN"),
 		DatabaseURL:           os.Getenv("AETHER_DATABASE_URL"),
 		MailHostname:          strings.ToLower(os.Getenv("AETHER_MAIL_HOSTNAME")),
 		IMAPAddr:              env("AETHER_IMAP_ADDR", "dovecot:143"),

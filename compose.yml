@@ -121,6 +121,7 @@ services:
       AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
       AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
       AETHER_TRUST_PROXY: "true"
+      AETHER_METRICS_LISTEN: ":9090"
       AETHER_LOCAL_LOGIN: ${AETHER_LOCAL_LOGIN:-true}
       AETHER_OIDC_ALLOW_HTTP: ${AETHER_OIDC_ALLOW_HTTP:-false}
     volumes:
@@ -175,7 +176,38 @@ services:
       - postfix
       - dovecot
 
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - api
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana-oss:latest
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${AETHER_GRAFANA_PASSWORD:?run scripts/setup.sh or add AETHER_GRAFANA_PASSWORD to .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:${AETHER_GRAFANA_PORT:-3300}:3000"
+    volumes:
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
+  prometheus-data:
+  grafana-data:
   gomodcache:
   gobuildcache:
   pgdata:

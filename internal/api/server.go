@@ -120,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/admin/identity-providers/{id}", s.deleteIdentityProvider)
 	authed("PATCH /api/v1/admin/users/{id}", s.updateUserStatus)
 
-	return securityHeaders(mux)
+	return instrument(securityHeaders(mux))
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {

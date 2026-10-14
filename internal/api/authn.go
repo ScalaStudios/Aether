@@ -88,6 +88,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if hash == "" {
+		authAttempts.WithLabelValues("password", "failure").Inc()
 		auth.BurnPasswordCheck(in.Password)
 		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", email, nil)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
@@ -95,6 +96,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	ok, err := auth.VerifyPassword(hash, in.Password)
 	if err != nil || !ok {
+		authAttempts.WithLabelValues("password", "failure").Inc()
 		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", userID, nil)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
 		return
@@ -108,6 +110,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	authAttempts.WithLabelValues("password", "success").Inc()
 	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": "password"})
 	resp, err := s.sessionFor(r.Context(), userID)
 	if err != nil {

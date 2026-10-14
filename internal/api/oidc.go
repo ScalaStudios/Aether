@@ -230,6 +230,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if code != "" {
+		authAttempts.WithLabelValues("oidc", "failure").Inc()
 		s.audit(r.Context(), r, nil, nil, "auth.oidc.rejected", "identity", p.Slug+":"+claims.Subject, map[string]any{"reason": code})
 		s.loginRedirect(w, r, code)
 		return
@@ -238,6 +239,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	authAttempts.WithLabelValues("oidc", "success").Inc()
 	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": "oidc", "provider": p.Slug})
 	http.Redirect(w, r, safeReturnTo(returnTo), http.StatusFound)
 }

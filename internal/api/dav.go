@@ -60,6 +60,9 @@ func (s *Server) serveDAV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, ok := s.davAuthenticate(r)
+	if !ok && r.Header.Get("Authorization") != "" {
+		authAttempts.WithLabelValues("dav", "failure").Inc()
+	}
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Aether", charset="UTF-8"`)
 		http.Error(w, "Sign in with your mailbox address and an app password.", http.StatusUnauthorized)
