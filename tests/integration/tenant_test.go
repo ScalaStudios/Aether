@@ -80,8 +80,7 @@ func TestCSRFAndSessionRequired(t *testing.T) {
 	if got := anon.do("GET", "/session", nil, nil); got != 401 {
 		t.Fatalf("anonymous session returned %d", got)
 	}
-	c := newClient(t)
-	c.login(env(t, "AETHER_TEST_ADMIN_EMAIL", ""), env(t, "AETHER_TEST_ADMIN_PASSWORD", ""))
+	c := adminClient(t)
 	c.csrf = ""
 	if got := c.do("POST", "/organizations", map[string]string{"name": "x", "slug": "csrf-" + randomSuffix()}, nil); got != 403 {
 		t.Fatalf("state change without CSRF token returned %d", got)

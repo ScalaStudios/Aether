@@ -21,8 +21,7 @@ type world struct {
 }
 
 func setupWorld(t *testing.T) *world {
-	w := &world{admin: newClient(t)}
-	w.admin.login(env(t, "AETHER_TEST_ADMIN_EMAIL", ""), env(t, "AETHER_TEST_ADMIN_PASSWORD", ""))
+	w := &world{admin: adminClient(t)}
 	suffix := randomSuffix()
 	var org idOnly
 	w.admin.must("POST", "/organizations", map[string]string{"name": "Integration " + suffix, "slug": "it-" + suffix}, &org, 201)

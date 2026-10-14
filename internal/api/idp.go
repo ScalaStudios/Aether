@@ -32,6 +32,8 @@ type identityProvider struct {
 	GroupMappings   []groupMapping `json:"groupMappings"`
 	Enabled         bool           `json:"enabled"`
 	RedirectURI     string         `json:"redirectUri"`
+	HasWebhook      bool           `json:"hasWebhookSecret"`
+	WebhookURL      string         `json:"webhookUrl"`
 }
 
 type identityProviderInput struct {
@@ -41,6 +43,7 @@ type identityProviderInput struct {
 	Issuer        string         `json:"issuer"`
 	ClientID      string         `json:"clientId"`
 	ClientSecret  *string        `json:"clientSecret"`
+	WebhookSecret *string        `json:"webhookSecret"`
 	Scopes        []string       `json:"scopes"`
 	AutoProvision bool           `json:"autoProvision"`
 	AdminGroup    string         `json:"adminGroup"`
@@ -53,6 +56,7 @@ func (s *Server) toIdentityProvider(p *providerRow) identityProvider {
 		ID: p.ID, Slug: p.Slug, Name: p.Name, Kind: p.Kind, Issuer: p.Issuer, ClientID: p.ClientID,
 		HasClientSecret: len(p.ClientSecret) > 0, Scopes: p.Scopes, AutoProvision: p.AutoProvision,
 		AdminGroup: p.AdminGroup, GroupMappings: nonNil(p.GroupMappings), Enabled: p.Enabled, RedirectURI: s.redirectURI(p.Slug),
+		HasWebhook: len(p.WebhookSecret) > 0, WebhookURL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/api/v1/hooks/identity-providers/" + p.Slug,
 	}
 }
 
@@ -176,6 +180,15 @@ func (s *Server) saveIdentityProvider(w http.ResponseWriter, r *http.Request, p 
 				return pgx.ErrNoRows
 			}
 		}
+		if in.WebhookSecret != nil {
+			var sealed []byte
+			if *in.WebhookSecret != "" {
+				sealed = s.box.Seal([]byte(*in.WebhookSecret), "oidc-webhook:"+id)
+			}
+			if _, err := tx.Exec(r.Context(), `UPDATE oidc_providers SET webhook_secret = $2 WHERE id = $1`, id, sealed); err != nil {
+				return err
+			}
+		}
 		if in.ClientSecret != nil {
 			var sealed []byte
 			if *in.ClientSecret != "" {
@@ -208,7 +221,7 @@ func (s *Server) saveIdentityProvider(w http.ResponseWriter, r *http.Request, p 
 	if r.Method == http.MethodPost {
 		status, action = http.StatusCreated, "identity_provider.create"
 	}
-	s.audit(r.Context(), r, p, nil, action, "identity_provider", id, map[string]any{"slug": in.Slug, "issuer": in.Issuer, "secretChanged": in.ClientSecret != nil})
+	s.audit(r.Context(), r, p, nil, action, "identity_provider", id, map[string]any{"slug": in.Slug, "issuer": in.Issuer, "secretChanged": in.ClientSecret != nil, "webhookSecretChanged": in.WebhookSecret != nil})
 	writeJSON(w, status, s.toIdentityProvider(row))
 }
 

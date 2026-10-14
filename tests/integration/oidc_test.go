@@ -103,6 +103,33 @@ func (f *fakeIssuer) token(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"access_token": "at-" + randomSuffix(), "token_type": "Bearer", "expires_in": 300, "id_token": idToken})
 }
 
+func oidcAuthorize(t *testing.T, f *fakeIssuer, slug string) (*apiClient, string, url.Values) {
+	t.Helper()
+	browser := newClient(t)
+	browser.http.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	start, err := browser.http.Get(browser.base + "/auth/oidc/" + slug + "/start?return_to=/mail")
+	if err != nil || start.StatusCode != http.StatusFound {
+		t.Fatalf("start: %v %v", err, start)
+	}
+	code, q := f.authorize(start.Header.Get("Location"))
+	return browser, browser.base + "/auth/oidc/" + slug + "/callback?code=" + url.QueryEscape(code) + "&state=" + url.QueryEscape(q.Get("state")), q
+}
+
+func oidcLogin(t *testing.T, f *fakeIssuer, slug string) *apiClient {
+	t.Helper()
+	browser, callback, _ := oidcAuthorize(t, f, slug)
+	resp, err := browser.http.Get(callback)
+	if err != nil || resp.Header.Get("Location") != "/mail" {
+		t.Fatalf("oidc login failed: %v %v", err, resp)
+	}
+	var s struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	browser.must("GET", "/session", nil, &s, 200)
+	browser.csrf = s.CSRFToken
+	return browser
+}
+
 func TestOIDCLoginWithPKCE(t *testing.T) {
 	w := setupWorld(t)
 	f := startFakeIssuer(t)
@@ -122,17 +149,10 @@ func TestOIDCLoginWithPKCE(t *testing.T) {
 	defer w.admin.do("DELETE", "/admin/identity-providers/"+provider.ID, nil, nil)
 
 	f.subject, f.email, f.groups = "halo-"+randomSuffix(), "carol@"+w.domain, []string{"mail-admins"}
-	browser := newClient(t)
-	browser.http.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	start, err := browser.http.Get(browser.base + "/auth/oidc/" + slug + "/start?return_to=/mail")
-	if err != nil || start.StatusCode != http.StatusFound {
-		t.Fatalf("start: %v %v", err, start)
-	}
-	code, q := f.authorize(start.Header.Get("Location"))
+	browser, callback, q := oidcAuthorize(t, f, slug)
 	if q.Get("redirect_uri") != provider.RedirectURI {
 		t.Fatalf("redirect_uri %q, want %q", q.Get("redirect_uri"), provider.RedirectURI)
 	}
-	callback := browser.base + "/auth/oidc/" + slug + "/callback?code=" + url.QueryEscape(code) + "&state=" + url.QueryEscape(q.Get("state"))
 
 	attacker := newClient(t)
 	attacker.http.CheckRedirect = browser.http.CheckRedirect

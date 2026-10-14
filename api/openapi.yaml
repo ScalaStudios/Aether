@@ -86,7 +86,7 @@ paths:
         - { name: code, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string } }
       responses:
-        "302": { description: Redirect into the application, or to /login?error=<code> }
+        "302": { description: "Redirect into the application, or to /login?error=<code>" }
   /auth/logout:
     post:
       tags: [auth]
@@ -565,6 +565,36 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "204": { description: Deleted }
+  /admin/users/{id}:
+    patch:
+      tags: [members]
+      summary: Suspend or restore an account everywhere (platform administrators only). Suspension ends all sessions and blocks app passwords.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        "204": { description: Saved }
+        "422": { $ref: "#/components/responses/Error" }
+  /hooks/identity-providers/{slug}:
+    post:
+      tags: [identity-providers]
+      security: []
+      summary: Receive signed lifecycle events from an identity provider (Halo webhook format)
+      description: >-
+        Requires the Halo-Signature header, t=<unix seconds>,v1=<hex HMAC-SHA256 of "t." + body> using the provider's webhook secret, within five minutes.
+        user.suspend, scim.user.suspend and scim.user.deprovision suspend the linked account; user.restore and scim.user.restore restore it only if the provider suspended it;
+        session.revoke ends its sessions. Duplicate event ids are ignored.
+      parameters: [{ name: slug, in: path, required: true, schema: { type: string } }]
+      responses:
+        "204": { description: Accepted }
+        "401": { $ref: "#/components/responses/Error" }
   /admin/identity-providers/discover:
     post:
       tags: [identity-providers]
@@ -802,7 +832,7 @@ components:
         references: { type: array, items: { type: string } }
     IdentityProvider:
       type: object
-      required: [id, slug, name, kind, issuer, clientId, hasClientSecret, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]
+      required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]
       properties:
         id: { type: string, format: uuid }
         slug: { type: string }
@@ -811,6 +841,8 @@ components:
         issuer: { type: string }
         clientId: { type: string }
         hasClientSecret: { type: boolean }
+        hasWebhookSecret: { type: boolean }
+        webhookUrl: { type: string }
         scopes: { type: array, items: { type: string } }
         autoProvision: { type: boolean }
         adminGroup: { type: string }
@@ -827,6 +859,7 @@ components:
         issuer: { type: string }
         clientId: { type: string }
         clientSecret: { type: string, description: Write-only. Omit on update to keep the stored secret. }
+        webhookSecret: { type: string, description: Write-only signing secret for lifecycle webhooks. Omit to keep, empty string to remove. }
         scopes: { type: array, items: { type: string } }
         autoProvision: { type: boolean }
         adminGroup: { type: string }

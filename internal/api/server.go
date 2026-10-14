@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("GET /api/v1/auth/oidc/{slug}/start", s.oidcStart)
 	mux.HandleFunc("GET /api/v1/auth/oidc/{slug}/callback", s.oidcCallback)
+	mux.HandleFunc("POST /api/v1/hooks/identity-providers/{slug}", s.providerWebhook)
 
 	authed := func(pattern string, h func(http.ResponseWriter, *http.Request, *principal)) {
 		mux.HandleFunc(pattern, s.withPrincipal(h))
@@ -98,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/admin/identity-providers/discover", s.discoverIdentityProvider)
 	authed("PUT /api/v1/admin/identity-providers/{id}", s.updateIdentityProvider)
 	authed("DELETE /api/v1/admin/identity-providers/{id}", s.deleteIdentityProvider)
+	authed("PATCH /api/v1/admin/users/{id}", s.updateUserStatus)
 
 	return securityHeaders(mux)
 }

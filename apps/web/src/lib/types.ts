@@ -186,6 +186,8 @@ export interface IdentityProvider {
   issuer: string
   clientId: string
   hasClientSecret: boolean
+  hasWebhookSecret: boolean
+  webhookUrl: string
   scopes: string[]
   autoProvision: boolean
   adminGroup: string
@@ -201,6 +203,7 @@ export interface IdentityProviderInput {
   issuer: string
   clientId: string
   clientSecret?: string
+  webhookSecret?: string
   scopes?: string[]
   autoProvision?: boolean
   adminGroup?: string

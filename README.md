@@ -16,7 +16,7 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 | Mailbox access | **Dovecot 2.3**:<br>• IMAP on 143 (STARTTLS) and 993 (implicit TLS).<br>• Maildir storage, special-use folders, quotas, and LMTP delivery.<br>• A Sieve rule that files spam into Junk. |
 | Filtering and signing | **Rspamd**:<br>• A milter that scores and filters spam.<br>• DKIM signing with per-domain RSA-2048 keys that Aether generates.<br>• ARC signing and outbound rate limiting. |
 | Control plane | **Go API** (`cmd/aether`):<br>• Organizations, domains, mailboxes, aliases, members, and the audit log.<br>• DNS record guidance and a live DNS check.<br>• Domain ownership verification. |
-| Authentication | • Local accounts with Argon2id password hashing.<br>• OpenID Connect sign-in using the authorization code flow with PKCE S256, nonce checking, and state bound to the browser.<br>• Halo and generic OIDC providers, with group-to-role mapping and optional auto-provisioning.<br>• Mailbox-scoped app passwords for IMAP and SMTP. |
+| Authentication | • Local accounts with Argon2id password hashing.<br>• Account suspension from the console, and automatically from signed Halo webhooks.<br>• OpenID Connect sign-in using the authorization code flow with PKCE S256, nonce checking, and state bound to the browser.<br>• Halo and generic OIDC providers, with group-to-role mapping and optional auto-provisioning.<br>• Mailbox-scoped app passwords for IMAP and SMTP. |
 | Webmail | **Aether Mail** (Next.js):<br>• Folders, paged message list, and server-side search.<br>• Sanitized HTML rendering with remote content blocked.<br>• Attachment download.<br>• Compose, reply, reply all, and forward.<br>• Flags, move, delete, and keyboard shortcuts. |
 | Administration | **Admin console**:<br>• Domains with DNS status, mailboxes, aliases, members, and the audit log.<br>• Identity providers, including a Halo setup wizard. |
 | Deployment | • Docker Compose stack with health checks and persistent volumes.<br>• Generated secrets and self-signed TLS for development. |
@@ -26,7 +26,7 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 - **Shared mailboxes and delegation:** delegated access, distribution lists, mail rules in the UI, drafts autosave, scheduled send, snooze, and threading.
 - **Calendar, contacts, files, and office:** calendar with CalDAV, contacts with CardDAV, file storage, and office suite integration.
 - **Token-based mail login:** SASL OAUTHBEARER or XOAUTH2 for IMAP and SMTP, using Halo access tokens. App passwords are the protocol credential today.
-- **Halo account lifecycle:** handling Halo webhooks and SCIM, so that suspending a Halo account also revokes Aether sessions immediately. Today a suspended account cannot sign in again, but existing sessions last until they expire, up to 12 hours.
+- **SCIM provisioning:** Halo can push users to Aether over SCIM. Suspensions already arrive through Halo webhooks.
 - **Operations:**
   - Kubernetes Helm chart
   - Prometheus metrics and OpenTelemetry tracing

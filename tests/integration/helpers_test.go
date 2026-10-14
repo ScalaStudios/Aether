@@ -95,6 +95,21 @@ func (c *apiClient) must(method, path string, body any, out any, want int) {
 	}
 }
 
+var adminSession struct {
+	jar  http.CookieJar
+	csrf string
+}
+
+func adminClient(t *testing.T) *apiClient {
+	c := newClient(t)
+	if adminSession.jar == nil {
+		c.login(env(t, "AETHER_TEST_ADMIN_EMAIL", ""), env(t, "AETHER_TEST_ADMIN_PASSWORD", ""))
+		adminSession.jar, adminSession.csrf = c.http.Jar, c.csrf
+	}
+	c.http.Jar, c.csrf = adminSession.jar, adminSession.csrf
+	return c
+}
+
 func (c *apiClient) login(email, password string) {
 	c.t.Helper()
 	var s struct {

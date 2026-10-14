@@ -1,6 +1,13 @@
 package api
 
-import "testing"
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"strconv"
+	"testing"
+	"time"
+)
 
 func TestSafeReturnToRejectsOffsiteTargets(t *testing.T) {
 	cases := map[string]string{
@@ -40,5 +47,28 @@ func TestRecordMatches(t *testing.T) {
 		if got := recordMatches(c.rec, c.found, "mail.example.com"); got != c.want {
 			t.Errorf("%s %q = %v, want %v", c.rec.Purpose, c.found, got, c.want)
 		}
+	}
+}
+
+func TestVerifySignature(t *testing.T) {
+	secret, body, now := []byte("whsec"), []byte(`{"id":"evt_1"}`), time.Unix(1_800_000_000, 0)
+	sign := func(at time.Time, b []byte) string {
+		mac := hmac.New(sha256.New, secret)
+		ts := strconv.FormatInt(at.Unix(), 10)
+		mac.Write([]byte(ts + "."))
+		mac.Write(b)
+		return "t=" + ts + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	if !verifySignature(sign(now, body), body, secret, now) {
+		t.Fatal("valid signature rejected")
+	}
+	if verifySignature(sign(now, body), []byte(`{"id":"evt_2"}`), secret, now) {
+		t.Fatal("tampered body accepted")
+	}
+	if verifySignature(sign(now.Add(-10*time.Minute), body), body, secret, now) {
+		t.Fatal("stale signature accepted")
+	}
+	if verifySignature("", body, secret, now) || verifySignature("t=1,v1=zz", body, secret, now) {
+		t.Fatal("malformed header accepted")
 	}
 }

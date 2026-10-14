@@ -2,12 +2,13 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Pencil, Plus, Users } from "lucide-react"
+import { Ban, Pencil, Plus, RotateCcw, Users } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
@@ -18,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import type { Member, Role } from "@/lib/types"
 
@@ -34,6 +36,19 @@ export function MembersTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
   const members = useQuery({ queryKey: ["members", orgId], queryFn: () => api<Member[]>(`/organizations/${orgId}/members`) })
   const [editing, setEditing] = useState<Member | "new" | null>(null)
+  const [suspending, setSuspending] = useState<Member | null>(null)
+  const session = useSession()
+  const platformAdmin = session.data?.user.isPlatformAdmin ?? false
+
+  const setStatus = useMutation({
+    mutationFn: ({ member, status }: { member: Member; status: "active" | "suspended" }) =>
+      api(`/admin/users/${member.userId}`, { method: "PATCH", body: { status } }),
+    onSuccess: (_d, { member, status }) => {
+      toast.success(status === "suspended" ? `Suspended ${member.email}` : `Restored ${member.email}`)
+      qc.invalidateQueries({ queryKey: ["members", orgId] })
+      setSuspending(null)
+    },
+  })
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", role: "member" } })
 
   const save = useMutation({
@@ -82,7 +97,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-12">
+                <TableHead className="w-20">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -94,12 +109,25 @@ export function MembersTab({ orgId }: { orgId: string }) {
                   <TableCell>{m.email}</TableCell>
                   <TableCell>{roles[m.role]}</TableCell>
                   <TableCell>
-                    <StatusBadge tone={m.status === "active" ? "success" : "neutral"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
+                    <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
                   </TableCell>
                   <TableCell>
-                    <IconButton label={`Change role of ${m.email}`} size="icon-sm" onClick={() => open(m)}>
-                      <Pencil />
-                    </IconButton>
+                    <div className="flex gap-1">
+                      <IconButton label={`Change role of ${m.email}`} size="icon-sm" onClick={() => open(m)}>
+                        <Pencil />
+                      </IconButton>
+                      {platformAdmin && m.userId !== session.data?.user.id && (
+                        m.status === "active" ? (
+                          <IconButton label={`Suspend ${m.email}`} size="icon-sm" onClick={() => setSuspending(m)}>
+                            <Ban />
+                          </IconButton>
+                        ) : (
+                          <IconButton label={`Restore ${m.email}`} size="icon-sm" disabled={setStatus.isPending} onClick={() => setStatus.mutate({ member: m, status: "active" })}>
+                            <RotateCcw />
+                          </IconButton>
+                        )
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -148,6 +176,15 @@ export function MembersTab({ orgId }: { orgId: string }) {
           )}
         />
       </FormDialog>
+      <ConfirmDialog
+        open={!!suspending}
+        onOpenChange={(o) => !o && setSuspending(null)}
+        title={`Suspend ${suspending?.email}?`}
+        description="They are signed out everywhere, cannot sign in, and their app passwords stop working for IMAP and SMTP. This applies in every organization they belong to. Mail keeps arriving in their mailboxes."
+        confirmLabel="Suspend account"
+        pending={setStatus.isPending}
+        onConfirm={() => suspending && setStatus.mutate({ member: suspending, status: "suspended" })}
+      />
     </section>
   )
 }

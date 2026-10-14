@@ -55,11 +55,23 @@ Otherwise sign-in fails with `not_provisioned`. Aether never stores Halo passwor
 
 ### Disabled and deprovisioned users
 
-- Halo itself rejects suspended or deprovisioned users at its token and userinfo endpoints, so they cannot start a new Aether session.
+- Halo rejects suspended or deprovisioned users at its token and userinfo endpoints, so they cannot start a new Aether session.
 - Aether sessions created through OIDC expire after 12 hours.
-- Setting a user's `status` to `suspended` in the database takes effect immediately. It invalidates web sessions on the next request, and Dovecot rejects the user's app passwords on the next login.
+- A platform administrator can suspend or restore any account under **Administration → Members**. Suspension ends every web session at once, blocks sign-in, and makes Dovecot reject the account's app passwords, which stops IMAP and SMTP. Mail keeps arriving in the account's mailboxes.
 
-There is no console control for suspending users yet, and no immediate revocation through Halo webhooks or SCIM. Both are planned.
+To have Halo suspensions take effect in Aether immediately, connect Halo's webhooks:
+
+1. In Halo, create a webhook that points at the **Webhook URL** shown in Aether's identity provider form: `https://<aether-host>/api/v1/hooks/identity-providers/<slug>`.
+2. Subscribe it to `user.suspend`, `user.restore`, `scim.user.suspend`, `scim.user.deprovision`, `scim.user.restore`, and `session.revoke`.
+3. Paste the signing secret Halo shows into **Webhook signing secret** on the provider in Aether.
+
+Aether checks each event's `Halo-Signature` header (HMAC-SHA256 with a timestamp, which must be within 5 minutes) and ignores repeated event IDs:
+
+- A suspend or deprovision event suspends the linked Aether account.
+- A restore event restores it, but only if Halo was what suspended it. A suspension made by an Aether administrator stays in place.
+- `session.revoke` signs the account out everywhere.
+
+Halo must be able to reach Aether over the network for this to work. A local development stack on `localhost` cannot receive these events.
 
 ## Generic OIDC providers
 

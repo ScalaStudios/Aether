@@ -34,6 +34,7 @@ const makeSchema = (requireSecret: boolean) =>
     slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "Use lowercase letters, digits and hyphens."),
     clientId: z.string().trim().min(1, "Enter the client ID."),
     clientSecret: requireSecret ? z.string().min(1, "Enter the client secret.") : z.string(),
+    webhookSecret: z.string(),
     scopes: z.string().trim().min(1, "Enter at least the openid scope."),
     autoProvision: z.boolean(),
     adminGroup: z.string().trim(),
@@ -161,6 +162,7 @@ function defaults(editing: Editing): Values {
       slug: p.slug,
       clientId: p.clientId,
       clientSecret: "",
+      webhookSecret: "",
       scopes: p.scopes.join(" "),
       autoProvision: p.autoProvision,
       adminGroup: p.adminGroup,
@@ -175,6 +177,7 @@ function defaults(editing: Editing): Values {
     slug: halo ? "halo" : "",
     clientId: "",
     clientSecret: "",
+    webhookSecret: "",
     scopes: halo ? HALO_SCOPES : "openid profile email",
     autoProvision: false,
     adminGroup: "",
@@ -207,6 +210,7 @@ function ProviderDialog({ editing, organizations, onClose }: { editing: Editing;
         issuer: wizard && discovery ? discovery.issuer : v.issuer,
         kind: editing.mode === "edit" ? editing.provider.kind : wizard ? "halo" : "generic",
         clientSecret: v.clientSecret || undefined,
+        webhookSecret: v.webhookSecret || undefined,
         scopes: v.scopes.split(/\s+/).filter(Boolean),
       }
       return editing.mode === "edit"
@@ -264,7 +268,19 @@ function ProviderDialog({ editing, organizations, onClose }: { editing: Editing;
       >
         <Input id="idp-client-secret" type="password" autoComplete="off" aria-invalid={!!errors.clientSecret} {...form.register("clientSecret")} />
       </Field>
-      {redirectUri && <RedirectUri value={redirectUri} />}
+      {redirectUri && <CopyField label="Redirect URI" value={redirectUri} />}
+      <Field
+        id="idp-webhook-secret"
+        label="Webhook signing secret"
+        hint={
+          editing.mode === "edit" && editing.provider.hasWebhookSecret
+            ? "Leave empty to keep the stored secret."
+            : "Optional. Lets the provider suspend, restore, and sign out users in Aether. In Halo, add a webhook for user.suspend, user.restore, scim.user.*, and session.revoke that points at the URL below, then paste its secret here."
+        }
+      >
+        <Input id="idp-webhook-secret" type="password" autoComplete="off" {...form.register("webhookSecret")} />
+      </Field>
+      {redirectUri && <CopyField label="Webhook URL" value={redirectUri.replace(/\/auth\/oidc\/([^/]+)\/callback$/, "/hooks/identity-providers/$1")} />}
     </>
   )
 
@@ -342,13 +358,13 @@ function ProviderDialog({ editing, organizations, onClose }: { editing: Editing;
   )
 }
 
-function RedirectUri({ value }: { value: string }) {
+function CopyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-label text-fg-secondary">Redirect URI</span>
+      <span className="text-label text-fg-secondary">{label}</span>
       <div className="flex items-center gap-2 rounded-lg border border-border bg-sunken py-1 pr-1 pl-4">
         <code className="min-w-0 flex-1 font-mono text-sm break-all">{value}</code>
-        <CopyButton value={value} label="Copy redirect URI" />
+        <CopyButton value={value} label={`Copy ${label.toLowerCase()}`} />
       </div>
     </div>
   )
@@ -378,7 +394,7 @@ function DiscoveryResult({ discovery, redirectUri }: { discovery: Discovery; red
             </div>
           ))}
       </dl>
-      <RedirectUri value={redirectUri} />
+      <CopyField label="Redirect URI" value={redirectUri} />
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-sunken p-4 text-sm text-fg-secondary">
         <p className="font-semibold text-foreground">Register Aether in Halo</p>
         <ol className="flex list-decimal flex-col gap-1 pl-6">
