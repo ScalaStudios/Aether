@@ -4,9 +4,13 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"net/http"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/emersion/go-webdav"
 
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
@@ -88,5 +92,14 @@ func TestValidateAttachments(t *testing.T) {
 	}
 	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "big", Data: make([]byte, maxAttachmentBytes+1)}}) == "" {
 		t.Fatal("oversized attachments accepted")
+	}
+}
+
+func TestDAVStatusCodeReadsLibraryErrors(t *testing.T) {
+	if got := davStatusCode(webdav.NewHTTPError(http.StatusPreconditionFailed, errors.New("changed"))); got != http.StatusPreconditionFailed {
+		t.Fatalf("status %d, want 412; go-webdav may have renamed HTTPError.Code", got)
+	}
+	if got := davStatusCode(errors.New("plain")); got != 0 {
+		t.Fatalf("plain error gave status %d", got)
 	}
 }

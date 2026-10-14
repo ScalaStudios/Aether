@@ -49,6 +49,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/oidc/{slug}/start", s.oidcStart)
 	mux.HandleFunc("GET /api/v1/auth/oidc/{slug}/callback", s.oidcCallback)
 	mux.HandleFunc("POST /api/v1/hooks/identity-providers/{slug}", s.providerWebhook)
+	mux.HandleFunc("/dav/", s.serveDAV)
+	mux.HandleFunc("/.well-known/caldav", s.serveDAV)
+	mux.HandleFunc("/.well-known/carddav", s.serveDAV)
 
 	authed := func(pattern string, h func(http.ResponseWriter, *http.Request, *principal)) {
 		mux.HandleFunc(pattern, s.withPrincipal(h))
@@ -98,6 +101,17 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/mailboxes/{mailboxId}/auto-reply", s.getAutoReply)
 	authed("PUT /api/v1/mailboxes/{mailboxId}/auto-reply", s.saveAutoReply)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}/drafts/{uid}", s.deleteDraft)
+
+	authed("GET /api/v1/contacts", s.listContacts)
+	authed("POST /api/v1/contacts", s.saveContact)
+	authed("PUT /api/v1/contacts/{id}", s.saveContact)
+	authed("DELETE /api/v1/contacts/{id}", s.deleteContact)
+	authed("GET /api/v1/directory", s.listDirectory)
+	authed("GET /api/v1/recipients", s.suggestRecipients)
+	authed("GET /api/v1/calendar/events", s.listEvents)
+	authed("POST /api/v1/calendar/events", s.saveEvent)
+	authed("PUT /api/v1/calendar/events/{id}", s.saveEvent)
+	authed("DELETE /api/v1/calendar/events/{id}", s.deleteEvent)
 
 	authed("GET /api/v1/admin/identity-providers", s.listIdentityProviders)
 	authed("POST /api/v1/admin/identity-providers", s.createIdentityProvider)
