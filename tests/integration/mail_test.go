@@ -103,6 +103,9 @@ func TestMailMilestone(t *testing.T) {
 		if !bytes.Contains(raw, []byte("DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d="+w.domain)) {
 			t.Fatalf("message is not DKIM signed for %s:\n%s", w.domain, raw)
 		}
+		if bytes.Contains(raw, []byte("with ESMTPSA")) {
+			t.Fatalf("authenticated submission hop leaked into headers:\n%s", raw)
+		}
 	})
 
 	t.Run("inbound SMTP from an external sender reaches IMAP", func(t *testing.T) {

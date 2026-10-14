@@ -1,6 +1,7 @@
 smtp      inet  n       -       n       -       -       smtpd
 submission inet n       -       n       -       -       smtpd
   -o syslog_name=postfix/submission
+  -o cleanup_service_name=submission-cleanup
   -o smtpd_tls_security_level=encrypt
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
@@ -10,6 +11,7 @@ submission inet n       -       n       -       -       smtpd
   -o milter_macro_daemon_name=ORIGINATING
 submissions inet n      -       n       -       -       smtpd
   -o syslog_name=postfix/submissions
+  -o cleanup_service_name=submission-cleanup
   -o smtpd_tls_wrappermode=yes
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
@@ -19,6 +21,8 @@ submissions inet n      -       n       -       -       smtpd
   -o milter_macro_daemon_name=ORIGINATING
 pickup    unix  n       -       n       60      1       pickup
 cleanup   unix  n       -       n       -       0       cleanup
+submission-cleanup unix n -     n       -       0       cleanup
+  -o header_checks=regexp:/etc/postfix/submission_header_checks
 qmgr      unix  n       -       n       300     1       qmgr
 tlsmgr    unix  -       -       n       1000?   1       tlsmgr
 rewrite   unix  -       -       n       -       -       trivial-rewrite
