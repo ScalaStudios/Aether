@@ -110,9 +110,18 @@ Back up these volumes and files:
 | `.env` | The secrets |
 | `tls` | The mail certificate |
 
+`scripts/backup.sh <target-dir> [keep-days]` writes these three items to a timestamped directory: a `pg_dump` custom-format dump, a tar of the maildirs, and a copy of `.env`. It checks that both archives are readable and deletes backups older than `keep-days` (default 14). Run it from a nightly timer, and copy the target directory to another machine; a backup on the same disk does not survive losing that disk.
+
+To restore, stop the stack. Then:
+
+1. Recreate the volumes.
+2. Load the database with `pg_restore -d aether --no-owner aether.pgdump`.
+3. Extract `vmail.tar.gz` into the `vmail` volume.
+4. Restore `.env`.
+
 `valkeydata` and `rspamd` hold caches and statistics, which are rebuilt automatically. DKIM keys in Valkey are re-published from PostgreSQL on every API start.
 
-Automated, encrypted backup and verified restore are planned and not provided yet.
+Off-site copies and backup encryption are not built in yet.
 
 ## Bare metal
 
