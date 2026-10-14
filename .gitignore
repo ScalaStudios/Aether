@@ -1,0 +1,8 @@
+.env
+/bin/
+node_modules/
+.next/
+apps/web/.next/
+apps/web/out/
+*.log
+apps/web/AGENTS.md

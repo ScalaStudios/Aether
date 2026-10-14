@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./... && go vet -tags integration ./tests/...
+      - run: go test ./...
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: [go]
+    env:
+      AETHER_TEST_ADMIN_EMAIL: admin@aether.test
+      AETHER_TEST_ADMIN_PASSWORD: ci-admin-password-123
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/setup.sh dev
+      - run: docker compose up -d --build --wait postgres valkey rspamd api dovecot postfix
+      - run: echo "$AETHER_TEST_ADMIN_PASSWORD" | docker compose exec -T api aether bootstrap-admin --email "$AETHER_TEST_ADMIN_EMAIL" --password-stdin
+      - run: docker compose --profile test run --rm --no-deps integration-tests
+      - if: failure()
+        run: docker compose logs --no-color

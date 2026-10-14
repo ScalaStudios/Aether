@@ -1,0 +1,841 @@
+openapi: 3.1.0
+info:
+  title: Aether API
+  version: 0.1.0
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+servers:
+  - url: /api/v1
+security:
+  - session: []
+tags:
+  - name: auth
+  - name: organizations
+  - name: domains
+  - name: mailboxes
+  - name: aliases
+  - name: members
+  - name: app-passwords
+  - name: mail
+  - name: identity-providers
+paths:
+  /auth/providers:
+    get:
+      tags: [auth]
+      security: []
+      summary: Sign-in methods available on this installation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [localLogin, providers]
+                properties:
+                  localLogin: { type: boolean }
+                  providers:
+                    type: array
+                    items:
+                      type: object
+                      required: [slug, name, kind]
+                      properties:
+                        slug: { type: string }
+                        name: { type: string }
+                        kind: { type: string, enum: [halo, generic] }
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Sign in with a local password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Signed in; sets the aether_session cookie
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/oidc/{slug}/start:
+    get:
+      tags: [auth]
+      security: []
+      summary: Begin an OpenID Connect authorization code flow with PKCE
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: return_to, in: query, schema: { type: string } }
+      responses:
+        "302": { description: Redirect to the identity provider }
+  /auth/oidc/{slug}/callback:
+    get:
+      tags: [auth]
+      security: []
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+      responses:
+        "302": { description: Redirect into the application, or to /login?error=<code> }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: End the session; returns the identity provider logout URL when applicable
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect: { type: string }
+  /session:
+    get:
+      tags: [auth]
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+  /organizations:
+    get:
+      tags: [organizations]
+      summary: Organizations visible to the caller (all of them for platform administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Organization" } }
+    post:
+      tags: [organizations]
+      summary: Create an organization (platform administrators only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name: { type: string }
+                slug: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,62}$" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+  /organizations/{orgId}:
+    get:
+      tags: [organizations]
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/domains:
+    get:
+      tags: [domains]
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Domain" } }
+    post:
+      tags: [domains]
+      summary: Add a domain. Domains added by platform administrators are verified immediately; others must pass DNS verification.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+        "409": { $ref: "#/components/responses/Error" }
+  /domains/{domainId}:
+    get:
+      tags: [domains]
+      parameters: [{ $ref: "#/components/parameters/domainId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+    delete:
+      tags: [domains]
+      parameters: [{ $ref: "#/components/parameters/domainId" }]
+      responses:
+        "204": { description: Deleted, including its mailboxes and aliases }
+  /domains/{domainId}/dns:
+    get:
+      tags: [domains]
+      summary: Required DNS records and their live lookup status
+      parameters: [{ $ref: "#/components/parameters/domainId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records]
+                properties:
+                  records: { type: array, items: { $ref: "#/components/schemas/DNSRecord" } }
+  /domains/{domainId}/verify:
+    post:
+      tags: [domains]
+      summary: Check the _aether ownership TXT record and mark the domain verified
+      parameters: [{ $ref: "#/components/parameters/domainId" }]
+      responses:
+        "200":
+          description: Verified
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/mailboxes:
+    get:
+      tags: [mailboxes]
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Mailbox" } }
+    post:
+      tags: [mailboxes]
+      summary: Create a mailbox. A user account with the mailbox address is created or linked as its owner.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domainId, localPart]
+              properties:
+                domainId: { type: string, format: uuid }
+                localPart: { type: string }
+                displayName: { type: string }
+                quotaBytes: { type: integer, minimum: 0 }
+                password: { type: string, minLength: 12, description: Optional web sign-in password for the owner account }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+  /mailboxes/{mailboxId}:
+    patch:
+      tags: [mailboxes]
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string }
+                quotaBytes: { type: integer, minimum: 0 }
+                active: { type: boolean }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+    delete:
+      tags: [mailboxes]
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "204": { description: Deleted. Stored mail on disk is retained for manual removal. }
+  /organizations/{orgId}/aliases:
+    get:
+      tags: [aliases]
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Alias" } }
+    post:
+      tags: [aliases]
+      summary: Create an alias. An empty localPart creates the domain catch-all.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domainId, localPart, destinations]
+              properties:
+                domainId: { type: string, format: uuid }
+                localPart: { type: string }
+                destinations: { type: array, items: { type: string, format: email } }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alias" }
+  /aliases/{aliasId}:
+    delete:
+      tags: [aliases]
+      parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Deleted }
+  /organizations/{orgId}/members:
+    get:
+      tags: [members]
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Member" } }
+    post:
+      tags: [members]
+      summary: Add an existing account to the organization or change its role. Granting or changing owner requires the owner role.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [owner, admin, member] }
+      responses:
+        "204": { description: Saved }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/audit:
+    get:
+      tags: [organizations]
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: before, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Newest first, 50 per page
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
+  /me/mailboxes:
+    get:
+      tags: [mail]
+      summary: Mailboxes the caller can open in Aether Mail
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Mailbox" } }
+  /me/app-passwords:
+    get:
+      tags: [app-passwords]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AppPassword" } }
+    post:
+      tags: [app-passwords]
+      summary: Create an IMAP/SMTP app password. The secret is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, mailboxId]
+              properties:
+                name: { type: string }
+                mailboxId: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/AppPassword" }
+                  - type: object
+                    required: [password]
+                    properties:
+                      password: { type: string }
+  /me/app-passwords/{id}:
+    delete:
+      tags: [app-passwords]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Revoked }
+  /mailboxes/{mailboxId}/folders:
+    get:
+      tags: [mail]
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Folder" } }
+  /mailboxes/{mailboxId}/messages:
+    get:
+      tags: [mail]
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/folder" }
+        - { name: q, in: query, description: Server-side full text search, schema: { type: string } }
+        - { name: before, in: query, description: Return messages with a UID lower than this cursor, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        "200":
+          description: Newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, total]
+                properties:
+                  messages: { type: array, items: { $ref: "#/components/schemas/MessageSummary" } }
+                  total: { type: integer }
+                  nextCursor: { type: [integer, "null"] }
+  /mailboxes/{mailboxId}/messages/{uid}:
+    get:
+      tags: [mail]
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      responses:
+        "200":
+          description: Message with sanitized HTML. Remote resources are stripped.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+    patch:
+      tags: [mail]
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seen: { type: boolean }
+                flagged: { type: boolean }
+      responses:
+        "204": { description: Updated }
+    delete:
+      tags: [mail]
+      summary: Move to Trash, or delete permanently when already in Trash
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      responses:
+        "204": { description: Deleted }
+  /mailboxes/{mailboxId}/messages/{uid}/move:
+    post:
+      tags: [mail]
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string }
+      responses:
+        "204": { description: Moved }
+  /mailboxes/{mailboxId}/messages/{uid}/attachments/{part}:
+    get:
+      tags: [mail]
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+        - { name: part, in: path, required: true, schema: { type: string, pattern: "^[0-9]+(\\.[0-9]+)*$" } }
+      responses:
+        "200": { description: Attachment bytes, served as a download }
+  /mailboxes/{mailboxId}/send:
+    post:
+      tags: [mail]
+      summary: Submit a message through the SMTP submission service and save it to Sent
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OutgoingMessage" }
+      responses:
+        "202":
+          description: Accepted by the submission service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messageId: { type: string }
+  /admin/identity-providers:
+    get:
+      tags: [identity-providers]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/IdentityProvider" } }
+    post:
+      tags: [identity-providers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IdentityProviderInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityProvider" }
+  /admin/identity-providers/{id}:
+    put:
+      tags: [identity-providers]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IdentityProviderInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdentityProvider" }
+    delete:
+      tags: [identity-providers]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Deleted }
+  /admin/identity-providers/discover:
+    post:
+      tags: [identity-providers]
+      summary: Fetch and validate an issuer's OpenID Connect discovery document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issuer]
+              properties:
+                issuer: { type: string, format: uri }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issuer, authorizationEndpoint, tokenEndpoint, scopesSupported, pkceS256, groupsClaim, redirectUri]
+                properties:
+                  issuer: { type: string }
+                  authorizationEndpoint: { type: string }
+                  tokenEndpoint: { type: string }
+                  userinfoEndpoint: { type: string }
+                  endSessionEndpoint: { type: string }
+                  scopesSupported: { type: array, items: { type: string } }
+                  pkceS256: { type: boolean }
+                  groupsClaim: { type: boolean }
+                  redirectUri: { type: string, description: "Callback URL to register at the provider; contains {slug}" }
+        "422": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: aether_session
+      description: State-changing requests must also send the session csrfToken in the X-CSRF-Token header.
+  parameters:
+    orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+    domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
+    mailboxId: { name: mailboxId, in: path, required: true, schema: { type: string, format: uuid } }
+    uid: { name: uid, in: path, required: true, schema: { type: integer } }
+    folder: { name: folder, in: query, schema: { type: string, default: INBOX } }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string }
+                  message: { type: string }
+  schemas:
+    User:
+      type: object
+      required: [id, email, displayName, isPlatformAdmin, status]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        displayName: { type: string }
+        isPlatformAdmin: { type: boolean }
+        status: { type: string, enum: [active, suspended, deprovisioned] }
+    Session:
+      type: object
+      required: [user, memberships, csrfToken]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        csrfToken: { type: string }
+        memberships:
+          type: array
+          items:
+            type: object
+            required: [orgId, orgName, orgSlug, role]
+            properties:
+              orgId: { type: string, format: uuid }
+              orgName: { type: string }
+              orgSlug: { type: string }
+              role: { type: string, enum: [owner, admin, member] }
+    Organization:
+      type: object
+      required: [id, name, slug, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        createdAt: { type: string, format: date-time }
+    Domain:
+      type: object
+      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        name: { type: string }
+        verified: { type: boolean }
+        verifiedAt: { type: [string, "null"], format: date-time }
+        verificationToken: { type: string }
+        dkimSelector: { type: string }
+        dkimRecord: { type: string, description: TXT value to publish at <selector>._domainkey.<domain> }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    DNSRecord:
+      type: object
+      required: [type, name, value, purpose, status, found]
+      properties:
+        type: { type: string, enum: [MX, TXT, CNAME, PTR] }
+        name: { type: string }
+        value: { type: string }
+        purpose: { type: string, enum: [verification, mx, spf, dkim, dmarc] }
+        status: { type: string, enum: [ok, missing, mismatch, error] }
+        found: { type: array, items: { type: string } }
+    Mailbox:
+      type: object
+      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        domainId: { type: string, format: uuid }
+        address: { type: string }
+        localPart: { type: string }
+        displayName: { type: string }
+        ownerUserId: { type: [string, "null"], format: uuid }
+        quotaBytes: { type: integer }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    Alias:
+      type: object
+      required: [id, orgId, domainId, address, localPart, destinations, active]
+      properties:
+        id: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        domainId: { type: string, format: uuid }
+        address: { type: string }
+        localPart: { type: string }
+        destinations: { type: array, items: { type: string } }
+        active: { type: boolean }
+    Member:
+      type: object
+      required: [userId, email, displayName, role, status]
+      properties:
+        userId: { type: string, format: uuid }
+        email: { type: string }
+        displayName: { type: string }
+        role: { type: string, enum: [owner, admin, member] }
+        status: { type: string }
+    AuditEvent:
+      type: object
+      required: [id, createdAt, action, targetType, targetId]
+      properties:
+        id: { type: integer }
+        createdAt: { type: string, format: date-time }
+        actorEmail: { type: [string, "null"] }
+        action: { type: string }
+        targetType: { type: string }
+        targetId: { type: string }
+        ip: { type: string }
+    AppPassword:
+      type: object
+      required: [id, name, mailboxId, mailboxAddress, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        mailboxId: { type: string, format: uuid }
+        mailboxAddress: { type: string }
+        createdAt: { type: string, format: date-time }
+    Folder:
+      type: object
+      required: [name, specialUse, total, unread]
+      properties:
+        name: { type: string }
+        specialUse: { type: string, enum: ["", inbox, drafts, sent, trash, junk, archive] }
+        total: { type: integer }
+        unread: { type: integer }
+    Address:
+      type: object
+      required: [address]
+      properties:
+        name: { type: string }
+        address: { type: string }
+    MessageSummary:
+      type: object
+      required: [uid, subject, from, to, date, seen, flagged, answered, hasAttachments, size]
+      properties:
+        uid: { type: integer }
+        subject: { type: string }
+        from: { type: array, items: { $ref: "#/components/schemas/Address" } }
+        to: { type: array, items: { $ref: "#/components/schemas/Address" } }
+        date: { type: string, format: date-time }
+        seen: { type: boolean }
+        flagged: { type: boolean }
+        answered: { type: boolean }
+        hasAttachments: { type: boolean }
+        size: { type: integer }
+    Message:
+      allOf:
+        - { $ref: "#/components/schemas/MessageSummary" }
+        - type: object
+          required: [cc, replyTo, messageId, inReplyTo, references, text, html, attachments]
+          properties:
+            cc: { type: array, items: { $ref: "#/components/schemas/Address" } }
+            replyTo: { type: array, items: { $ref: "#/components/schemas/Address" } }
+            messageId: { type: string }
+            inReplyTo: { type: string }
+            references: { type: array, items: { type: string } }
+            text: { type: string }
+            html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
+            attachments:
+              type: array
+              items:
+                type: object
+                required: [part, filename, contentType, size]
+                properties:
+                  part: { type: string }
+                  filename: { type: string }
+                  contentType: { type: string }
+                  size: { type: integer }
+    OutgoingMessage:
+      type: object
+      required: [to, subject]
+      properties:
+        to: { type: array, items: { $ref: "#/components/schemas/Address" }, minItems: 1 }
+        cc: { type: array, items: { $ref: "#/components/schemas/Address" } }
+        bcc: { type: array, items: { $ref: "#/components/schemas/Address" } }
+        subject: { type: string }
+        text: { type: string }
+        html: { type: string }
+        inReplyTo: { type: string }
+        references: { type: array, items: { type: string } }
+    IdentityProvider:
+      type: object
+      required: [id, slug, name, kind, issuer, clientId, hasClientSecret, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [halo, generic] }
+        issuer: { type: string }
+        clientId: { type: string }
+        hasClientSecret: { type: boolean }
+        scopes: { type: array, items: { type: string } }
+        autoProvision: { type: boolean }
+        adminGroup: { type: string }
+        groupMappings: { type: array, items: { $ref: "#/components/schemas/GroupMapping" } }
+        enabled: { type: boolean }
+        redirectUri: { type: string }
+    IdentityProviderInput:
+      type: object
+      required: [slug, name, kind, issuer, clientId]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [halo, generic] }
+        issuer: { type: string }
+        clientId: { type: string }
+        clientSecret: { type: string, description: Write-only. Omit on update to keep the stored secret. }
+        scopes: { type: array, items: { type: string } }
+        autoProvision: { type: boolean }
+        adminGroup: { type: string }
+        groupMappings: { type: array, items: { $ref: "#/components/schemas/GroupMapping" } }
+        enabled: { type: boolean }
+    GroupMapping:
+      type: object
+      required: [group, orgId, role]
+      properties:
+        group: { type: string }
+        orgId: { type: string, format: uuid }
+        role: { type: string, enum: [owner, admin, member] }

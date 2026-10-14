@@ -1,0 +1,124 @@
+# Aether
+
+Aether is a self-hosted email platform from Scala Studios. It combines a standard mail server (Postfix, Dovecot, Rspamd) with a Go control plane, a web administration console, and a webmail client. It runs on a single Docker host, and you sign in with a local account, [Halo](https://github.com/scalastudios/halo), or any OpenID Connect provider.
+
+Aether is licensed under AGPL-3.0-or-later. There are no paid tiers, no telemetry, and no cloud activation.
+
+## Status
+
+The project is at **milestone 1**: an administrator can configure a domain, create mailboxes, and sign in. Mail then flows over SMTP, and users read it in both IMAP clients and Aether Mail. The tables below list what is implemented and what is planned.
+
+### Implemented and covered by automated tests
+
+| Area | What exists |
+| --- | --- |
+| Mail transport | **Postfix 3.7**:<br>• Inbound SMTP on port 25.<br>• Submission on 587 (STARTTLS) and 465 (implicit TLS), with SASL authentication through Dovecot.<br>• Recipient validation, aliases, and catch-all, all driven by PostgreSQL.<br>• Sender-login enforcement: a mailbox can only send as itself and as aliases that point to it. |
+| Mailbox access | **Dovecot 2.3**:<br>• IMAP on 143 (STARTTLS) and 993 (implicit TLS).<br>• Maildir storage, special-use folders, quotas, and LMTP delivery.<br>• A Sieve rule that files spam into Junk. |
+| Filtering and signing | **Rspamd**:<br>• A milter that scores and filters spam.<br>• DKIM signing with per-domain RSA-2048 keys that Aether generates.<br>• ARC signing and outbound rate limiting. |
+| Control plane | **Go API** (`cmd/aether`):<br>• Organizations, domains, mailboxes, aliases, members, and the audit log.<br>• DNS record guidance and a live DNS check.<br>• Domain ownership verification. |
+| Authentication | • Local accounts with Argon2id password hashing.<br>• OpenID Connect sign-in using the authorization code flow with PKCE S256, nonce checking, and state bound to the browser.<br>• Halo and generic OIDC providers, with group-to-role mapping and optional auto-provisioning.<br>• Mailbox-scoped app passwords for IMAP and SMTP. |
+| Webmail | **Aether Mail** (Next.js):<br>• Folders, paged message list, and server-side search.<br>• Sanitized HTML rendering with remote content blocked.<br>• Attachment download.<br>• Compose, reply, reply all, and forward.<br>• Flags, move, delete, and keyboard shortcuts. |
+| Administration | **Admin console**:<br>• Domains with DNS status, mailboxes, aliases, members, and the audit log.<br>• Identity providers, including a Halo setup wizard. |
+| Deployment | • Docker Compose stack with health checks and persistent volumes.<br>• Generated secrets and self-signed TLS for development. |
+
+### Planned and not implemented yet
+
+- **Shared mailboxes and delegation:** delegated access, distribution lists, mail rules in the UI, drafts autosave, scheduled send, snooze, and threading.
+- **Calendar, contacts, files, and office:** calendar with CalDAV, contacts with CardDAV, file storage, and office suite integration.
+- **Token-based mail login:** SASL OAUTHBEARER or XOAUTH2 for IMAP and SMTP, using Halo access tokens. App passwords are the protocol credential today.
+- **Halo account lifecycle:** handling Halo webhooks and SCIM, so that suspending a Halo account also revokes Aether sessions immediately. Today a suspended account cannot sign in again, but existing sessions last until they expire, up to 12 hours.
+- **Operations:**
+  - Kubernetes Helm chart
+  - Prometheus metrics and OpenTelemetry tracing
+  - Backup and restore tooling
+  - MTA-STS and TLS-RPT publishing
+  - DMARC aggregate reports
+  - ClamAV
+  - A bundled recursive DNS resolver for DNS blocklists
+- **API platform:** scoped API keys, webhooks, and generated SDKs.
+
+Exchange ActiveSync, EWS, and MAPI are not implemented. Do not expect Outlook to connect through Exchange protocols. Outlook works over IMAP and SMTP.
+
+## Quick start (local development)
+
+You need Docker with Compose v2.
+
+```sh
+./scripts/setup.sh dev
+docker compose up -d --build
+echo 'choose-a-long-password' | docker compose exec -T api aether bootstrap-admin --email admin@aether.test --password-stdin
+```
+
+Open http://localhost:8080 and sign in as the administrator. Then:
+
+1. In **Administration**, create an organization.
+2. Add the domain `aether.test`. Domains added by a platform administrator are verified immediately.
+3. Create a mailbox with a password.
+4. Sign out and sign back in as the mailbox owner to use Aether Mail.
+5. In **Settings → App passwords**, create a credential for Thunderbird or another IMAP client.
+
+The development profile uses these host ports:
+
+| Service | Host port |
+| --- | --- |
+| Web | 8080 |
+| SMTP | 2525 |
+| Submission | 5870 (STARTTLS) and 4650 (TLS) |
+| IMAP | 1430 (STARTTLS) and 9930 (TLS) |
+
+The mail certificate is self-signed for `mail.aether.test`.
+
+### Run the tests
+
+```sh
+go test ./...
+AETHER_TEST_ADMIN_EMAIL=admin@aether.test AETHER_TEST_ADMIN_PASSWORD=choose-a-long-password \
+  docker compose --profile test run --rm --no-deps integration-tests
+cd apps/web && npm ci && npm run lint && npm run build
+```
+
+The integration suite runs inside the Compose network against the real Postfix, Dovecot, Rspamd, PostgreSQL, and API containers. It covers:
+
+- Submission and DKIM signing
+- Inbound delivery
+- Webmail send, read, and reply
+- GTUBE spam filed into Junk
+- Open-relay and spoofing refusal
+- App password scoping and revocation
+- Tenant isolation
+- CSRF
+- OIDC with PKCE against a test issuer
+
+## Production deployment
+
+See [documentation/installation.md](documentation/installation.md). In short:
+
+1. Point DNS at the host.
+2. Run `./scripts/setup.sh` and set `AETHER_PUBLIC_URL`, `AETHER_SITE_ADDRESS`, and `AETHER_MAIL_HOSTNAME`.
+3. Provide a trusted certificate for the mail hostname.
+4. Run `docker compose up -d --build`.
+
+Caddy obtains the web certificate automatically.
+
+## Documentation
+
+- [Architecture and decisions](documentation/architecture.md)
+- [Installation](documentation/installation.md)
+- [Authentication, Halo, and mail clients](documentation/authentication.md)
+- [Third-party components and licenses](documentation/third-party.md)
+- [API specification (OpenAPI 3.1)](api/openapi.yaml)
+
+## Repository layout
+
+```text
+cmd/aether/            API server and CLI (serve, migrate, bootstrap-admin, healthcheck)
+internal/              Go packages: api, auth, config, db, mail, secrets
+migrations/            PostgreSQL schema, embedded in the binary
+apps/web/              Next.js web app (Aether Mail, Settings, Administration)
+infrastructure/docker/ Images and configuration for Postfix, Dovecot, Rspamd, Caddy, and PostgreSQL
+tests/integration/     End-to-end tests against the running stack
+api/openapi.yaml       REST API contract
+brand/                 Scala Studios brand assets and fonts (OFL)
+```
+
+A Scala Studios project.

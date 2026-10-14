@@ -1,0 +1,18 @@
+{$AETHER_SITE_ADDRESS} {
+	encode zstd gzip
+	request_body {
+		max_size 20MB
+	}
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}

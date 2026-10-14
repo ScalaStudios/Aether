@@ -1,0 +1,29 @@
+{
+  "layout": "custom-s-plus-cala",
+  "divider": false,
+  "duplicate-initial": false,
+  "cala-cap-height": 100,
+  "s-height": 138,
+  "s-to-c-gap": 5,
+  "fonts": {
+    "logo": {
+      "family": "Archivo",
+      "weight": 900,
+      "width": 100
+    },
+    "studios": {
+      "family": "Archivo",
+      "weight": 600,
+      "tracking": 14
+    }
+  },
+  "colors": {
+    "ink": "#111111",
+    "ember-ui": "#FA7E26",
+    "gradient": {
+      "flare": "#FC4F1B",
+      "ember": "#FA7E26",
+      "gold": "#F7AD31"
+    }
+  }
+}

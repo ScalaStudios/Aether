@@ -1,0 +1,178 @@
+name: aether
+
+x-mail-env: &mail-env
+  AETHER_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME:?set AETHER_MAIL_HOSTNAME in .env}
+  AETHER_MAIL_DB_PASSWORD: ${AETHER_MAIL_DB_PASSWORD:?run scripts/setup.sh}
+  AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD:?run scripts/setup.sh}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aether
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/setup.sh}
+      AETHER_MAIL_DB_PASSWORD: ${AETHER_MAIL_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aether -d aether"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--requirepass", "${AETHER_VALKEY_PASSWORD:?run scripts/setup.sh}", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$AETHER_VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
+
+  tls-init:
+    build: ./infrastructure/docker/dovecot
+    image: aether/dovecot:dev
+    entrypoint: ["/usr/local/bin/tls-init.sh"]
+    environment:
+      AETHER_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
+    volumes:
+      - tls:/tls
+
+  rspamd:
+    build: ./infrastructure/docker/rspamd
+    image: aether/rspamd:dev
+    restart: unless-stopped
+    environment:
+      AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
+    volumes:
+      - rspamd:/var/lib/rspamd
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  dovecot:
+    image: aether/dovecot:dev
+    restart: unless-stopped
+    environment: *mail-env
+    volumes:
+      - vmail:/var/vmail
+      - tls:/tls:ro
+    ports:
+      - "${AETHER_PORT_IMAP:-143}:143"
+      - "${AETHER_PORT_IMAPS:-993}:993"
+    depends_on:
+      tls-init:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+
+  postfix:
+    build: ./infrastructure/docker/postfix
+    image: aether/postfix:dev
+    restart: unless-stopped
+    environment:
+      <<: *mail-env
+      AETHER_RELAYHOST: ${AETHER_RELAYHOST:-}
+    volumes:
+      - postfix-spool:/var/spool/postfix
+      - tls:/tls:ro
+    ports:
+      - "${AETHER_PORT_SMTP:-25}:25"
+      - "${AETHER_PORT_SUBMISSION:-587}:587"
+      - "${AETHER_PORT_SUBMISSIONS:-465}:465"
+    depends_on:
+      tls-init:
+        condition: service_completed_successfully
+      dovecot:
+        condition: service_started
+      rspamd:
+        condition: service_started
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api/Dockerfile
+    image: aether/api:dev
+    restart: unless-stopped
+    environment:
+      AETHER_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
+      AETHER_PUBLIC_URL: ${AETHER_PUBLIC_URL:?set AETHER_PUBLIC_URL in .env}
+      AETHER_SECRET_KEY: ${AETHER_SECRET_KEY:?run scripts/setup.sh}
+      AETHER_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
+      AETHER_MAIL_TLS_CA_FILE: ${AETHER_MAIL_TLS_CA_FILE:-/tls/fullchain.pem}
+      AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
+      AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
+      AETHER_TRUST_PROXY: "true"
+      AETHER_LOCAL_LOGIN: ${AETHER_LOCAL_LOGIN:-true}
+      AETHER_OIDC_ALLOW_HTTP: ${AETHER_OIDC_ALLOW_HTTP:-false}
+    volumes:
+      - tls:/tls:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      tls-init:
+        condition: service_completed_successfully
+
+  web:
+    build: ./apps/web
+    image: aether/web:dev
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      AETHER_SITE_ADDRESS: ${AETHER_SITE_ADDRESS:-:80}
+    ports:
+      - "${AETHER_PORT_HTTP:-80}:80"
+      - "${AETHER_PORT_HTTPS:-443}:443"
+    volumes:
+      - ./infrastructure/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - web
+
+  integration-tests:
+    profiles: ["test"]
+    image: golang:1.27-bookworm
+    working_dir: /src
+    command: ["go", "test", "-tags", "integration", "-count=1", "-v", "./tests/integration/..."]
+    environment:
+      AETHER_TEST_ADMIN_EMAIL: ${AETHER_TEST_ADMIN_EMAIL:-}
+      AETHER_TEST_ADMIN_PASSWORD: ${AETHER_TEST_ADMIN_PASSWORD:-}
+      AETHER_TEST_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
+    volumes:
+      - .:/src:ro
+      - tls:/tls:ro
+      - gomodcache:/go/pkg/mod
+      - gobuildcache:/root/.cache/go-build
+    depends_on:
+      - api
+      - postfix
+      - dovecot
+
+volumes:
+  gomodcache:
+  gobuildcache:
+  pgdata:
+  valkeydata:
+  tls:
+  rspamd:
+  vmail:
+  postfix-spool:
+  caddy-data:
+  caddy-config:
