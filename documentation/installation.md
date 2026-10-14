@@ -6,7 +6,7 @@
 - 2 vCPU, 4 GB RAM, and disk space for mail.
 - A static public IPv4 address. The reverse DNS (PTR) of that address must match the mail hostname.
 - Inbound access on TCP 25, 465, 587, 143, 993, 80, and 443.
-- Outbound access on TCP 25. Many cloud providers block it. If yours does, set `AETHER_RELAYHOST` to a smart host such as `[smtp.relay.example]:587`. Relay authentication is not configurable yet.
+- Outbound access on TCP 25, or an authenticated relay if your provider blocks it (see "Outbound relay" below).
 
 ## Steps
 
@@ -48,6 +48,47 @@
 7. Create an organization and add your domain.
 8. Publish the five DNS records shown on the domain page: ownership TXT, MX, SPF, DKIM, and DMARC.
 9. Click **Verify**. Mail for a domain is accepted only after the domain is verified.
+
+## Behind an existing reverse proxy
+
+If ports 80 and 443 already belong to another web server on the host, skip the bundled Caddy:
+
+1. Add `COMPOSE_FILE=compose.yml:compose.external-proxy.yml` to `.env`. The API then listens on `127.0.0.1:20100` and the web app on `127.0.0.1:20101`. Change them with `AETHER_API_LOCAL_PORT` and `AETHER_WEB_LOCAL_PORT`.
+2. In your proxy, send `/api/*` to the API port and everything else to the web port. With Caddy:
+
+   ```caddyfile
+   mail.example.com {
+   	request_body {
+   		max_size 32MB
+   	}
+   	handle /api/* {
+   		reverse_proxy 127.0.0.1:20100
+   	}
+   	handle {
+   		reverse_proxy 127.0.0.1:20101
+   	}
+   }
+   ```
+
+3. Reuse the proxy's certificate for SMTP and IMAP:
+
+   ```sh
+   ./scripts/sync-tls-cert.sh /path/to/mail.example.com.crt /path/to/mail.example.com.key
+   ```
+
+   The script copies the files only when they have changed, then reloads Postfix and Dovecot. Run it from a timer so that renewals are picked up.
+
+## Outbound relay
+
+Some hosting providers block outbound port 25. In that case, send outbound mail through an authenticated relay:
+
+```sh
+AETHER_RELAYHOST=[smtp.relay.example]:587
+AETHER_RELAY_USER=...
+AETHER_RELAY_PASSWORD=...
+```
+
+With these set, Postfix requires TLS to the relay. Mail between Aether's own domains is still delivered locally. Make sure the domain's SPF record includes the relay.
 
 ## Upgrades
 
