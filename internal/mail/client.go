@@ -273,6 +273,7 @@ type Attachment struct {
 type Message struct {
 	Summary
 	Cc          []Address    `json:"cc"`
+	Bcc         []Address    `json:"bcc"`
 	ReplyTo     []Address    `json:"replyTo"`
 	MessageID   string       `json:"messageId"`
 	InReplyTo   string       `json:"inReplyTo"`
@@ -311,9 +312,10 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			return ErrNotFound
 		}
 		m := msgs[0]
-		out = &Message{Summary: summarize(m), Cc: []Address{}, ReplyTo: []Address{}, References: []string{}, Attachments: []Attachment{}}
+		out = &Message{Summary: summarize(m), Cc: []Address{}, Bcc: []Address{}, ReplyTo: []Address{}, References: []string{}, Attachments: []Attachment{}}
 		if m.Envelope != nil {
 			out.Cc = addresses(m.Envelope.Cc)
+			out.Bcc = addresses(m.Envelope.Bcc)
 			out.ReplyTo = addresses(m.Envelope.ReplyTo)
 			out.MessageID = angleID(m.Envelope.MessageID)
 			if len(m.Envelope.InReplyTo) > 0 {
@@ -508,10 +510,7 @@ func (c *Client) Delete(address, folder string, uid uint32) error {
 			_, err := ic.Move(uidSet, trash).Wait()
 			return err
 		}
-		if err := ic.Store(uidSet, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}, Silent: true}, nil).Close(); err != nil {
-			return err
-		}
-		return ic.UIDExpunge(uidSet).Close()
+		return expungeUID(ic, folder, uid)
 	})
 }
 
@@ -546,6 +545,58 @@ func (c *Client) SaveSent(address string, raw []byte) error {
 		_, err = cmd.Wait()
 		return err
 	})
+}
+
+func (c *Client) SaveDraft(address string, raw []byte, replaceUID uint32) (uint32, string, error) {
+	var uid uint32
+	var drafts string
+	err := c.with(address, func(ic *imapclient.Client) error {
+		var err error
+		if drafts, err = c.specialFolder(ic, "drafts"); err != nil {
+			return err
+		}
+		cmd := ic.Append(drafts, int64(len(raw)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagDraft, imap.FlagSeen}, Time: time.Now()})
+		if _, err := cmd.Write(raw); err != nil {
+			return err
+		}
+		if err := cmd.Close(); err != nil {
+			return err
+		}
+		data, err := cmd.Wait()
+		if err != nil {
+			return err
+		}
+		if data.UID == 0 {
+			return errors.New("the IMAP server did not report the draft UID (UIDPLUS)")
+		}
+		uid = uint32(data.UID)
+		if replaceUID != 0 && replaceUID != uid {
+			return expungeUID(ic, drafts, replaceUID)
+		}
+		return nil
+	})
+	return uid, drafts, err
+}
+
+func (c *Client) DeleteDraft(address string, uid uint32) error {
+	return c.with(address, func(ic *imapclient.Client) error {
+		drafts, err := c.specialFolder(ic, "drafts")
+		if err != nil {
+			return err
+		}
+		return expungeUID(ic, drafts, uid)
+	})
+}
+
+func expungeUID(ic *imapclient.Client, folder string, uid uint32) error {
+	if _, err := ic.Select(folder, nil).Wait(); err != nil {
+		return ErrNotFound
+	}
+	uidSet := imap.UIDSetNum(imap.UID(uid))
+	if err := ic.Store(uidSet, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}, Silent: true}, nil).Close(); err != nil {
+		return err
+	}
+	return ic.UIDExpunge(uidSet).Close()
 }
 
 func (c *Client) MarkAnswered(address string, messageID string) error {

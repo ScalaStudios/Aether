@@ -17,13 +17,13 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 | Filtering and signing | **Rspamd**:<br>• A milter that scores and filters spam, with DNS blocklists queried through a bundled Unbound resolver.<br>• DKIM signing with per-domain RSA-2048 keys that Aether generates.<br>• ARC signing and outbound rate limiting. |
 | Control plane | **Go API** (`cmd/aether`):<br>• Organizations, domains, mailboxes, aliases, members, and the audit log.<br>• DNS record guidance and a live DNS check.<br>• Domain ownership verification. |
 | Authentication | • Local accounts with Argon2id password hashing.<br>• Account suspension from the console, and automatically from signed Halo webhooks.<br>• OpenID Connect sign-in using the authorization code flow with PKCE S256, nonce checking, and state bound to the browser.<br>• Halo and generic OIDC providers, with group-to-role mapping and optional auto-provisioning.<br>• Mailbox-scoped app passwords for IMAP and SMTP. |
-| Webmail | **Aether Mail** (Next.js):<br>• Folders, paged message list, and server-side search.<br>• Sanitized HTML rendering with remote content blocked.<br>• Attachment download, and attachments in compose (upload or drag and drop, 20 MB per message); forwarding keeps the original attachments.<br>• Compose, reply, reply all, and forward.<br>• Flags, move, delete, and keyboard shortcuts. |
+| Webmail | **Aether Mail** (Next.js):<br>• Folders, paged message list, and server-side search.<br>• Sanitized HTML rendering with remote content blocked.<br>• Attachment download, and attachments in compose (upload or drag and drop, 20 MB per message); forwarding keeps the original attachments.<br>• Compose, reply, reply all, and forward, with drafts autosaved to the IMAP Drafts folder.<br>• Flags, move, delete, and keyboard shortcuts. |
 | Administration | **Admin console**:<br>• Domains with DNS status, mailboxes, aliases, members, and the audit log.<br>• Identity providers, including a Halo setup wizard. |
 | Deployment | • Docker Compose stack with health checks and persistent volumes.<br>• Generated secrets and self-signed TLS for development. |
 
 ### Planned and not implemented yet
 
-- **Shared mailboxes and delegation:** delegated access, distribution lists, mail rules in the UI, drafts autosave, scheduled send, snooze, and threading.
+- **Shared mailboxes and delegation:** delegated access, distribution lists, mail rules in the UI, scheduled send, snooze, and threading.
 - **Calendar, contacts, files, and office:** calendar with CalDAV, contacts with CardDAV, file storage, and office suite integration.
 - **Token-based mail login:** SASL OAUTHBEARER or XOAUTH2 for IMAP and SMTP, using Halo access tokens. App passwords are the protocol credential today.
 - **SCIM provisioning:** Halo can push users to Aether over SCIM. Suspensions already arrive through Halo webhooks.

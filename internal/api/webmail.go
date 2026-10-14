@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/mail"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -216,38 +217,30 @@ func cleanAddresses(in []mailpkg.Address) ([]mailpkg.Address, bool) {
 	return out, true
 }
 
-func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
-	if !ok {
-		return
-	}
-	if !s.allow(r.Context(), "send:"+m.ID, 30) {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "This mailbox is sending too quickly. Wait a minute before sending again.")
-		return
-	}
-	var in struct {
-		To          []mailpkg.Address `json:"to"`
-		Cc          []mailpkg.Address `json:"cc"`
-		Bcc         []mailpkg.Address `json:"bcc"`
-		Subject     string            `json:"subject"`
-		Text        string            `json:"text"`
-		HTML        string            `json:"html"`
-		InReplyTo   string            `json:"inReplyTo"`
-		References  []string          `json:"references"`
-		Attachments []struct {
-			Filename    string `json:"filename"`
-			ContentType string `json:"contentType"`
-			Data        []byte `json:"data"`
-		} `json:"attachments"`
-		ForwardFrom *struct {
-			Folder string `json:"folder"`
-			UID    uint32 `json:"uid"`
-		} `json:"forwardFrom"`
-	}
-	if !decode(w, r, 30<<20, &in) {
-		return
-	}
-	out := mailpkg.Outgoing{From: mailpkg.Address{Name: m.DisplayName, Address: m.Address}, Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo}
+type outgoingRequest struct {
+	To          []mailpkg.Address `json:"to"`
+	Cc          []mailpkg.Address `json:"cc"`
+	Bcc         []mailpkg.Address `json:"bcc"`
+	Subject     string            `json:"subject"`
+	Text        string            `json:"text"`
+	HTML        string            `json:"html"`
+	InReplyTo   string            `json:"inReplyTo"`
+	References  []string          `json:"references"`
+	Attachments []struct {
+		Filename    string `json:"filename"`
+		ContentType string `json:"contentType"`
+		Data        []byte `json:"data"`
+	} `json:"attachments"`
+	ForwardFrom *struct {
+		Folder string   `json:"folder"`
+		UID    uint32   `json:"uid"`
+		Parts  []string `json:"parts"`
+	} `json:"forwardFrom"`
+	DraftUID uint32 `json:"draftUid"`
+}
+
+func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedMailbox, in *outgoingRequest, requireRecipients bool) (*mailpkg.Outgoing, bool) {
+	out := &mailpkg.Outgoing{From: mailpkg.Address{Name: m.DisplayName, Address: m.Address}, Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo}
 	var ok1, ok2, ok3 bool
 	out.To, ok1 = cleanAddresses(in.To)
 	out.Cc, ok2 = cleanAddresses(in.Cc)
@@ -255,16 +248,16 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	switch {
 	case !ok1 || !ok2 || !ok3:
 		writeError(w, http.StatusUnprocessableEntity, "invalid_recipient", "One of the recipient addresses is not valid.")
-		return
-	case len(out.To) == 0:
+		return nil, false
+	case requireRecipients && len(out.To) == 0:
 		writeError(w, http.StatusUnprocessableEntity, "no_recipients", "Add at least one recipient.")
-		return
+		return nil, false
 	case len(out.Recipients()) > 100:
 		writeError(w, http.StatusUnprocessableEntity, "too_many_recipients", "Send to 100 recipients or fewer per message.")
-		return
+		return nil, false
 	case strings.ContainsAny(in.Subject, "\r\n") || (in.InReplyTo != "" && !validMessageID(in.InReplyTo)):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_header", "The subject or reply headers contain invalid characters.")
-		return
+		return nil, false
 	}
 	for _, ref := range in.References {
 		if validMessageID(ref) {
@@ -277,28 +270,51 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	for _, a := range in.Attachments {
 		out.Attachments = append(out.Attachments, mailpkg.OutgoingAttachment{Filename: a.Filename, ContentType: a.ContentType, Data: a.Data})
 	}
-	if in.ForwardFrom != nil {
-		original, err := s.mail.Get(m.Address, in.ForwardFrom.Folder, in.ForwardFrom.UID)
+	if f := in.ForwardFrom; f != nil {
+		original, err := s.mail.Get(m.Address, f.Folder, f.UID)
 		if err != nil {
 			s.mailError(w, r, err)
-			return
+			return nil, false
 		}
 		for _, meta := range original.Attachments {
+			if f.Parts != nil && !slices.Contains(f.Parts, meta.Part) {
+				continue
+			}
 			var part []int
 			for _, seg := range strings.Split(meta.Part, ".") {
 				n, _ := strconv.Atoi(seg)
 				part = append(part, n)
 			}
-			a, err := s.mail.Attachment(m.Address, in.ForwardFrom.Folder, in.ForwardFrom.UID, part)
+			a, err := s.mail.Attachment(m.Address, f.Folder, f.UID, part)
 			if err != nil {
 				s.mailError(w, r, err)
-				return
+				return nil, false
 			}
 			out.Attachments = append(out.Attachments, mailpkg.OutgoingAttachment{Filename: a.Filename, ContentType: a.ContentType, Data: a.Body})
 		}
 	}
 	if msg := validateAttachments(out.Attachments); msg != "" {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_attachments", msg)
+		return nil, false
+	}
+	return out, true
+}
+
+func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.ownedMailbox(w, r, p)
+	if !ok {
+		return
+	}
+	if !s.allow(r.Context(), "send:"+m.ID, 30) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "This mailbox is sending too quickly. Wait a minute before sending again.")
+		return
+	}
+	var in outgoingRequest
+	if !decode(w, r, 30<<20, &in) {
+		return
+	}
+	out, ok := s.buildOutgoing(w, r, m, &in, true)
+	if !ok {
 		return
 	}
 	raw, messageID, err := out.Build(s.cfg.MailHostname)
@@ -317,7 +333,64 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if out.InReplyTo != "" {
 		s.mail.MarkAnswered(m.Address, out.InReplyTo)
 	}
+	if in.DraftUID != 0 {
+		if err := s.mail.DeleteDraft(m.Address, in.DraftUID); err != nil {
+			s.log.Error("removing sent draft failed", "mailbox", m.ID, "err", err)
+		}
+	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"messageId": messageID})
+}
+
+func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.ownedMailbox(w, r, p)
+	if !ok {
+		return
+	}
+	if !s.allow(r.Context(), "draft:"+m.ID, 120) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Drafts are being saved too often. Wait a moment.")
+		return
+	}
+	var in outgoingRequest
+	if !decode(w, r, 30<<20, &in) {
+		return
+	}
+	out, ok := s.buildOutgoing(w, r, m, &in, false)
+	if !ok {
+		return
+	}
+	out.IncludeBcc = true
+	raw, _, err := out.Build(s.cfg.MailHostname)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	uid, folder, err := s.mail.SaveDraft(m.Address, raw, in.DraftUID)
+	if err != nil {
+		s.mailError(w, r, err)
+		return
+	}
+	saved, err := s.mail.Get(m.Address, folder, uid)
+	if err != nil {
+		s.mailError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"uid": uid, "folder": folder, "attachments": saved.Attachments})
+}
+
+func (s *Server) deleteDraft(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.ownedMailbox(w, r, p)
+	if !ok {
+		return
+	}
+	uid, ok := uidParam(w, r)
+	if !ok {
+		return
+	}
+	if err := s.mail.DeleteDraft(m.Address, uid); err != nil {
+		s.mailError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 const (

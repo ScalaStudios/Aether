@@ -27,6 +27,7 @@ type Outgoing struct {
 	InReplyTo   string
 	References  []string
 	Attachments []OutgoingAttachment
+	IncludeBcc  bool
 }
 
 func mailAddresses(in []Address) []*mail.Address {
@@ -54,9 +55,14 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	var h mail.Header
 	h.SetDate(time.Now())
 	h.SetAddressList("From", mailAddresses([]Address{o.From}))
-	h.SetAddressList("To", mailAddresses(o.To))
+	if len(o.To) > 0 {
+		h.SetAddressList("To", mailAddresses(o.To))
+	}
 	if len(o.Cc) > 0 {
 		h.SetAddressList("Cc", mailAddresses(o.Cc))
+	}
+	if o.IncludeBcc && len(o.Bcc) > 0 {
+		h.SetAddressList("Bcc", mailAddresses(o.Bcc))
 	}
 	h.SetSubject(o.Subject)
 	h.Set("Message-ID", messageID)

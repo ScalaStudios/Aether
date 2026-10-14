@@ -523,6 +523,38 @@ paths:
                 type: object
                 properties:
                   messageId: { type: string }
+  /mailboxes/{mailboxId}/drafts:
+    put:
+      tags: [mail]
+      summary: Save a draft to the Drafts folder, replacing draftUid when given
+      description: Recipients are optional. Bcc is stored in the draft. Use forwardFrom with the returned folder and uid to keep the draft's attachments on later saves and on send.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OutgoingMessage" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uid, folder, attachments]
+                properties:
+                  uid: { type: integer }
+                  folder: { type: string }
+                  attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+  /mailboxes/{mailboxId}/drafts/{uid}:
+    delete:
+      tags: [mail]
+      summary: Permanently delete a draft
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+      responses:
+        "204": { description: Deleted }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -799,25 +831,25 @@ components:
       allOf:
         - { $ref: "#/components/schemas/MessageSummary" }
         - type: object
-          required: [cc, replyTo, messageId, inReplyTo, references, text, html, attachments]
+          required: [cc, bcc, replyTo, messageId, inReplyTo, references, text, html, attachments]
           properties:
             cc: { type: array, items: { $ref: "#/components/schemas/Address" } }
+            bcc: { type: array, items: { $ref: "#/components/schemas/Address" }, description: Present only in drafts and sent copies that carry a Bcc header }
             replyTo: { type: array, items: { $ref: "#/components/schemas/Address" } }
             messageId: { type: string }
             inReplyTo: { type: string }
             references: { type: array, items: { type: string } }
             text: { type: string }
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
-            attachments:
-              type: array
-              items:
-                type: object
-                required: [part, filename, contentType, size]
-                properties:
-                  part: { type: string }
-                  filename: { type: string }
-                  contentType: { type: string }
-                  size: { type: integer }
+            attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+    Attachment:
+      type: object
+      required: [part, filename, contentType, size]
+      properties:
+        part: { type: string }
+        filename: { type: string }
+        contentType: { type: string }
+        size: { type: integer }
     OutgoingMessage:
       type: object
       required: [to, subject]
@@ -843,11 +875,13 @@ components:
               data: { type: string, format: byte, description: Base64-encoded file contents }
         forwardFrom:
           type: object
-          description: Attach every attachment of this message in the same mailbox, read on the server.
+          description: Attach attachments of this message in the same mailbox, read on the server. Limit to specific parts with parts.
           required: [folder, uid]
           properties:
             folder: { type: string }
             uid: { type: integer }
+            parts: { type: array, items: { type: string } }
+        draftUid: { type: integer, description: The draft this message replaces. On send it is deleted from Drafts. }
     IdentityProvider:
       type: object
       required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]

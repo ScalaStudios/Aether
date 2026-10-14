@@ -152,6 +152,7 @@ export interface Attachment {
 
 export interface Message extends MessageSummary {
   cc: Address[]
+  bcc: Address[]
   replyTo: Address[]
   messageId: string
   inReplyTo: string
@@ -171,7 +172,14 @@ export interface OutgoingMessage {
   inReplyTo?: string
   references?: string[]
   attachments?: { filename: string; contentType: string; data: string }[]
-  forwardFrom?: { folder: string; uid: number }
+  forwardFrom?: { folder: string; uid: number; parts?: string[] }
+  draftUid?: number
+}
+
+export interface SavedDraft {
+  uid: number
+  folder: string
+  attachments: Attachment[]
 }
 
 export interface GroupMapping {

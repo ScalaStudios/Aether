@@ -195,6 +195,81 @@ func TestMailMilestone(t *testing.T) {
 		}
 	})
 
+	t.Run("drafts autosave, keep attachments, and disappear on send", func(t *testing.T) {
+		subject := "draft " + randomSuffix()
+		type saved struct {
+			UID         uint32 `json:"uid"`
+			Folder      string `json:"folder"`
+			Attachments []struct {
+				Part     string `json:"part"`
+				Filename string `json:"filename"`
+			} `json:"attachments"`
+		}
+		var first, second, third saved
+		w.alice.must("PUT", "/mailboxes/"+w.aliceMailbox+"/drafts", map[string]any{"subject": subject, "text": "first pass"}, &first, 200)
+		w.alice.must("PUT", "/mailboxes/"+w.aliceMailbox+"/drafts", map[string]any{
+			"draftUid": first.UID, "subject": subject, "text": "second pass",
+			"to": []map[string]string{{"address": bob}}, "bcc": []map[string]string{{"address": "audit@" + w.domain}},
+			"attachments": []map[string]any{{"filename": "keep.txt", "data": []byte("keep me")}, {"filename": "drop.txt", "data": []byte("drop me")}},
+		}, &second, 200)
+		if second.UID == first.UID || len(second.Attachments) != 2 {
+			t.Fatalf("second save: %+v", second)
+		}
+		var keep string
+		for _, a := range second.Attachments {
+			if a.Filename == "keep.txt" {
+				keep = a.Part
+			}
+		}
+		w.alice.must("PUT", "/mailboxes/"+w.aliceMailbox+"/drafts", map[string]any{
+			"draftUid": second.UID, "subject": subject, "text": "third pass", "to": []map[string]string{{"address": bob}},
+			"bcc":         []map[string]string{{"address": "audit@" + w.domain}},
+			"forwardFrom": map[string]any{"folder": second.Folder, "uid": second.UID, "parts": []string{keep}},
+		}, &third, 200)
+		if len(third.Attachments) != 1 || third.Attachments[0].Filename != "keep.txt" {
+			t.Fatalf("third save kept %+v, want only keep.txt", third.Attachments)
+		}
+		var page messagePage
+		w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/messages?folder="+third.Folder, nil, &page, 200)
+		count := 0
+		for _, m := range page.Messages {
+			if m.Subject == subject {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%d copies of the draft in %s, want 1", count, third.Folder)
+		}
+		var draft struct {
+			Bcc []struct {
+				Address string `json:"address"`
+			} `json:"bcc"`
+			Text string `json:"text"`
+		}
+		w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/messages/"+strconv.FormatUint(uint64(third.UID), 10)+"?folder="+third.Folder, nil, &draft, 200)
+		if len(draft.Bcc) != 1 || !strings.Contains(draft.Text, "third pass") {
+			t.Fatalf("reopened draft lost data: %+v", draft)
+		}
+		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{
+			"draftUid": third.UID, "subject": subject, "text": "final", "to": []map[string]string{{"address": bob}},
+			"forwardFrom": map[string]any{"folder": third.Folder, "uid": third.UID},
+		}, nil, 202)
+		var uid uint32
+		waitFor(t, "bob to receive the sent draft", func() bool { uid = findInAPI(w.bob, w.bobMailbox, "INBOX", subject); return uid != 0 })
+		var got struct {
+			Attachments []struct {
+				Filename string `json:"filename"`
+			} `json:"attachments"`
+		}
+		w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages/"+strconv.FormatUint(uint64(uid), 10), nil, &got, 200)
+		if len(got.Attachments) != 1 || got.Attachments[0].Filename != "keep.txt" {
+			t.Fatalf("sent draft attachments: %+v", got.Attachments)
+		}
+		if findInAPI(w.alice, w.aliceMailbox, third.Folder, subject) != 0 {
+			t.Fatal("draft was not removed after sending")
+		}
+	})
+
 	t.Run("spam is filed into Junk", func(t *testing.T) {
 		subject := "gtube " + randomSuffix()
 		body := "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"

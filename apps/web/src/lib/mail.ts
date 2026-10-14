@@ -17,13 +17,13 @@ export function folderLabel(folder: Pick<Folder, "name" | "specialUse">) {
   return folder.specialUse === "inbox" ? "Inbox" : folder.name
 }
 
-export function senderLabel(addresses: Address[]) {
+export function senderLabel(addresses: Address[], empty = "Unknown sender") {
   const first = addresses[0]
-  if (!first) return "Unknown sender"
+  if (!first) return empty
   return first.name || first.address
 }
 
-export type ComposeMode = "new" | "reply" | "replyAll" | "forward"
+export type ComposeMode = "new" | "reply" | "replyAll" | "forward" | "draft"
 
 export interface Draft {
   mode: ComposeMode
@@ -35,6 +35,7 @@ export interface Draft {
   inReplyTo?: string
   references?: string[]
   forwardFrom?: { folder: string; uid: number; attachments: Attachment[] }
+  draftUid?: number
 }
 
 function escapeHtml(text: string) {
@@ -71,6 +72,21 @@ function withoutSelf(addresses: Address[], self: string) {
 export function buildDraft(mode: ComposeMode, source: Message | undefined, self: string, folder: string): Draft {
   const empty: Draft = { mode, to: [], cc: [], bcc: [], subject: "", html: "" }
   if (mode === "new" || !source) return { ...empty, mode: "new" }
+
+  if (mode === "draft") {
+    return {
+      mode,
+      to: source.to,
+      cc: source.cc,
+      bcc: source.bcc,
+      subject: source.subject,
+      html: source.html || textToHtml(source.text),
+      inReplyTo: source.inReplyTo || undefined,
+      references: source.references.length ? source.references : undefined,
+      draftUid: source.uid,
+      forwardFrom: { folder, uid: source.uid, attachments: source.attachments },
+    }
+  }
 
   const from = source.from.map(formatAddress).join(", ")
 

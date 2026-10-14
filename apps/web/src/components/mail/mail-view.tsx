@@ -120,7 +120,15 @@ export function MailView() {
     },
   })
 
-  function open(summary: MessageSummary) {
+  async function open(summary: MessageSummary) {
+    if (mailbox && folders.data?.find((f) => f.name === folder)?.specialUse === "drafts") {
+      const saved = await qc.fetchQuery({
+        queryKey: ["message", mbx, folder, summary.uid],
+        queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${summary.uid}`, { query: { folder } }),
+      })
+      setCompose({ key: Date.now(), draft: buildDraft("draft", saved, mailbox.address, folder) })
+      return
+    }
     setSelectedUid(summary.uid)
     if (!summary.seen) setFlags.mutate({ uid: summary.uid, flags: { seen: true } })
   }

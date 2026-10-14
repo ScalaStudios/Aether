@@ -125,7 +125,7 @@ export function MessageList({
                     {!m.seen && <span aria-hidden className="size-2 shrink-0 rounded-full bg-ember" />}
                     <span className={cn("flex-1 truncate", m.seen ? "text-fg-secondary" : "font-semibold text-foreground")}>
                       {!m.seen && <span className="sr-only">Unread, </span>}
-                      {senderLabel(folder.specialUse === "sent" || folder.specialUse === "drafts" ? m.to : m.from)}
+                      {folder.specialUse === "sent" || folder.specialUse === "drafts" ? senderLabel(m.to, "No recipients") : senderLabel(m.from)}
                     </span>
                     <time dateTime={m.date} className="shrink-0 text-xs text-fg-tertiary tabular-nums">
                       {formatListDate(m.date)}
