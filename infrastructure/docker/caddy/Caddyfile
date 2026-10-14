@@ -9,7 +9,8 @@
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
-	handle /api/* {
+	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav
+	handle @api {
 		reverse_proxy api:8080
 	}
 	handle {

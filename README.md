@@ -18,13 +18,15 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 | Control plane | **Go API** (`cmd/aether`):<br>• Organizations, domains, mailboxes, aliases, members, and the audit log.<br>• DNS record guidance and a live DNS check.<br>• Domain ownership verification. |
 | Authentication | • Local accounts with Argon2id password hashing.<br>• Account suspension from the console, and automatically from signed Halo webhooks.<br>• OpenID Connect sign-in using the authorization code flow with PKCE S256, nonce checking, and state bound to the browser.<br>• Halo and generic OIDC providers, with group-to-role mapping and optional auto-provisioning.<br>• Mailbox-scoped app passwords for IMAP and SMTP. |
 | Webmail | **Aether Mail** (Next.js):<br>• Folders, paged message list, and server-side search.<br>• Sanitized HTML rendering with remote content blocked.<br>• Attachment download, and attachments in compose (upload or drag and drop, 20 MB per message); forwarding keeps the original attachments.<br>• Compose, reply, reply all, and forward, with drafts autosaved to the IMAP Drafts folder.<br>• Conversation view within a folder, using the server's THREAD=REFERENCES.<br>• Mail rules (move, mark read, flag, forward) and automatic replies, compiled to Sieve and run on the server for every client.<br>• Flags, move, delete, and keyboard shortcuts. |
+| Calendar and contacts | • CalDAV and CardDAV built into the Go server, at `/dav/` with `/.well-known` discovery. Apps sign in with mailbox app passwords.<br>• A personal calendar with repeating events, and a personal address book.<br>• The organization directory.<br>• Recipient suggestions in the composer.<br>• Data lives in PostgreSQL, so it is part of every backup. |
 | Administration | **Admin console**:<br>• Domains with DNS status, mailboxes, aliases, members, and the audit log.<br>• Identity providers, including a Halo setup wizard. |
 | Deployment | • Docker Compose stack with health checks and persistent volumes.<br>• Generated secrets and self-signed TLS for development. |
 
 ### Planned and not implemented yet
 
 - **Shared mailboxes and delegation:** delegated access, distribution lists, scheduled send, snooze, and conversations that span folders (Inbox plus Sent).
-- **Calendar, contacts, files, and office:** calendar with CalDAV, contacts with CardDAV, file storage, and office suite integration.
+- **Calendar and contacts, next steps:** shared and organization calendars, meeting invitations by email (iTIP/iMIP), free/busy, and ICS import and export.
+- **Files and office:** file storage and office suite integration.
 - **Token-based mail login:** SASL OAUTHBEARER or XOAUTH2 for IMAP and SMTP, using Halo access tokens. App passwords are the protocol credential today.
 - **SCIM provisioning:** Halo can push users to Aether over SCIM. Suspensions already arrive through Halo webhooks.
 - **Operations:**

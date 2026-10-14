@@ -19,6 +19,8 @@ tags:
   - name: app-passwords
   - name: mail
   - name: identity-providers
+  - name: contacts
+  - name: calendar
 paths:
   /auth/providers:
     get:
@@ -610,6 +612,122 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AutoReply" }
         "422": { $ref: "#/components/responses/Error" }
+  /contacts:
+    get:
+      tags: [contacts]
+      summary: The caller's contacts, also served over CardDAV
+      parameters: [{ name: q, in: query, schema: { type: string }, description: Matches name or email }]
+      responses:
+        "200":
+          description: Sorted by name, at most 500
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Contact" } }
+    post:
+      tags: [contacts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "422": { $ref: "#/components/responses/Error" }
+  /contacts/{id}:
+    put:
+      tags: [contacts]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [contacts]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "204": { description: Deleted }
+  /directory:
+    get:
+      tags: [contacts]
+      summary: Active mailboxes in the caller's organizations
+      parameters: [{ name: q, in: query, schema: { type: string } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Recipient" } }
+  /recipients:
+    get:
+      tags: [contacts]
+      summary: Up to 10 recipient suggestions from contacts and the directory
+      parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Recipient" } }
+  /calendar/events:
+    get:
+      tags: [calendar]
+      summary: Events in a time range, with repeating events expanded into occurrences
+      parameters:
+        - { name: start, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, schema: { type: string, format: date-time }, description: At most 400 days after start }
+      responses:
+        "200":
+          description: Sorted by start
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/CalendarEvent" } }
+    post:
+      tags: [calendar]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarEventInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarEvent" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/events/{id}:
+    put:
+      tags: [calendar]
+      summary: Replace an event; for repeating events this changes the whole series
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarEventInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarEvent" }
+    delete:
+      tags: [calendar]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "204": { description: Deleted, including every occurrence }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -907,6 +1025,55 @@ components:
         message: { type: string, maxLength: 10000 }
         start: { type: string, format: date, description: First day replies are sent }
         end: { type: string, format: date, description: Last day replies are sent }
+    Contact:
+      type: object
+      required: [id, name, emails, phones, organization, notes]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        emails: { type: array, items: { type: string } }
+        phones: { type: array, items: { type: string } }
+        organization: { type: string }
+        notes: { type: string }
+    ContactInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 200 }
+        emails: { type: array, maxItems: 10, items: { type: string, format: email } }
+        phones: { type: array, maxItems: 10, items: { type: string } }
+        organization: { type: string }
+        notes: { type: string, maxLength: 5000 }
+    Recipient:
+      type: object
+      required: [name, address, source]
+      properties:
+        name: { type: string }
+        address: { type: string }
+        source: { type: string, enum: [contact, directory] }
+    CalendarEvent:
+      type: object
+      required: [id, title, start, end, allDay, location, description, repeat]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        allDay: { type: boolean }
+        location: { type: string }
+        description: { type: string }
+        repeat: { type: string, enum: ["", daily, weekly, monthly, yearly, custom] }
+    CalendarEventInput:
+      type: object
+      required: [title, start, end]
+      properties:
+        title: { type: string, maxLength: 300 }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time, description: Exclusive; for all-day events the midnight after the last day }
+        allDay: { type: boolean }
+        location: { type: string }
+        description: { type: string }
+        repeat: { type: string, enum: ["", daily, weekly, monthly, yearly] }
     MailRule:
       type: object
       required: [name, enabled, match, conditions, actions]

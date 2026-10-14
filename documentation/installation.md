@@ -54,14 +54,15 @@
 If ports 80 and 443 already belong to another web server on the host, skip the bundled Caddy:
 
 1. Add `COMPOSE_FILE=compose.yml:compose.external-proxy.yml` to `.env`. The API then listens on `127.0.0.1:20100` and the web app on `127.0.0.1:20101`. Change them with `AETHER_API_LOCAL_PORT` and `AETHER_WEB_LOCAL_PORT`.
-2. In your proxy, send `/api/*` to the API port and everything else to the web port. With Caddy:
+2. In your proxy, send `/api/*`, `/dav/*`, `/.well-known/caldav`, and `/.well-known/carddav` to the API port, and everything else to the web port. With Caddy:
 
    ```caddyfile
    mail.example.com {
    	request_body {
    		max_size 32MB
    	}
-   	handle /api/* {
+   	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav
+   	handle @api {
    		reverse_proxy 127.0.0.1:20100
    	}
    	handle {

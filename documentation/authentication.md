@@ -107,6 +107,18 @@ Outlook "Exchange" or "Microsoft 365" account types are not supported.
 
 Login through OAUTHBEARER or XOAUTH2 with Halo access tokens is not implemented. Halo issues JWT access tokens with an `aud` for registered API resources and offers token introspection, so a Dovecot `oauth2` passdb can be added later.
 
+## Calendar and contacts apps
+
+Calendar and contacts apps connect over CalDAV and CardDAV, using the same app passwords as mail apps.
+
+| Setting | Value |
+| --- | --- |
+| Server | `https://<aether host>/dav/` (apps that support discovery can use just the host name) |
+| Username | the full mailbox address |
+| Password | an app password for that mailbox |
+
+Discovery works through `/.well-known/caldav` and `/.well-known/carddav`. The server, its discovery, and calendar and contact create, read, query, and delete are covered by automated tests that use the `go-webdav` client. Apple Calendar and Contacts, Thunderbird, and DAVx5 use the same standard, so they are expected to work, but they have not yet been tested against Aether.
+
 ## Bootstrap administrator
 
 On a standalone installation, create the first platform administrator from the CLI:

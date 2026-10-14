@@ -79,6 +79,17 @@ Forwarding (`redirect`) and automatic replies (`vacation`) need Dovecot to send 
 - **Automatic replies** are sent with an empty envelope sender.
 - **Header From check.** Rspamd's From-header rule exempts the relay account, because forwarded mail keeps someone else's From.
 
+## Calendar and contacts
+
+Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events and cards are stored as iCalendar and vCard text in `dav_objects`, together with a few extracted columns: UID, ETag, summary, email addresses, start and end time, and whether the event repeats. Those columns serve the web app's JSON API and recipient suggestions without parsing every object.
+
+- **Login:** DAV requests sign in with a mailbox address and an app password.
+- **Ownership:** the user ID is part of every DAV path, and requests for another user's path are refused with 403.
+- **Writes:** conditional updates use `If-Match` with the stored ETag.
+- **Repeating events:** the JSON API expands them with `rrule-go` for the requested range.
+
+We chose this over running Radicale or Baïkal next to Aether. Doing it in-process keeps one sign-in system and one set of tenant checks, and puts calendars and contacts in the same database backups as everything else. The trade-off is that `go-webdav`'s server is younger than those projects, which is why client compatibility is documented as untested until each client has been tried.
+
 ## Data model
 
 The data model is defined in `migrations/0001_init.sql`:
