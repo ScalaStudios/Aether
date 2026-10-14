@@ -28,6 +28,19 @@ write_map mailboxes "SELECT 1 FROM mail_users WHERE address = '%s'"
 write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s'"
 write_map senders "SELECT login FROM mail_senders WHERE sender = '%s'"
 
+if [ -n "${AETHER_RELAYHOST:-}" ] && [ -n "${AETHER_RELAY_USER:-}" ]; then
+  : "${AETHER_RELAY_PASSWORD:?required when AETHER_RELAY_USER is set}"
+  umask 077
+  printf '%s %s:%s\n' "$AETHER_RELAYHOST" "$AETHER_RELAY_USER" "$AETHER_RELAY_PASSWORD" > /etc/postfix/sasl_passwd
+  postmap /etc/postfix/sasl_passwd
+  postconf -e \
+    smtp_sasl_auth_enable=yes \
+    smtp_sasl_password_maps=hash:/etc/postfix/sasl_passwd \
+    smtp_sasl_security_options=noanonymous \
+    smtp_sasl_tls_security_options=noanonymous \
+    smtp_tls_security_level=encrypt
+fi
+
 [ -f /etc/aliases ] || echo "postmaster: root" > /etc/aliases
 newaliases
 cp /etc/resolv.conf /etc/hosts /var/spool/postfix/etc/ 2>/dev/null || true

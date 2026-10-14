@@ -1,0 +1,9 @@
+services:
+  caddy:
+    profiles: ["bundled-proxy"]
+  api:
+    ports:
+      - "127.0.0.1:${AETHER_API_LOCAL_PORT:-20100}:8080"
+  web:
+    ports:
+      - "127.0.0.1:${AETHER_WEB_LOCAL_PORT:-20101}:3000"

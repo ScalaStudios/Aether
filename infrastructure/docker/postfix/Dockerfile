@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postfix postfix-pgsql ca-certificates netbase \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postfix postfix-pgsql libsasl2-modules ca-certificates netbase \
  && rm -rf /var/lib/apt/lists/*
 COPY main.cf master.cf /etc/postfix/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

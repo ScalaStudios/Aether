@@ -88,6 +88,8 @@ services:
     environment:
       <<: *mail-env
       AETHER_RELAYHOST: ${AETHER_RELAYHOST:-}
+      AETHER_RELAY_USER: ${AETHER_RELAY_USER:-}
+      AETHER_RELAY_PASSWORD: ${AETHER_RELAY_PASSWORD:-}
     volumes:
       - postfix-spool:/var/spool/postfix
       - tls:/tls:ro
