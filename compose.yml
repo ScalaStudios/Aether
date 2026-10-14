@@ -37,6 +37,11 @@ services:
     environment:
       AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
 
+  unbound:
+    build: ./infrastructure/docker/unbound
+    image: aether/unbound:dev
+    restart: unless-stopped
+
   tls-init:
     build: ./infrastructure/docker/dovecot
     image: aether/dovecot:dev
@@ -56,6 +61,8 @@ services:
       - rspamd:/var/lib/rspamd
     depends_on:
       valkey:
+        condition: service_healthy
+      unbound:
         condition: service_healthy
 
   dovecot:

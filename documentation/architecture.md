@@ -52,6 +52,8 @@ We evaluated two options: an integrated server such as Stalwart, and the Postfix
 
 The trade-off is that we must maintain glue: SQL lookups, the master-user bridge, and DKIM key publication. Calendar and contacts (CalDAV and CardDAV) are not part of this stack. Phase 3 will add them as a separate component.
 
+Rspamd queries DNS blocklists through a bundled Unbound recursive resolver. Spamhaus and URIBL refuse queries that arrive through large public resolvers, so using Docker's resolver would silently disable those checks.
+
 We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because Rspamd stores greylisting, rate-limit, Bayes, and DKIM key data there.
 
 ## Trust boundaries
@@ -106,4 +108,3 @@ There is no benchmark harness yet; it is part of Phase 4. In development, the in
 - The login and send rate limits are in-process. With several API replicas, the limits apply per replica.
 - Postfix applies sender-login checks to the envelope sender. Rspamd signs with DKIM only when the header From domain matches the authenticated user's domain, but it does not reject mail whose header From is forged.
 - Forwarding aliases to external addresses do not rewrite the sender (no SRS), so strict SPF at the receiver may reject forwarded mail.
-- Rspamd uses the container's resolver. Public DNS blocklists (Spamhaus, URIBL) refuse queries that arrive through large public resolvers. For full RBL coverage, run a local recursive resolver.

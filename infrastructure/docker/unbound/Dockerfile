@@ -1,0 +1,7 @@
+FROM alpine:3.22
+RUN apk add --no-cache unbound dns-root-hints drill
+COPY unbound.conf /etc/unbound/unbound.conf
+RUN unbound-checkconf /etc/unbound/unbound.conf
+EXPOSE 53/udp 53/tcp
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 CMD drill @127.0.0.1 localhost >/dev/null || exit 1
+ENTRYPOINT ["unbound", "-d", "-c", "/etc/unbound/unbound.conf"]

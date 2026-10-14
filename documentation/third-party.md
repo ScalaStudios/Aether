@@ -12,6 +12,7 @@ Aether's own code is AGPL-3.0-or-later. The components below are either Go or np
 | PostgreSQL 17 | PostgreSQL License | Separate process; Aether talks to it over the database protocol |
 | Valkey 8 | BSD-3-Clause | Separate process; Aether talks to it over the Redis protocol |
 | Caddy 2 | Apache-2.0 | Reverse proxy |
+| Unbound (Alpine) | BSD-3-Clause | Recursive DNS resolver for Rspamd |
 
 ## Go modules
 
