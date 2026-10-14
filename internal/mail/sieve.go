@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -17,10 +19,38 @@ type RuleCondition struct {
 }
 
 type RuleActions struct {
-	MoveTo   string `json:"moveTo,omitempty"`
-	MarkRead bool   `json:"markRead,omitempty"`
-	Flag     bool   `json:"flag,omitempty"`
-	Stop     bool   `json:"stop,omitempty"`
+	MoveTo    string   `json:"moveTo,omitempty"`
+	MarkRead  bool     `json:"markRead,omitempty"`
+	Flag      bool     `json:"flag,omitempty"`
+	ForwardTo []string `json:"forwardTo,omitempty"`
+	KeepCopy  bool     `json:"keepCopy,omitempty"`
+	Stop      bool     `json:"stop,omitempty"`
+}
+
+type AutoReply struct {
+	Enabled bool   `json:"enabled"`
+	Subject string `json:"subject"`
+	Message string `json:"message"`
+	Start   string `json:"start,omitempty"`
+	End     string `json:"end,omitempty"`
+}
+
+var isoDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+func (a AutoReply) Validate() error {
+	switch {
+	case !a.Enabled:
+		return nil
+	case strings.TrimSpace(a.Message) == "" || len(a.Message) > 10000:
+		return errors.New("Write a reply message of up to 10,000 characters.")
+	case len(a.Subject) > 200 || strings.ContainsAny(a.Subject, "\r\n"):
+		return errors.New("The subject must be one line of up to 200 characters.")
+	case a.Start != "" && !isoDate.MatchString(a.Start), a.End != "" && !isoDate.MatchString(a.End):
+		return errors.New("Dates must look like 2026-10-31.")
+	case a.Start != "" && a.End != "" && a.End < a.Start:
+		return errors.New("The end date is before the start date.")
+	}
+	return nil
 }
 
 type Rule struct {
@@ -45,10 +75,17 @@ func (r Rule) Validate() error {
 		return errors.New("Match must be all or any.")
 	case len(r.Conditions) == 0 || len(r.Conditions) > 20:
 		return errors.New("Each rule needs between 1 and 20 conditions.")
-	case r.Actions.MoveTo == "" && !r.Actions.MarkRead && !r.Actions.Flag:
+	case r.Actions.MoveTo == "" && !r.Actions.MarkRead && !r.Actions.Flag && len(r.Actions.ForwardTo) == 0:
 		return errors.New("Each rule needs at least one action.")
+	case len(r.Actions.ForwardTo) > 5:
+		return errors.New("Forward to 5 addresses or fewer.")
 	case strings.ContainsAny(r.Actions.MoveTo, "\r\n\x00"):
 		return errors.New("The folder name is not valid.")
+	}
+	for _, addr := range r.Actions.ForwardTo {
+		if a, err := mail.ParseAddress(addr); err != nil || a.Address != addr {
+			return errors.New(addr + " is not a valid forwarding address.")
+		}
 	}
 	for _, c := range r.Conditions {
 		if _, ok := ruleHeaders[c.Field]; !ok {
@@ -61,9 +98,28 @@ func (r Rule) Validate() error {
 	return nil
 }
 
-func CompileSieve(rules []Rule) string {
+func CompileSieve(rules []Rule, reply AutoReply, address string) string {
 	var b strings.Builder
-	b.WriteString(`require ["fileinto", "imap4flags", "mailbox"];` + "\n")
+	b.WriteString(`require ["fileinto", "imap4flags", "mailbox", "copy", "vacation", "date", "relational"];` + "\n")
+	if reply.Enabled {
+		var window []string
+		if reply.Start != "" {
+			window = append(window, `currentdate :value "ge" "date" `+sieveString(reply.Start))
+		}
+		if reply.End != "" {
+			window = append(window, `currentdate :value "le" "date" `+sieveString(reply.End))
+		}
+		subject := reply.Subject
+		if subject == "" {
+			subject = "Automatic reply"
+		}
+		action := fmt.Sprintf("vacation :days 1 :subject %s :from %s %s;\n", sieveString(subject), sieveString(address), sieveString(reply.Message))
+		if len(window) > 0 {
+			fmt.Fprintf(&b, "if allof (%s) {\n  %s}\n", strings.Join(window, ", "), action)
+		} else {
+			b.WriteString(action)
+		}
+	}
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
@@ -82,6 +138,13 @@ func CompileSieve(rules []Rule) string {
 		}
 		if r.Actions.Flag {
 			b.WriteString("  addflag \"\\\\Flagged\";\n")
+		}
+		for _, addr := range r.Actions.ForwardTo {
+			if r.Actions.KeepCopy || r.Actions.MoveTo != "" {
+				fmt.Fprintf(&b, "  redirect :copy %s;\n", sieveString(addr))
+			} else {
+				fmt.Fprintf(&b, "  redirect %s;\n", sieveString(addr))
+			}
 		}
 		if r.Actions.MoveTo != "" {
 			fmt.Fprintf(&b, "  fileinto :create %s;\n", sieveString(r.Actions.MoveTo))

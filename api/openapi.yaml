@@ -584,6 +584,32 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/MailRule" } }
         "422": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/auto-reply:
+    get:
+      tags: [mail]
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoReply" }
+    put:
+      tags: [mail]
+      summary: Set the automatic reply. Each sender receives it at most once a day; lists and automated mail are skipped.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutoReply" }
+      responses:
+        "200":
+          description: Saved and installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoReply" }
+        "422": { $ref: "#/components/responses/Error" }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -872,6 +898,15 @@ components:
             text: { type: string }
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+    AutoReply:
+      type: object
+      required: [enabled, subject, message]
+      properties:
+        enabled: { type: boolean }
+        subject: { type: string, maxLength: 200 }
+        message: { type: string, maxLength: 10000 }
+        start: { type: string, format: date, description: First day replies are sent }
+        end: { type: string, format: date, description: Last day replies are sent }
     MailRule:
       type: object
       required: [name, enabled, match, conditions, actions]
@@ -891,11 +926,13 @@ components:
               contains: { type: string, maxLength: 500, description: Case-insensitive substring of the header }
         actions:
           type: object
-          description: At least one of moveTo, markRead, or flag.
+          description: At least one of moveTo, markRead, flag, or forwardTo.
           properties:
             moveTo: { type: string, description: Existing folder name }
             markRead: { type: boolean }
             flag: { type: boolean }
+            forwardTo: { type: array, maxItems: 5, items: { type: string, format: email }, description: Forwarded with this mailbox as the envelope sender }
+            keepCopy: { type: boolean, description: Also keep the message in this mailbox when forwarding }
             stop: { type: boolean, description: Skip later rules for matching messages }
     Attachment:
       type: object

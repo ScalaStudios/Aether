@@ -241,5 +241,13 @@ export interface MailRule {
   enabled: boolean
   match: "all" | "any"
   conditions: { field: RuleField; contains: string }[]
-  actions: { moveTo?: string; markRead?: boolean; flag?: boolean; stop?: boolean }
+  actions: { moveTo?: string; markRead?: boolean; flag?: boolean; forwardTo?: string[]; keepCopy?: boolean; stop?: boolean }
+}
+
+export interface AutoReply {
+  enabled: boolean
+  subject: string
+  message: string
+  start?: string
+  end?: string
 }

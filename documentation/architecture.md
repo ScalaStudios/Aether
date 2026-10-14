@@ -68,6 +68,17 @@ We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because 
 | API → PostgreSQL | All queries are parameterized (pgx). Tenant scope is checked on every resource lookup: a resource is loaded first, then its `org_id` is compared with the caller's memberships. Platform administrators manage tenants, but they cannot read a user's mail through the API. |
 | Secrets at rest | OIDC client secrets and DKIM private keys are encrypted with AES-256-GCM using `AETHER_SECRET_KEY`. The encryption is bound to the row ID as additional data. |
 
+## Rules, forwarding, and automatic replies
+
+Mail rules and automatic replies are stored per mailbox in PostgreSQL. Whenever either changes, the API compiles both into one Sieve script and installs it over ManageSieve, on Dovecot's internal port 4190, using the same master-user login as webmail. Dovecot runs the script at delivery, after the global spam-to-Junk script.
+
+Forwarding (`redirect`) and automatic replies (`vacation`) need Dovecot to send mail:
+
+- **Sending path.** Dovecot hands the message to `msmtp`, which submits it to Postfix on internal port 10025. That port is never published, and it requires TLS and the `aether-sieve-relay` login. The relay account accepts logins only from private networks, has no mailbox, and authenticates with `AETHER_SIEVE_RELAY_PASSWORD`.
+- **Forwarded mail** keeps the original headers, but its envelope sender is the forwarding mailbox. SPF therefore passes for the forwarding domain, the original sender's DKIM signature still satisfies DMARC, and delivery failures return to the forwarding mailbox.
+- **Automatic replies** are sent with an empty envelope sender.
+- **Header From check.** Rspamd's From-header rule exempts the relay account, because forwarded mail keeps someone else's From.
+
 ## Data model
 
 The data model is defined in `migrations/0001_init.sql`:

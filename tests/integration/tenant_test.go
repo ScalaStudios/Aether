@@ -36,6 +36,7 @@ func TestTenantIsolation(t *testing.T) {
 		{"PUT", "/mailboxes/" + b.bobMailbox + "/drafts"},
 		{"DELETE", "/mailboxes/" + b.bobMailbox + "/drafts/1"},
 		{"GET", "/mailboxes/" + b.bobMailbox + "/rules"},
+		{"GET", "/mailboxes/" + b.bobMailbox + "/auto-reply"},
 	}
 	for _, d := range denied {
 		var body any

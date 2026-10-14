@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowDown, ArrowUp, ListFilter, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useState } from "react"
-import { Controller, useFieldArray, useForm } from "react-hook-form"
+import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -12,18 +12,19 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
+import { RecipientInput } from "@/components/recipient-input"
 import { SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Input, Textarea } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
 import { folderLabel } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { MailRule, RuleField } from "@/lib/types"
+import type { AutoReply, MailRule, RuleField } from "@/lib/types"
 
 const fields: Record<RuleField, string> = { from: "From", to: "To", cc: "Cc", subject: "Subject" }
 const keepInPlace = "__keep__"
@@ -38,9 +39,11 @@ const schema = z
     moveTo: z.string(),
     markRead: z.boolean(),
     flag: z.boolean(),
+    forwardTo: z.array(z.object({ name: z.string().optional(), address: z.email() })).max(5, "Forward to 5 addresses or fewer."),
+    keepCopy: z.boolean(),
     stop: z.boolean(),
   })
-  .refine((v) => v.moveTo !== keepInPlace || v.markRead || v.flag, { message: "Choose at least one action.", path: ["moveTo"] })
+  .refine((v) => v.moveTo !== keepInPlace || v.markRead || v.flag || v.forwardTo.length > 0, { message: "Choose at least one action.", path: ["moveTo"] })
 
 type Values = z.infer<typeof schema>
 
@@ -52,6 +55,8 @@ function toValues(rule?: MailRule): Values {
     moveTo: rule?.actions.moveTo || keepInPlace,
     markRead: rule?.actions.markRead ?? false,
     flag: rule?.actions.flag ?? false,
+    forwardTo: (rule?.actions.forwardTo ?? []).map((address) => ({ address })),
+    keepCopy: rule?.actions.keepCopy ?? true,
     stop: rule?.actions.stop ?? true,
   }
 }
@@ -62,13 +67,21 @@ function toRule(v: Values, enabled: boolean): MailRule {
     enabled,
     match: v.match,
     conditions: v.conditions,
-    actions: { moveTo: v.moveTo === keepInPlace ? undefined : v.moveTo, markRead: v.markRead, flag: v.flag, stop: v.stop },
+    actions: {
+      moveTo: v.moveTo === keepInPlace ? undefined : v.moveTo,
+      markRead: v.markRead,
+      flag: v.flag,
+      forwardTo: v.forwardTo.length ? v.forwardTo.map((a) => a.address) : undefined,
+      keepCopy: v.forwardTo.length ? v.keepCopy : undefined,
+      stop: v.stop,
+    },
   }
 }
 
 function summary(rule: MailRule) {
   const when = rule.conditions.map((c) => `${fields[c.field]} contains “${c.contains}”`).join(rule.match === "all" ? " and " : " or ")
-  const then = [rule.actions.moveTo && `move to ${rule.actions.moveTo}`, rule.actions.markRead && "mark as read", rule.actions.flag && "flag"].filter(Boolean).join(", ")
+  const forward = rule.actions.forwardTo?.length && `forward to ${rule.actions.forwardTo.join(", ")}${rule.actions.keepCopy || rule.actions.moveTo ? "" : " without keeping a copy"}`
+  const then = [rule.actions.moveTo && `move to ${rule.actions.moveTo}`, rule.actions.markRead && "mark as read", rule.actions.flag && "flag", forward].filter(Boolean).join(", ")
   return { when, then }
 }
 
@@ -80,8 +93,8 @@ export function MailRules() {
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title="Mail rules"
-        description="Rules run on the mail server as messages arrive, so they apply in Aether Mail and in every other mail client. They run in order, after spam filtering."
+        title="Mail rules and automatic replies"
+        description="These run on the mail server as messages arrive, so they apply in Aether Mail and in every other mail client. Rules run in order, after spam filtering."
         actions={
           (mailboxes.data?.length ?? 0) > 1 && (
             <Select value={mailboxId ?? undefined} onValueChange={setChosen}>
@@ -100,7 +113,10 @@ export function MailRules() {
         }
       />
       {mailboxId ? (
-        <RuleList key={mailboxId} mailboxId={mailboxId} />
+        <>
+          <RuleList key={`rules-${mailboxId}`} mailboxId={mailboxId} />
+          <AutoReplyCard key={`reply-${mailboxId}`} mailboxId={mailboxId} />
+        </>
       ) : (
         !mailboxes.isPending && <EmptyState icon={ListFilter} title="No mailbox" description="Rules need a mailbox. Ask an administrator to create one for you." />
       )}
@@ -117,6 +133,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
   const [deleting, setDeleting] = useState<number | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues() })
   const conditions = useFieldArray({ control: form.control, name: "conditions" })
+  const forwarding = useWatch({ control: form.control, name: "forwardTo" }).length > 0
 
   const save = useMutation({
     mutationFn: (next: MailRule[]) => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`, { method: "PUT", body: next }),
@@ -218,7 +235,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
         onOpenChange={(o) => !o && setEditing(null)}
         wide
         title={editing === "new" ? "New rule" : "Edit rule"}
-        description="Text matching ignores letter case."
+        description="Text matching ignores letter case. Forwarded mail is sent from this mailbox’s address, so delivery failures come back here."
         submitLabel="Save rule"
         pending={save.isPending}
         onSubmit={submit}
@@ -308,6 +325,16 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
             </Field>
           )}
         />
+        <Controller
+          control={form.control}
+          name="forwardTo"
+          render={({ field, fieldState }) => (
+            <Field id="rule-forward" label="Forward to" hint="Up to 5 addresses. Replies from the recipients go to the original sender." error={fieldState.error?.message ?? fieldState.error?.root?.message}>
+              <RecipientInput id="rule-forward" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" />
+            </Field>
+          )}
+        />
+        {forwarding && <SwitchField control={form.control} name="keepCopy" id="rule-keep" label="Keep a copy in this mailbox" />}
         <SwitchField control={form.control} name="markRead" id="rule-read" label="Mark as read" />
         <SwitchField control={form.control} name="flag" id="rule-flag" label="Flag" />
         <SwitchField control={form.control} name="stop" id="rule-stop" label="Stop processing more rules" hint="Later rules are skipped for messages this rule matches." />
@@ -323,5 +350,71 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
         onConfirm={() => deleting !== null && save.mutate(list.filter((_, i) => i !== deleting))}
       />
     </>
+  )
+}
+
+const replySchema = z
+  .object({
+    enabled: z.boolean(),
+    subject: z.string().trim().max(200),
+    message: z.string().max(10000),
+    start: z.string(),
+    end: z.string(),
+  })
+  .refine((v) => !v.enabled || v.message.trim().length > 0, { message: "Write the reply people will receive.", path: ["message"] })
+  .refine((v) => !v.start || !v.end || v.end >= v.start, { message: "The end date is before the start date.", path: ["end"] })
+
+type ReplyValues = z.infer<typeof replySchema>
+
+function AutoReplyCard({ mailboxId }: { mailboxId: string }) {
+  const qc = useQueryClient()
+  const key = ["auto-reply", mailboxId]
+  const current = useQuery({ queryKey: key, queryFn: () => api<AutoReply>(`/mailboxes/${mailboxId}/auto-reply`) })
+  const form = useForm<ReplyValues>({
+    resolver: zodResolver(replySchema),
+    values: current.data && { enabled: current.data.enabled, subject: current.data.subject, message: current.data.message, start: current.data.start ?? "", end: current.data.end ?? "" },
+  })
+  const enabled = useWatch({ control: form.control, name: "enabled" })
+  const save = useMutation({
+    mutationFn: (v: ReplyValues) =>
+      api<AutoReply>(`/mailboxes/${mailboxId}/auto-reply`, { method: "PUT", body: { ...v, start: v.start || undefined, end: v.end || undefined } }),
+    onSuccess: (saved) => {
+      qc.setQueryData(key, saved)
+      toast.success(saved.enabled ? "Automatic replies are on" : "Automatic replies are off")
+    },
+  })
+  const errors = form.formState.errors
+
+  return (
+    <form
+      onSubmit={form.handleSubmit((v) => save.mutate(v))}
+      noValidate
+      className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6"
+      aria-busy={current.isPending}
+    >
+      <SectionHeader title="Automatic replies" description="Each sender gets the reply at most once a day. Mailing lists and automated messages never get one." />
+      <SwitchField control={form.control} name="enabled" id="reply-enabled" label="Send automatic replies" />
+      {enabled && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="reply-start" label="From" hint="Optional. Leave empty to start now." error={errors.start?.message}>
+              <Input id="reply-start" type="date" {...form.register("start")} />
+            </Field>
+            <Field id="reply-end" label="Until" hint="Optional. The last day replies are sent." error={errors.end?.message}>
+              <Input id="reply-end" type="date" aria-invalid={!!errors.end} {...form.register("end")} />
+            </Field>
+          </div>
+          <Field id="reply-subject" label="Subject" hint="Leave empty to use “Automatic reply”." error={errors.subject?.message}>
+            <Input id="reply-subject" autoComplete="off" {...form.register("subject")} />
+          </Field>
+          <Field id="reply-message" label="Message" error={errors.message?.message}>
+            <Textarea id="reply-message" rows={5} aria-invalid={!!errors.message} {...form.register("message")} />
+          </Field>
+        </>
+      )}
+      <Button type="submit" variant="secondary" className="self-start" loading={save.isPending} disabled={current.isPending}>
+        Save automatic replies
+      </Button>
+    </form>
   )
 }

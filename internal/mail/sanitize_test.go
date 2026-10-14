@@ -83,8 +83,9 @@ func TestCompileSieveEscapesAndSkipsDisabled(t *testing.T) {
 		{Name: "invoices", Enabled: true, Match: "any", Conditions: []RuleCondition{{Field: "subject", Contains: `say "hi" \ now`}, {Field: "from", Contains: "billing@"}},
 			Actions: RuleActions{MoveTo: "Archive", MarkRead: true, Stop: true}},
 		{Name: "off", Enabled: false, Match: "all", Conditions: []RuleCondition{{Field: "to", Contains: "x"}}, Actions: RuleActions{Flag: true}},
-	})
-	for _, want := range []string{`anyof (header :contains "Subject" "say \"hi\" \\ now", header :contains "From" "billing@")`, `addflag "\\Seen";`, `fileinto :create "Archive";`, "stop;"} {
+		{Name: "fwd", Enabled: true, Match: "all", Conditions: []RuleCondition{{Field: "from", Contains: "boss"}}, Actions: RuleActions{ForwardTo: []string{"me@else.example"}, KeepCopy: true}},
+	}, AutoReply{Enabled: true, Subject: "Away", Message: "Back on \"Monday\"", Start: "2026-10-14", End: "2026-10-20"}, "me@example.test")
+	for _, want := range []string{`redirect :copy "me@else.example";`, `currentdate :value "ge" "date" "2026-10-14"`, `vacation :days 1 :subject "Away" :from "me@example.test" "Back on \"Monday\"";`, `anyof (header :contains "Subject" "say \"hi\" \\ now", header :contains "From" "billing@")`, `addflag "\\Seen";`, `fileinto :create "Archive";`, "stop;"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %s:\n%s", want, script)
 		}
@@ -94,5 +95,11 @@ func TestCompileSieveEscapesAndSkipsDisabled(t *testing.T) {
 	}
 	if (Rule{Name: "x", Match: "all", Conditions: []RuleCondition{{Field: "subject", Contains: "a\r\nb"}}, Actions: RuleActions{Flag: true}}).Validate() == nil {
 		t.Error("multi-line condition accepted")
+	}
+	if (Rule{Name: "x", Match: "all", Conditions: []RuleCondition{{Field: "subject", Contains: "a"}}, Actions: RuleActions{ForwardTo: []string{"Evil <x@y.z>"}}}).Validate() == nil {
+		t.Error("display-name forwarding address accepted")
+	}
+	if (AutoReply{Enabled: true, Message: "x", Start: "2026-10-20", End: "2026-10-01"}).Validate() == nil {
+		t.Error("inverted date range accepted")
 	}
 }

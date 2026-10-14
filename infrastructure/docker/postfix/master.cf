@@ -19,6 +19,15 @@ submissions inet n      -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=reject_non_fqdn_recipient
   -o milter_macro_daemon_name=ORIGINATING
+10025     inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/sieve-relay
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_sender_restrictions=
+  -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_recipient_restrictions=reject_non_fqdn_recipient
+  -o milter_macro_daemon_name=ORIGINATING
 pickup    unix  n       -       n       60      1       pickup
 cleanup   unix  n       -       n       -       0       cleanup
 submission-cleanup unix n -     n       -       0       cleanup

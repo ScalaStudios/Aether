@@ -3,7 +3,8 @@ rspamd_config:register_symbol({
   type = 'prefilter',
   priority = 10,
   callback = function(task)
-    if not task:get_user() then
+    local user = task:get_user()
+    if not user or user == 'aether-sieve-relay' then
       return
     end
     local envelope = task:get_from('smtp')

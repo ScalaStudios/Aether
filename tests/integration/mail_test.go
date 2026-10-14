@@ -352,6 +352,34 @@ func TestMailMilestone(t *testing.T) {
 		w.bob.must("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{}, nil, 200)
 	})
 
+	t.Run("forwarding and automatic replies go out through the sieve relay", func(t *testing.T) {
+		tag := "forward-" + randomSuffix()
+		w.bob.must("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{{
+			"name": "Forward", "enabled": true, "match": "all", "conditions": []map[string]string{{"field": "subject", "contains": tag}},
+			"actions": map[string]any{"forwardTo": []string{alice}, "keepCopy": true},
+		}}, nil, 200)
+		defer w.bob.must("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{}, nil, 200)
+		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{"to": []map[string]string{{"address": bob}}, "subject": "Please read " + tag, "text": "forward me"}, nil, 202)
+		waitFor(t, "bob to keep a copy", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", "Please read "+tag) != 0 })
+		waitFor(t, "the forwarded copy to reach alice", func() bool { return findInAPI(w.alice, w.aliceMailbox, "INBOX", "Please read "+tag) != 0 })
+
+		if got := w.alice.do("PUT", "/mailboxes/"+w.aliceMailbox+"/auto-reply", map[string]any{"enabled": true, "message": "x", "start": "2026-12-01", "end": "2026-11-01"}, nil); got != 422 {
+			t.Fatalf("inverted date range returned %d", got)
+		}
+		w.alice.must("PUT", "/mailboxes/"+w.aliceMailbox+"/auto-reply", map[string]any{"enabled": true, "subject": "Out of office " + tag, "message": "Back next week."}, nil, 200)
+		defer w.alice.must("PUT", "/mailboxes/"+w.aliceMailbox+"/auto-reply", map[string]any{"enabled": false, "subject": "", "message": ""}, nil, 200)
+		var reply struct {
+			Enabled bool   `json:"enabled"`
+			Subject string `json:"subject"`
+		}
+		w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/auto-reply", nil, &reply, 200)
+		if !reply.Enabled || reply.Subject != "Out of office "+tag {
+			t.Fatalf("stored auto-reply: %+v", reply)
+		}
+		w.bob.must("POST", "/mailboxes/"+w.bobMailbox+"/send", map[string]any{"to": []map[string]string{{"address": alice}}, "subject": "Question " + tag, "text": "are you there?"}, nil, 202)
+		waitFor(t, "bob to receive the automatic reply", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", "Out of office "+tag) != 0 })
+	})
+
 	t.Run("spam is filed into Junk", func(t *testing.T) {
 		subject := "gtube " + randomSuffix()
 		body := "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"
