@@ -219,7 +219,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if !ok {
 		return
 	}
-	if !s.limiter.allow("send:"+m.ID, 30) {
+	if !s.allow(r.Context(), "send:"+m.ID, 30) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "This mailbox is sending too quickly. Wait a minute before sending again.")
 		return
 	}

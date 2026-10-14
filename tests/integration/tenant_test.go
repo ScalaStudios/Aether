@@ -86,3 +86,15 @@ func TestCSRFAndSessionRequired(t *testing.T) {
 		t.Fatalf("state change without CSRF token returned %d", got)
 	}
 }
+
+func TestLoginRateLimit(t *testing.T) {
+	c := newClient(t)
+	email := "nobody-" + randomSuffix() + "@example.test"
+	codes := map[int]int{}
+	for range 12 {
+		codes[c.do("POST", "/auth/login", map[string]string{"email": email, "password": "wrong-password"}, nil)]++
+	}
+	if codes[401] != 10 || codes[429] != 2 {
+		t.Fatalf("expected 10 rejections then 2 rate limits, got %v", codes)
+	}
+}

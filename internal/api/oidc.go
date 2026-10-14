@@ -123,7 +123,7 @@ func (s *Server) loginRedirect(w http.ResponseWriter, r *http.Request, code stri
 }
 
 func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
-	if !s.limiter.allow("oidc-ip:"+s.clientIP(r), 30) {
+	if !s.allow(r.Context(), "oidc-ip:"+s.clientIP(r), 30) {
 		s.loginRedirect(w, r, "rate_limited")
 		return
 	}

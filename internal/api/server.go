@@ -9,8 +9,8 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,12 +32,11 @@ type Server struct {
 	mail    *mail.Client
 	log     *slog.Logger
 	oidc    *oidcCache
-	limiter *limiter
 	resolve resolver
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), limiter: newLimiter(), resolve: net.DefaultResolver}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -288,23 +287,15 @@ func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID
 	}
 }
 
-type limiter struct {
-	mu     sync.Mutex
-	counts map[string]int
-	reset  time.Time
-}
-
-func newLimiter() *limiter {
-	return &limiter{counts: map[string]int{}, reset: time.Now().Add(time.Minute)}
-}
-
-func (l *limiter) allow(key string, perMinute int) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if time.Now().After(l.reset) {
-		l.counts = map[string]int{}
-		l.reset = time.Now().Add(time.Minute)
+func (s *Server) allow(ctx context.Context, key string, perMinute int64) bool {
+	window := time.Now().Unix() / 60
+	k := "aether:ratelimit:" + key + ":" + strconv.FormatInt(window, 10)
+	pipe := s.kv.TxPipeline()
+	count := pipe.Incr(ctx, k)
+	pipe.Expire(ctx, k, 2*time.Minute)
+	if _, err := pipe.Exec(ctx); err != nil {
+		s.log.Error("rate limit check failed; allowing request", "err", err)
+		return true
 	}
-	l.counts[key]++
-	return l.counts[key] <= perMinute
+	return count.Val() <= perMinute
 }
