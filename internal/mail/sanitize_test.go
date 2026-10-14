@@ -77,3 +77,22 @@ func TestBuildKeepsBodiesAndReferences(t *testing.T) {
 		}
 	}
 }
+
+func TestCompileSieveEscapesAndSkipsDisabled(t *testing.T) {
+	script := CompileSieve([]Rule{
+		{Name: "invoices", Enabled: true, Match: "any", Conditions: []RuleCondition{{Field: "subject", Contains: `say "hi" \ now`}, {Field: "from", Contains: "billing@"}},
+			Actions: RuleActions{MoveTo: "Archive", MarkRead: true, Stop: true}},
+		{Name: "off", Enabled: false, Match: "all", Conditions: []RuleCondition{{Field: "to", Contains: "x"}}, Actions: RuleActions{Flag: true}},
+	})
+	for _, want := range []string{`anyof (header :contains "Subject" "say \"hi\" \\ now", header :contains "From" "billing@")`, `addflag "\\Seen";`, `fileinto :create "Archive";`, "stop;"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %s:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, `"To"`) {
+		t.Errorf("disabled rule compiled:\n%s", script)
+	}
+	if (Rule{Name: "x", Match: "all", Conditions: []RuleCondition{{Field: "subject", Contains: "a\r\nb"}}, Actions: RuleActions{Flag: true}}).Validate() == nil {
+		t.Error("multi-line condition accepted")
+	}
+}

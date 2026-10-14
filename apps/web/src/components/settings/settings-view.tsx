@@ -14,6 +14,7 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { PageContainer } from "@/components/page-container"
+import { MailRules } from "@/components/settings/mail-rules"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -33,7 +34,7 @@ export function SettingsView() {
 
   return (
     <PageContainer>
-      <PageHeader title="Settings" description="Your account details and the app passwords that let mail clients connect to your mailboxes." />
+      <PageHeader title="Settings" description="Your account details, mail rules, and the app passwords that let mail clients connect to your mailboxes." />
       {session && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
           <SectionHeader title="Profile" description="Managed by your administrator or identity provider." />
@@ -66,6 +67,7 @@ export function SettingsView() {
           </dl>
         </section>
       )}
+      <MailRules />
       <AppPasswords />
     </PageContainer>
   )
@@ -120,7 +122,7 @@ function AppPasswords() {
         title="App passwords"
         description="Use an app password instead of your sign-in password in IMAP and SMTP mail clients. Each one works for a single mailbox."
         actions={
-          <Button onClick={() => setCreating(true)}>
+          <Button variant="secondary" onClick={() => setCreating(true)}>
             <Plus aria-hidden />
             Create app password
           </Button>

@@ -93,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/mailboxes/{mailboxId}/messages/{uid}/attachments/{part}", s.getAttachment)
 	authed("POST /api/v1/mailboxes/{mailboxId}/send", s.sendMessage)
 	authed("PUT /api/v1/mailboxes/{mailboxId}/drafts", s.saveDraft)
+	authed("GET /api/v1/mailboxes/{mailboxId}/rules", s.listRules)
+	authed("PUT /api/v1/mailboxes/{mailboxId}/rules", s.saveRules)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}/drafts/{uid}", s.deleteDraft)
 
 	authed("GET /api/v1/admin/identity-providers", s.listIdentityProviders)

@@ -17,6 +17,7 @@ type Config struct {
 	MailHostname          string
 	IMAPAddr              string
 	SubmissionAddr        string
+	SieveAddr             string
 	MailTLSCAFile         string
 	DovecotMasterUser     string
 	DovecotMasterPassword string
@@ -34,6 +35,7 @@ func Load() (*Config, error) {
 		MailHostname:          strings.ToLower(os.Getenv("AETHER_MAIL_HOSTNAME")),
 		IMAPAddr:              env("AETHER_IMAP_ADDR", "dovecot:143"),
 		SubmissionAddr:        env("AETHER_SUBMISSION_ADDR", "postfix:587"),
+		SieveAddr:             env("AETHER_SIEVE_ADDR", "dovecot:4190"),
 		MailTLSCAFile:         os.Getenv("AETHER_MAIL_TLS_CA_FILE"),
 		DovecotMasterUser:     env("AETHER_DOVECOT_MASTER_USER", "aether-webmail"),
 		DovecotMasterPassword: os.Getenv("AETHER_DOVECOT_MASTER_PASSWORD"),

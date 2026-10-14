@@ -556,6 +556,34 @@ paths:
         - { $ref: "#/components/parameters/uid" }
       responses:
         "204": { description: Deleted }
+  /mailboxes/{mailboxId}/rules:
+    get:
+      tags: [mail]
+      summary: Mail rules for this mailbox, in the order they run
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MailRule" } }
+    put:
+      tags: [mail]
+      summary: Replace all rules. They are compiled to Sieve and installed on the mail server before the response is sent.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MailRule" } }
+      responses:
+        "200":
+          description: Saved and installed
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MailRule" } }
+        "422": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -844,6 +872,31 @@ components:
             text: { type: string }
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+    MailRule:
+      type: object
+      required: [name, enabled, match, conditions, actions]
+      properties:
+        name: { type: string, maxLength: 100 }
+        enabled: { type: boolean }
+        match: { type: string, enum: [all, any] }
+        conditions:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            required: [field, contains]
+            properties:
+              field: { type: string, enum: [from, to, cc, subject] }
+              contains: { type: string, maxLength: 500, description: Case-insensitive substring of the header }
+        actions:
+          type: object
+          description: At least one of moveTo, markRead, or flag.
+          properties:
+            moveTo: { type: string, description: Existing folder name }
+            markRead: { type: boolean }
+            flag: { type: boolean }
+            stop: { type: boolean, description: Skip later rules for matching messages }
     Attachment:
       type: object
       required: [part, filename, contentType, size]

@@ -90,7 +90,7 @@ func serve(log *slog.Logger) error {
 	}
 	kv := redis.NewClient(&redis.Options{Addr: cfg.ValkeyAddr, Password: cfg.ValkeyPassword})
 	defer kv.Close()
-	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword)
+	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.SieveAddr, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword)
 	if err != nil {
 		return err
 	}

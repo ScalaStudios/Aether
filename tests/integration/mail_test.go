@@ -314,6 +314,41 @@ func TestMailMilestone(t *testing.T) {
 		}
 	})
 
+	t.Run("mail rules file and mark incoming mail", func(t *testing.T) {
+		tag := "invoice-" + randomSuffix()
+		if got := w.bob.do("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{{
+			"name": "bad folder", "enabled": true, "match": "all", "conditions": []map[string]string{{"field": "subject", "contains": tag}}, "actions": map[string]any{"moveTo": "Nope"},
+		}}, nil); got != 422 {
+			t.Fatalf("rule with a missing folder returned %d", got)
+		}
+		w.bob.must("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{{
+			"name": "Invoices", "enabled": true, "match": "any",
+			"conditions": []map[string]string{{"field": "subject", "contains": tag}, {"field": "from", "contains": "never-matches@"}},
+			"actions":    map[string]any{"moveTo": "Archive", "markRead": true, "stop": true},
+		}}, nil, 200)
+		var stored []map[string]any
+		w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/rules", nil, &stored, 200)
+		if len(stored) != 1 {
+			t.Fatalf("stored rules: %v", stored)
+		}
+		subject := "Your " + tag
+		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "amount due"}, nil, 202)
+		var page messagePage
+		waitFor(t, "the rule to file the message into Archive", func() bool {
+			w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages?folder=Archive", nil, &page, 200)
+			for _, m := range page.Messages {
+				if m.Subject == subject {
+					return m.Seen
+				}
+			}
+			return false
+		})
+		if findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 {
+			t.Fatal("rule-matched message also landed in the inbox")
+		}
+		w.bob.must("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{}, nil, 200)
+	})
+
 	t.Run("spam is filed into Junk", func(t *testing.T) {
 		subject := "gtube " + randomSuffix()
 		body := "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"

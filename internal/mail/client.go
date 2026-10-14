@@ -27,13 +27,14 @@ var ErrNotFound = errors.New("message not found")
 type Client struct {
 	imapAddr       string
 	submissionAddr string
+	sieveAddr      string
 	tls            *tls.Config
 	masterUser     string
 	masterPassword string
 	hostname       string
 }
 
-func NewClient(imapAddr, submissionAddr, hostname, caFile, masterUser, masterPassword string) (*Client, error) {
+func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser, masterPassword string) (*Client, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil {
 		roots = x509.NewCertPool()
@@ -48,7 +49,7 @@ func NewClient(imapAddr, submissionAddr, hostname, caFile, masterUser, masterPas
 		}
 	}
 	return &Client{
-		imapAddr: imapAddr, submissionAddr: submissionAddr, hostname: hostname,
+		imapAddr: imapAddr, submissionAddr: submissionAddr, sieveAddr: sieveAddr, hostname: hostname,
 		tls:        &tls.Config{ServerName: hostname, RootCAs: roots, MinVersion: tls.VersionTLS12},
 		masterUser: masterUser, masterPassword: masterPassword,
 	}, nil

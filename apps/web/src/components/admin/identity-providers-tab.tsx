@@ -15,12 +15,11 @@ import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
+import { SwitchField } from "@/components/switch-field"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
 import type { Discovery, IdentityProvider, IdentityProviderInput, Organization, Role } from "@/lib/types"
@@ -308,7 +307,7 @@ function ProviderDialog({ editing, organizations, onClose }: { editing: Editing;
           <Input id="idp-scopes" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!errors.scopes} {...form.register("scopes")} />
         </Field>
         <Provisioning form={form} organizations={organizations} />
-        <SwitchField form={form} name="enabled" label="Enabled" hint="Show this provider on the sign-in page." />
+        <SwitchField control={form.control} name="enabled" id="idp-enabled" label="Enabled" hint="Show this provider on the sign-in page." />
       </FormDialog>
     )
   }
@@ -410,32 +409,13 @@ function DiscoveryResult({ discovery, redirectUri }: { discovery: Discovery; red
   )
 }
 
-function SwitchField({ form, name, label, hint }: { form: UseFormReturn<Values>; name: "enabled" | "autoProvision"; label: string; hint: string }) {
-  const id = `idp-${name}`
-  return (
-    <Controller
-      control={form.control}
-      name={name}
-      render={({ field }) => (
-        <div className="flex items-start gap-3">
-          <Switch id={id} checked={field.value} onCheckedChange={field.onChange} className="mt-1" />
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={id}>{label}</Label>
-            <p className="text-sm text-fg-tertiary">{hint}</p>
-          </div>
-        </div>
-      )}
-    />
-  )
-}
-
 function Provisioning({ form, organizations }: { form: UseFormReturn<Values>; organizations: Organization[] }) {
   const mappings = useFieldArray({ control: form.control, name: "groupMappings" })
   const errors = form.formState.errors.groupMappings
 
   return (
     <div className="flex flex-col gap-4">
-      <SwitchField form={form} name="autoProvision" label="Create accounts on first sign-in" hint="When off, only people who already have an Aether account or mailbox can sign in." />
+      <SwitchField control={form.control} name="autoProvision" id="idp-autoProvision" label="Create accounts on first sign-in" hint="When off, only people who already have an Aether account or mailbox can sign in." />
       <Field id="idp-admin-group" label="Platform administrator group" hint="Members of this group become platform administrators. Leave empty to grant nobody.">
         <Input id="idp-admin-group" autoComplete="off" spellCheck={false} className="font-mono" {...form.register("adminGroup")} />
       </Field>

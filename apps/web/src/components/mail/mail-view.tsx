@@ -14,8 +14,8 @@ import { ShortcutsDialog } from "@/components/mail/shortcuts-dialog"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
 import { api } from "@/lib/api"
 import { buildDraft, type ComposeMode, type Draft } from "@/lib/mail"
-import { myMailboxesQuery } from "@/lib/queries"
-import type { Folder, Message, MessagePage, MessageSummary } from "@/lib/types"
+import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
+import type { Message, MessagePage, MessageSummary } from "@/lib/types"
 
 const POLL = 30_000
 
@@ -38,8 +38,7 @@ export function MailView() {
   const mbx = mailbox?.id ?? ""
 
   const folders = useQuery({
-    queryKey: ["folders", mbx],
-    queryFn: () => api<Folder[]>(`/mailboxes/${mbx}/folders`),
+    ...foldersQuery(mbx),
     enabled: !!mailbox,
     refetchInterval: POLL,
   })

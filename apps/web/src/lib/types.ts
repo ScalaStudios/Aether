@@ -233,3 +233,13 @@ export interface Discovery {
   groupsClaim: boolean
   redirectUri: string
 }
+
+export type RuleField = "from" | "to" | "cc" | "subject"
+
+export interface MailRule {
+  name: string
+  enabled: boolean
+  match: "all" | "any"
+  conditions: { field: RuleField; contains: string }[]
+  actions: { moveTo?: string; markRead?: boolean; flag?: boolean; stop?: boolean }
+}
