@@ -4,7 +4,7 @@ cert="${1:?usage: sync-tls-cert.sh <certificate.crt> <private.key> [compose-dir]
 key="${2:?usage: sync-tls-cert.sh <certificate.crt> <private.key> [compose-dir]}"
 dir="${3:-$(dirname "$0")/..}"
 cd "$dir"
-volume="$(docker volume inspect "$(basename "$(pwd)")_tls" --format '{{.Mountpoint}}' 2>/dev/null || docker volume inspect aether_tls --format '{{.Mountpoint}}')"
+volume="$(docker volume inspect "${COMPOSE_PROJECT_NAME:-aether}_tls" --format "{{.Mountpoint}}")"
 if cmp -s "$cert" "$volume/fullchain.pem" && cmp -s "$key" "$volume/privkey.pem"; then
   exit 0
 fi

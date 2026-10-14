@@ -121,7 +121,30 @@ To restore, stop the stack. Then:
 
 `valkeydata` and `rspamd` hold caches and statistics, which are rebuilt automatically. DKIM keys in Valkey are re-published from PostgreSQL on every API start.
 
-Off-site copies and backup encryption are not built in yet.
+### Off-site copies
+
+When `AETHER_BACKUP_REPOSITORY` is set in `.env`, `backup.sh` also sends each backup to a restic repository. It does this with the `restic/restic` container, so nothing has to be installed on the host. Restic encrypts everything with `AETHER_BACKUP_PASSWORD` before upload. Keep that password somewhere other than the server: without it, the backup cannot be read.
+
+After each upload, the script prunes to `keep-days` daily, 8 weekly, and 12 monthly snapshots, then runs `restic check`. It uploads the maildirs directly rather than the tarball, so unchanged mail is not uploaded again.
+
+| Provider | `AETHER_BACKUP_REPOSITORY` | `AETHER_BACKUP_S3_REGION` |
+| --- | --- | --- |
+| Cloudflare R2 | `s3:https://<account-id>.r2.cloudflarestorage.com/<bucket>` | `auto` |
+| Backblaze B2 | `s3:https://s3.<region>.backblazeb2.com/<bucket>` | the bucket region, for example `us-west-004` |
+| IDrive e2 | `s3:https://<endpoint>/<bucket>` | the endpoint region |
+| AWS S3 | `s3:https://s3.<region>.amazonaws.com/<bucket>` | the bucket region |
+| MinIO or another S3 server | `s3:https://<host>:<port>/<bucket>` | `us-east-1` unless configured otherwise |
+
+Set `AETHER_BACKUP_S3_ACCESS_KEY` and `AETHER_BACKUP_S3_SECRET_KEY` to a key that can only read and write that bucket.
+
+To restore from a snapshot:
+
+```sh
+docker run --rm -e RESTIC_REPOSITORY=... -e RESTIC_PASSWORD=... -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \
+  -v "$PWD/restore:/restore" restic/restic:0.19.1 restore latest --target /restore
+```
+
+The database dump is in `restore/aether/backup/` and the maildirs are in `restore/aether/vmail/`.
 
 ## Bare metal
 
