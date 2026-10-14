@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,7 +69,11 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	h.Set("Message-ID", messageID)
 	if o.InReplyTo != "" {
 		h.Set("In-Reply-To", o.InReplyTo)
-		h.Set("References", strings.Join(append(o.References, o.InReplyTo), " "))
+		refs := o.References
+		if !slices.Contains(refs, o.InReplyTo) {
+			refs = append(refs, o.InReplyTo)
+		}
+		h.Set("References", strings.Join(refs, " "))
 	}
 	h.Set("User-Agent", "Aether")
 	var buf bytes.Buffer
@@ -79,7 +84,10 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 			return nil, "", err
 		}
 		w.Write([]byte(o.Text))
-		return buf.Bytes(), messageID, w.Close()
+		if err := w.Close(); err != nil {
+			return nil, "", err
+		}
+		return buf.Bytes(), messageID, nil
 	}
 	if len(o.Attachments) == 0 {
 		w, err := mail.CreateInlineWriter(&buf, h)
@@ -89,7 +97,10 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 		if err := o.writeBody(w); err != nil {
 			return nil, "", err
 		}
-		return buf.Bytes(), messageID, w.Close()
+		if err := w.Close(); err != nil {
+			return nil, "", err
+		}
+		return buf.Bytes(), messageID, nil
 	}
 	w, err := mail.CreateWriter(&buf, h)
 	if err != nil {
@@ -118,7 +129,10 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 			return nil, "", err
 		}
 	}
-	return buf.Bytes(), messageID, w.Close()
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+	return buf.Bytes(), messageID, nil
 }
 
 func (o *Outgoing) writeBody(w *mail.InlineWriter) error {

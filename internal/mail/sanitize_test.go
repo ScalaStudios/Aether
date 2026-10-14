@@ -54,3 +54,26 @@ func TestBuildWithAttachmentRoundTrips(t *testing.T) {
 		t.Fatalf("attachment missing or corrupted:\n%s", raw)
 	}
 }
+
+func TestBuildKeepsBodiesAndReferences(t *testing.T) {
+	for _, o := range []Outgoing{
+		{Text: "plain only body", InReplyTo: "<a@x>", References: []string{"<a@x>"}},
+		{Text: "plain only body", HTML: "<p>html body</p>"},
+		{Text: "plain only body", Attachments: []OutgoingAttachment{{Filename: "f.txt", ContentType: "text/plain", Data: []byte("x")}}},
+	} {
+		o.From, o.To, o.Subject = Address{Address: "a@example.test"}, []Address{{Address: "b@example.test"}}, "s"
+		raw, _, err := o.Build("mail.example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(raw, []byte("plain only body")) {
+			t.Fatalf("body missing from built message:\n%s", raw)
+		}
+		if o.HTML != "" && !bytes.Contains(raw, []byte("html body")) {
+			t.Fatalf("html part missing:\n%s", raw)
+		}
+		if bytes.Count(raw, []byte("<a@x>")) > 2 {
+			t.Fatalf("duplicate reference:\n%s", raw)
+		}
+	}
+}
