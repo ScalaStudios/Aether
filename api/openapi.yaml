@@ -423,6 +423,7 @@ paths:
         - { $ref: "#/components/parameters/mailboxId" }
         - { $ref: "#/components/parameters/folder" }
         - { name: q, in: query, description: Server-side full text search, schema: { type: string } }
+        - { name: threads, in: query, description: "Group conversations with THREAD=REFERENCES. Each row is the newest message; threadUids lists the conversation newest first.", schema: { type: boolean } }
         - { name: before, in: query, description: Return messages with a UID lower than this cursor, schema: { type: integer } }
         - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
       responses:
@@ -827,6 +828,7 @@ components:
         answered: { type: boolean }
         hasAttachments: { type: boolean }
         size: { type: integer }
+        threadUids: { type: array, items: { type: integer }, description: Present when threads=true and the conversation has more than one message }
     Message:
       allOf:
         - { $ref: "#/components/schemas/MessageSummary" }

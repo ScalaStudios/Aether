@@ -53,11 +53,12 @@ export function MailView() {
     return () => clearTimeout(timer)
   }, [search])
 
+  const isDrafts = folders.data?.find((f) => f.name === folder)?.specialUse === "drafts"
   const listKey = ["messages", mbx, folder]
   const messages = useInfiniteQuery({
     queryKey: [...listKey, q],
     queryFn: ({ pageParam }) =>
-      api<MessagePage>(`/mailboxes/${mbx}/messages`, { query: { folder, q, before: pageParam, limit: 50 } }),
+      api<MessagePage>(`/mailboxes/${mbx}/messages`, { query: { folder, q, before: pageParam, limit: 50, threads: isDrafts ? undefined : "true" } }),
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled: !!mailbox && folders.isSuccess,
@@ -121,7 +122,7 @@ export function MailView() {
   })
 
   async function open(summary: MessageSummary) {
-    if (mailbox && folders.data?.find((f) => f.name === folder)?.specialUse === "drafts") {
+    if (mailbox && isDrafts) {
       const saved = await qc.fetchQuery({
         queryKey: ["message", mbx, folder, summary.uid],
         queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${summary.uid}`, { query: { folder } }),
@@ -130,7 +131,7 @@ export function MailView() {
       return
     }
     setSelectedUid(summary.uid)
-    if (!summary.seen) setFlags.mutate({ uid: summary.uid, flags: { seen: true } })
+    if (!summary.seen) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
   }
 
   function step(delta: number) {
@@ -244,6 +245,7 @@ export function MailView() {
         folders={folders.data ?? []}
         query={message}
         selected={selectedUid !== null}
+        earlier={summaries.find((m) => m.uid === selectedUid)?.threadUids?.slice(1) ?? []}
         onBack={() => setSelectedUid(null)}
         onReply={startCompose}
         onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}

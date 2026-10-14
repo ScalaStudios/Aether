@@ -86,7 +86,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, p *princip
 		limit = 50
 	}
 	before, _ := strconv.ParseUint(q.Get("before"), 10, 32)
-	page, err := s.mail.List(m.Address, folderParam(r), q.Get("q"), uint32(before), limit)
+	page, err := s.mail.List(m.Address, folderParam(r), q.Get("q"), uint32(before), limit, q.Get("threads") == "true")
 	if err != nil {
 		s.mailError(w, r, err)
 		return

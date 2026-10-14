@@ -135,6 +135,7 @@ export interface MessageSummary {
   answered: boolean
   hasAttachments: boolean
   size: number
+  threadUids?: number[]
 }
 
 export interface MessagePage {

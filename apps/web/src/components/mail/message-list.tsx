@@ -135,6 +135,11 @@ export function MessageList({
                     <span className={cn("flex-1 truncate text-sm", m.seen ? "text-fg-tertiary" : "font-semibold text-fg-secondary")}>
                       {m.subject || "(no subject)"}
                     </span>
+                    {(m.threadUids?.length ?? 0) > 1 && (
+                      <span aria-label={`${m.threadUids?.length} messages in this conversation`} className="shrink-0 rounded-full bg-muted px-2 text-xs text-fg-secondary">
+                        {m.threadUids?.length}
+                      </span>
+                    )}
                     {m.hasAttachments && <Paperclip aria-label="Has attachments" className="size-3.5 shrink-0 text-fg-tertiary" />}
                     {m.flagged && <Flag aria-label="Flagged" className="size-3.5 shrink-0 fill-current text-ember" />}
                   </span>

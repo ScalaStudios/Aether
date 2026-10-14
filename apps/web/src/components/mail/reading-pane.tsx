@@ -1,8 +1,9 @@
 "use client"
 
-import type { UseQueryResult } from "@tanstack/react-query"
-import { ArrowLeft, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
+import { useQuery, type UseQueryResult } from "@tanstack/react-query"
+import { ArrowLeft, ChevronDown, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
 import { cn } from "cn"
+import { useState } from "react"
 
 import { IconButton } from "@/components/icon-button"
 import { EmptyState, ErrorState } from "@/components/states"
@@ -10,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
-import { apiUrl } from "@/lib/api"
+import { api, apiUrl } from "@/lib/api"
 import { formatAddress, formatBytes, formatDateTime } from "@/lib/format"
 import { folderIcons, folderLabel, messageDocument, type ComposeMode } from "@/lib/mail"
 import type { Address, Folder, Message } from "@/lib/types"
@@ -25,6 +26,79 @@ function AddressLine({ label, addresses }: { label: string; addresses: Address[]
   )
 }
 
+function MessageBody({ message: m, mailboxId, folder }: { message: Message; mailboxId: string; folder: string }) {
+  return (
+    <>
+            {m.attachments.length > 0 && (
+        <ul aria-label="Attachments" className="flex flex-wrap gap-2">
+          {m.attachments.map((a) => (
+            <li key={a.part}>
+              <a
+                href={apiUrl(`/mailboxes/${mailboxId}/messages/${m.uid}/attachments/${a.part}`, { folder })}
+                download={a.filename}
+                className="flex min-h-10 max-w-[280px] items-center gap-2 rounded-lg border border-strong px-3 py-2 text-sm transition-colors duration-160 hover:bg-muted"
+              >
+                <Download aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
+                <span className="truncate">{a.filename || "Attachment"}</span>
+                <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(a.size)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {m.html ? (
+        <iframe
+          title="Message body"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={messageDocument(m.html)}
+          className="min-h-[400px] w-full flex-1 rounded-xl border border-border bg-white"
+        />
+      ) : (
+        <pre className="font-sans text-base whitespace-pre-wrap break-words">{m.text}</pre>
+      )}
+    </>
+  )
+}
+
+function EarlierMessage({ uid, mailboxId, folder }: { uid: number; mailboxId: string; folder: string }) {
+  const [open, setOpen] = useState(false)
+  const query = useQuery({
+    queryKey: ["message", mailboxId, folder, uid],
+    queryFn: () => api<Message>(`/mailboxes/${mailboxId}/messages/${uid}`, { query: { folder } }),
+  })
+  const m = query.data
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-border">
+      <button
+        type="button"
+        aria-expanded={open}
+        disabled={!m}
+        onClick={() => setOpen(!open)}
+        className="flex min-h-12 items-center gap-3 rounded-xl px-4 py-2 text-left transition-colors duration-160 hover:bg-muted"
+      >
+        {m ? (
+          <>
+            <span className="min-w-0 flex-1 truncate font-semibold">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</span>
+            <time dateTime={m.date} className="shrink-0 text-sm text-fg-tertiary">
+              {formatDateTime(m.date)}
+            </time>
+            <ChevronDown aria-hidden className={cn("size-4 shrink-0 text-fg-tertiary transition-transform duration-160", open && "rotate-180")} />
+          </>
+        ) : query.isError ? (
+          <span className="text-sm text-fg-tertiary">This message could not be loaded.</span>
+        ) : (
+          <Skeleton className="h-4 w-1/2" />
+        )}
+      </button>
+      {open && m && (
+        <div className="flex flex-col gap-4 px-4 pb-4">
+          <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ReadingPane({
   className,
   mailboxId,
@@ -32,6 +106,7 @@ export function ReadingPane({
   folders,
   query,
   selected,
+  earlier,
   onBack,
   onReply,
   onFlags,
@@ -45,6 +120,7 @@ export function ReadingPane({
   folders: Folder[]
   query: UseQueryResult<Message>
   selected: boolean
+  earlier: number[]
   onBack: () => void
   onReply: (mode: ComposeMode) => void
   onFlags: (flags: { seen?: boolean; flagged?: boolean }) => void
@@ -139,32 +215,14 @@ export function ReadingPane({
                 <AddressLine label="Cc" addresses={m.cc} />
               </dl>
             </header>
-            {m.attachments.length > 0 && (
-              <ul aria-label="Attachments" className="flex flex-wrap gap-2">
-                {m.attachments.map((a) => (
-                  <li key={a.part}>
-                    <a
-                      href={apiUrl(`/mailboxes/${mailboxId}/messages/${m.uid}/attachments/${a.part}`, { folder })}
-                      download={a.filename}
-                      className="flex min-h-10 max-w-[280px] items-center gap-2 rounded-lg border border-strong px-3 py-2 text-sm transition-colors duration-160 hover:bg-muted"
-                    >
-                      <Download aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
-                      <span className="truncate">{a.filename || "Attachment"}</span>
-                      <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(a.size)}</span>
-                    </a>
-                  </li>
+            <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
+            {earlier.length > 0 && (
+              <section aria-label="Earlier in this conversation" className="flex flex-col gap-2 border-t border-border pt-4">
+                <h3 className="text-label text-fg-tertiary">Earlier in this conversation</h3>
+                {earlier.map((uid) => (
+                  <EarlierMessage key={uid} uid={uid} mailboxId={mailboxId} folder={folder} />
                 ))}
-              </ul>
-            )}
-            {m.html ? (
-              <iframe
-                title="Message body"
-                sandbox="allow-popups allow-popups-to-escape-sandbox"
-                srcDoc={messageDocument(m.html)}
-                className="min-h-[400px] w-full flex-1 rounded-xl border border-border bg-white"
-              />
-            ) : (
-              <pre className="font-sans text-base whitespace-pre-wrap break-words">{m.text}</pre>
+              </section>
             )}
           </article>
         )

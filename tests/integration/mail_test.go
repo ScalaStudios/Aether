@@ -152,7 +152,15 @@ func TestMailMilestone(t *testing.T) {
 		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{
 			"to": []map[string]string{{"address": bob}}, "subject": reply, "text": "Got it", "inReplyTo": msg.MessageID,
 		}, nil, 202)
-		waitFor(t, "bob to receive the reply", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", reply) != 0 })
+		var replyUID uint32
+		waitFor(t, "bob to receive the reply", func() bool { replyUID = findInAPI(w.bob, w.bobMailbox, "INBOX", reply); return replyUID != 0 })
+		var replyMsg struct {
+			Text string `json:"text"`
+		}
+		w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages/"+strconv.FormatUint(uint64(replyUID), 10), nil, &replyMsg, 200)
+		if !strings.Contains(replyMsg.Text, "Got it") {
+			t.Fatalf("plain-text reply arrived without its body: %q", replyMsg.Text)
+		}
 		w.alice.must("DELETE", path, nil, nil, 204)
 		if findInAPI(w.alice, w.aliceMailbox, "Trash", subject) == 0 {
 			t.Fatal("deleted message did not move to Trash")
@@ -267,6 +275,42 @@ func TestMailMilestone(t *testing.T) {
 		}
 		if findInAPI(w.alice, w.aliceMailbox, third.Folder, subject) != 0 {
 			t.Fatal("draft was not removed after sending")
+		}
+	})
+
+	t.Run("conversations are threaded", func(t *testing.T) {
+		subject := "topic " + randomSuffix()
+		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "one"}, nil, 202)
+		var first uint32
+		waitFor(t, "first message", func() bool { first = findInAPI(w.bob, w.bobMailbox, "INBOX", subject); return first != 0 })
+		var original struct {
+			MessageID string `json:"messageId"`
+		}
+		w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages/"+strconv.FormatUint(uint64(first), 10), nil, &original, 200)
+		w.bob.must("PATCH", "/mailboxes/"+w.bobMailbox+"/messages/"+strconv.FormatUint(uint64(first), 10), map[string]bool{"seen": true}, nil, 204)
+		w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{
+			"to": []map[string]string{{"address": bob}}, "subject": "Re: " + subject, "text": "two", "inReplyTo": original.MessageID, "references": []string{original.MessageID},
+		}, nil, 202)
+		waitFor(t, "follow-up", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", "Re: "+subject) != 0 })
+		var threaded struct {
+			Messages []struct {
+				Subject    string   `json:"subject"`
+				Seen       bool     `json:"seen"`
+				ThreadUIDs []uint32 `json:"threadUids"`
+			} `json:"messages"`
+		}
+		w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages?folder=INBOX&threads=true", nil, &threaded, 200)
+		rows := 0
+		for _, m := range threaded.Messages {
+			if strings.HasSuffix(m.Subject, subject) {
+				rows++
+				if len(m.ThreadUIDs) != 2 || m.ThreadUIDs[1] != first || m.Seen {
+					t.Fatalf("thread row %+v: want 2 uids ending with %d and unread", m, first)
+				}
+			}
+		}
+		if rows != 1 {
+			t.Fatalf("%d rows for the conversation, want 1", rows)
 		}
 	})
 

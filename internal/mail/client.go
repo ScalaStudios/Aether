@@ -166,6 +166,7 @@ type Summary struct {
 	Answered       bool      `json:"answered"`
 	HasAttachments bool      `json:"hasAttachments"`
 	Size           int64     `json:"size"`
+	ThreadUIDs     []uint32  `json:"threadUids,omitempty"`
 }
 
 type Page struct {
@@ -215,7 +216,15 @@ func isAttachment(p *imap.BodyStructureSinglePart) bool {
 	return p.Filename() != "" && !strings.EqualFold(p.Type, "text")
 }
 
-func (c *Client) List(address, folder, query string, before uint32, limit int) (*Page, error) {
+func flattenThread(t imapclient.ThreadData) []uint32 {
+	out := slices.Clone(t.Chain)
+	for _, sub := range t.SubThreads {
+		out = append(out, flattenThread(sub)...)
+	}
+	return out
+}
+
+func (c *Client) List(address, folder, query string, before uint32, limit int, threaded bool) (*Page, error) {
 	page := &Page{Messages: []Summary{}}
 	err := c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
@@ -225,38 +234,76 @@ func (c *Client) List(address, folder, query string, before uint32, limit int) (
 		if q := strings.TrimSpace(query); q != "" {
 			criteria.Text = strings.Fields(q)
 		}
-		data, err := ic.UIDSearch(criteria, nil).Wait()
-		if err != nil {
-			return err
+		var groups [][]uint32
+		if threaded {
+			threads, err := ic.UIDThread(&imapclient.ThreadOptions{Algorithm: imap.ThreadReferences, SearchCriteria: criteria}).Wait()
+			if err != nil {
+				return err
+			}
+			for _, t := range threads {
+				uids := flattenThread(t)
+				slices.SortFunc(uids, func(a, b uint32) int { return int(b) - int(a) })
+				groups = append(groups, uids)
+			}
+		} else {
+			data, err := ic.UIDSearch(criteria, nil).Wait()
+			if err != nil {
+				return err
+			}
+			for _, uid := range data.AllUIDs() {
+				groups = append(groups, []uint32{uint32(uid)})
+			}
 		}
-		uids := data.AllUIDs()
-		slices.SortFunc(uids, func(a, b imap.UID) int { return int(b) - int(a) })
-		page.Total = len(uids)
+		slices.SortFunc(groups, func(a, b []uint32) int { return int(b[0]) - int(a[0]) })
+		page.Total = len(groups)
 		if before > 0 {
-			i, _ := slices.BinarySearchFunc(uids, imap.UID(before), func(a, b imap.UID) int { return int(b) - int(a) })
-			for i < len(uids) && uint32(uids[i]) >= before {
+			i := 0
+			for i < len(groups) && groups[i][0] >= before {
 				i++
 			}
-			uids = uids[i:]
+			groups = groups[i:]
 		}
-		if len(uids) > limit {
-			uids = uids[:limit]
-			next := uint32(uids[len(uids)-1])
+		if len(groups) > limit {
+			groups = groups[:limit]
+			next := groups[len(groups)-1][0]
 			page.NextCursor = &next
 		}
-		if len(uids) == 0 {
+		if len(groups) == 0 {
 			return nil
 		}
-		msgs, err := ic.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
+		var all []imap.UID
+		for _, g := range groups {
+			for _, uid := range g {
+				all = append(all, imap.UID(uid))
+			}
+		}
+		msgs, err := ic.Fetch(imap.UIDSetNum(all...), &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
 		}).Collect()
 		if err != nil {
 			return err
 		}
-		slices.SortFunc(msgs, func(a, b *imapclient.FetchMessageBuffer) int { return int(b.UID) - int(a.UID) })
+		byUID := map[uint32]Summary{}
 		for _, m := range msgs {
-			page.Messages = append(page.Messages, summarize(m))
+			byUID[uint32(m.UID)] = summarize(m)
+		}
+		for _, g := range groups {
+			latest, ok := byUID[g[0]]
+			if !ok {
+				continue
+			}
+			if len(g) > 1 {
+				latest.ThreadUIDs = g
+				for _, uid := range g[1:] {
+					if m, ok := byUID[uid]; ok {
+						latest.Seen = latest.Seen && m.Seen
+						latest.Flagged = latest.Flagged || m.Flagged
+						latest.HasAttachments = latest.HasAttachments || m.HasAttachments
+					}
+				}
+			}
+			page.Messages = append(page.Messages, latest)
 		}
 		return nil
 	})
