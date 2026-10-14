@@ -77,7 +77,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(in.Email))
-	if !s.allow(r.Context(), "login-ip:"+s.clientIP(r), 20) || !s.allow(r.Context(), "login-user:"+email, 10) {
+	if !s.allow(r.Context(), "login-ip:"+s.clientIP(r), 100) || !s.allow(r.Context(), "login-user:"+email, 10) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many sign-in attempts. Wait a minute and try again.")
 		return
 	}
