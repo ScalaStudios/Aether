@@ -91,6 +91,27 @@ AETHER_RELAY_PASSWORD=...
 
 With these set, Postfix requires TLS to the relay. Mail between Aether's own domains is still delivered locally. Make sure the domain's SPF record includes the relay.
 
+## Monitoring
+
+The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. The metrics cover:
+
+- request rate, errors, and latency by route,
+- sign-in attempts by method and result,
+- messages sent from Aether Mail,
+- mail service errors,
+- identity provider webhooks,
+- Go runtime and process statistics.
+
+No metric carries a user, mailbox, or address label.
+
+For a ready-made setup, start the optional profile:
+
+```sh
+docker compose --profile monitoring up -d
+```
+
+This runs Prometheus, which keeps 30 days of data, and Grafana with an "Aether overview" dashboard. Grafana listens only on `127.0.0.1:3300` (set `AETHER_GRAFANA_PORT` to change it). Reach it through an SSH tunnel (`ssh -L 3300:127.0.0.1:3300 <host>`) or your VPN. Sign in as `admin` with `AETHER_GRAFANA_PASSWORD` from `.env`.
+
 ## Upgrades
 
 ```sh
