@@ -9,8 +9,8 @@ out="$target/$stamp"
 umask 077
 mkdir -p "$out"
 docker compose exec -T postgres pg_dump -U aether -d aether --format=custom > "$out/aether.pgdump"
-vmail="$(docker volume inspect "${COMPOSE_PROJECT_NAME:-aether}_vmail" --format "{{.Mountpoint}}")"
-tar -C "$vmail" -czf "$out/vmail.tar.gz" .
+vmail="${COMPOSE_PROJECT_NAME:-aether}_vmail"
+docker run --rm -v "$vmail:/vmail:ro" alpine:3 tar -C /vmail -czf - . > "$out/vmail.tar.gz"
 cp .env "$out/env"
 pg_size=$(stat -c %s "$out/aether.pgdump")
 [ "$pg_size" -gt 0 ] || { echo "database dump is empty" >&2; exit 1; }

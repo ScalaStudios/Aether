@@ -147,12 +147,13 @@ Back up these volumes and files:
 
 `scripts/backup.sh <target-dir> [keep-days]` writes these three items to a timestamped directory: a `pg_dump` custom-format dump, a tar of the maildirs, and a copy of `.env`. It checks that both archives are readable and deletes backups older than `keep-days` (default 14). Run it from a nightly timer, and copy the target directory to another machine; a backup on the same disk does not survive losing that disk.
 
-To restore, stop the stack. Then:
+To restore a local backup:
 
-1. Recreate the volumes.
-2. Load the database with `pg_restore -d aether --no-owner aether.pgdump`.
-3. Extract `vmail.tar.gz` into the `vmail` volume.
-4. Restore `.env`.
+```sh
+./scripts/restore.sh --yes /var/backups/aether/20261015T020000Z
+```
+
+The script stops the mail services and the API, then replaces the database and every mailbox with the backup's contents. When it finishes, it starts the stack again. It refuses to run without `--yes`. It also refuses if `AETHER_SECRET_KEY` in `.env` differs from the key in the backup's `env` file; on a new server, copy that file to `.env` first.
 
 `valkeydata` and `rspamd` hold caches and statistics, which are rebuilt automatically. DKIM keys in Valkey are re-published from PostgreSQL on every API start.
 
@@ -172,14 +173,18 @@ After each upload, the script prunes to `keep-days` daily, 8 weekly, and 12 mont
 
 Set `AETHER_BACKUP_S3_ACCESS_KEY` and `AETHER_BACKUP_S3_SECRET_KEY` to a key that can only read and write that bucket.
 
-To restore from a snapshot:
+To restore from the off-site repository, use `restic:` followed by a snapshot ID, or `latest`:
+
+```sh
+./scripts/restore.sh --yes restic:latest
+```
+
+The repository settings come from `.env`. To list snapshots:
 
 ```sh
 docker run --rm -e RESTIC_REPOSITORY=... -e RESTIC_PASSWORD=... -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \
-  -v "$PWD/restore:/restore" restic/restic:0.19.1 restore latest --target /restore
+  restic/restic:0.19.1 snapshots
 ```
-
-The database dump is in `restore/aether/backup/` and the maildirs are in `restore/aether/vmail/`.
 
 ## Bare metal
 
