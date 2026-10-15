@@ -196,7 +196,7 @@ paths:
       tags: [domains]
       parameters: [{ $ref: "#/components/parameters/domainId" }]
       responses:
-        "204": { description: Deleted, including its mailboxes and aliases }
+        "204": { description: "Deleted, including its mailboxes and aliases" }
   /domains/{domainId}/dns:
     get:
       tags: [domains]
@@ -506,11 +506,11 @@ paths:
         - { $ref: "#/components/parameters/folder" }
         - { name: part, in: path, required: true, schema: { type: string, pattern: "^[0-9]+(\\.[0-9]+)*$" } }
       responses:
-        "200": { description: Attachment bytes, served as a download }
+        "200": { description: "Attachment bytes, served as a download" }
   /mailboxes/{mailboxId}/send:
     post:
       tags: [mail]
-      summary: Submit a message through the SMTP submission service and save it to Sent
+      summary: Submit a message through the SMTP submission service and save it to Sent, or schedule it when sendAt is set
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -519,13 +519,88 @@ paths:
             schema: { $ref: "#/components/schemas/OutgoingMessage" }
       responses:
         "202":
-          description: Accepted by the submission service
+          description: Accepted by the submission service, or a ScheduledMessage when sendAt was set
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      messageId: { type: string }
+                  - { $ref: "#/components/schemas/ScheduledMessage" }
+  /mailboxes/{mailboxId}/scheduled:
+    get:
+      tags: [mail]
+      summary: List messages waiting to be sent, including ones that failed
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: Scheduled messages, earliest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ScheduledMessage" } }
+  /mailboxes/{mailboxId}/scheduled/{scheduledId}:
+    delete:
+      tags: [mail]
+      summary: Cancel a scheduled message and put it back in Drafts
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: scheduledId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The restored draft
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  messageId: { type: string }
+                  uid: { type: integer }
+                  folder: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/messages/{uid}/snooze:
+    post:
+      tags: [mail]
+      summary: Move a message to the Snoozed folder until a time, then back to its folder as unread
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [until]
+              properties:
+                until: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The message's UID in the Snoozed folder
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SnoozedMessage" }
+  /mailboxes/{mailboxId}/snoozed:
+    get:
+      tags: [mail]
+      summary: List snoozed messages by their UID in the Snoozed folder
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: Snoozed messages, earliest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SnoozedMessage" } }
+  /mailboxes/{mailboxId}/snoozed/{uid}:
+    delete:
+      tags: [mail]
+      summary: Return a snoozed message to its folder now
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+      responses:
+        "204": { description: Returned }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/drafts:
     put:
       tags: [mail]
@@ -727,7 +802,7 @@ paths:
       tags: [calendar]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
-        "204": { description: Deleted, including every occurrence }
+        "204": { description: "Deleted, including every occurrence" }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -1110,6 +1185,22 @@ components:
         filename: { type: string }
         contentType: { type: string }
         size: { type: integer }
+    ScheduledMessage:
+      type: object
+      required: [id, sendAt, subject, to, error]
+      properties:
+        id: { type: string, format: uuid }
+        sendAt: { type: string, format: date-time }
+        subject: { type: string }
+        to: { type: array, items: { $ref: "#/components/schemas/Address" } }
+        error: { type: [string, "null"], description: Set when sending failed after five attempts }
+    SnoozedMessage:
+      type: object
+      required: [uid, until, returnFolder]
+      properties:
+        uid: { type: integer }
+        until: { type: string, format: date-time }
+        returnFolder: { type: string }
     OutgoingMessage:
       type: object
       required: [to, subject]
@@ -1142,6 +1233,7 @@ components:
             uid: { type: integer }
             parts: { type: array, items: { type: string } }
         draftUid: { type: integer, description: The draft this message replaces. On send it is deleted from Drafts. }
+        sendAt: { type: string, format: date-time, description: Schedule the message instead of sending it now. The Date header is set to this time. }
     IdentityProvider:
       type: object
       required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]

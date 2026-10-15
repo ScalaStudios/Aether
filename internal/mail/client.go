@@ -544,6 +544,58 @@ func (c *Client) Move(address, folder string, uid uint32, to string) error {
 	})
 }
 
+const SnoozedFolder = "Snoozed"
+
+func (c *Client) Snooze(address, folder string, uid uint32) (uidValidity, snoozedUID uint32, err error) {
+	err = c.with(address, func(ic *imapclient.Client) error {
+		if folder == SnoozedFolder {
+			return ErrNotFound
+		}
+		if _, err := ic.Status(SnoozedFolder, &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
+			if err := ic.Create(SnoozedFolder, nil).Wait(); err != nil {
+				return err
+			}
+			ic.Subscribe(SnoozedFolder).Wait()
+		}
+		if _, err := ic.Select(folder, nil).Wait(); err != nil {
+			return ErrNotFound
+		}
+		data, err := ic.Move(imap.UIDSetNum(imap.UID(uid)), SnoozedFolder).Wait()
+		if err != nil {
+			return err
+		}
+		if data == nil || data.UIDValidity == 0 {
+			return errors.New("the IMAP server did not report the moved UID (UIDPLUS)")
+		}
+		destSet, _ := data.DestUIDs.(imap.UIDSet)
+		dest, ok := destSet.Nums()
+		if !ok || len(dest) != 1 {
+			return ErrNotFound
+		}
+		uidValidity, snoozedUID = data.UIDValidity, uint32(dest[0])
+		return nil
+	})
+	return uidValidity, snoozedUID, err
+}
+
+func (c *Client) Wake(address string, uidValidity, uid uint32, to string) error {
+	return c.with(address, func(ic *imapclient.Client) error {
+		if _, err := ic.Status(to, &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
+			to = "INBOX"
+		}
+		sel, err := ic.Select(SnoozedFolder, nil).Wait()
+		if err != nil || sel.UIDValidity != uidValidity {
+			return nil
+		}
+		uidSet := imap.UIDSetNum(imap.UID(uid))
+		if err := ic.Store(uidSet, &imap.StoreFlags{Op: imap.StoreFlagsDel, Flags: []imap.Flag{imap.FlagSeen}, Silent: true}, nil).Close(); err != nil {
+			return err
+		}
+		_, err = ic.Move(uidSet, to).Wait()
+		return err
+	})
+}
+
 func (c *Client) Delete(address, folder string, uid uint32) error {
 	return c.with(address, func(ic *imapclient.Client) error {
 		trash, err := c.specialFolder(ic, "trash")

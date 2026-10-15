@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
@@ -237,7 +238,8 @@ type outgoingRequest struct {
 		UID    uint32   `json:"uid"`
 		Parts  []string `json:"parts"`
 	} `json:"forwardFrom"`
-	DraftUID uint32 `json:"draftUid"`
+	DraftUID uint32     `json:"draftUid"`
+	SendAt   *time.Time `json:"sendAt"`
 }
 
 func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedMailbox, in *outgoingRequest, requireRecipients bool) (*mailpkg.Outgoing, bool) {
@@ -316,6 +318,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	out, ok := s.buildOutgoing(w, r, m, &in, true)
 	if !ok {
+		return
+	}
+	if in.SendAt != nil {
+		s.scheduleMessage(w, r, m, &in, out)
 		return
 	}
 	raw, messageID, err := out.Build(s.cfg.MailHostname)

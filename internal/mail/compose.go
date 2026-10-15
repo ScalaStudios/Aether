@@ -29,6 +29,7 @@ type Outgoing struct {
 	References  []string
 	Attachments []OutgoingAttachment
 	IncludeBcc  bool
+	Date        time.Time
 }
 
 func mailAddresses(in []Address) []*mail.Address {
@@ -54,7 +55,11 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	rand.Read(id)
 	messageID = "<" + hex.EncodeToString(id) + "@" + hostname + ">"
 	var h mail.Header
-	h.SetDate(time.Now())
+	date := o.Date
+	if date.IsZero() {
+		date = time.Now()
+	}
+	h.SetDate(date)
 	h.SetAddressList("From", mailAddresses([]Address{o.From}))
 	if len(o.To) > 0 {
 		h.SetAddressList("To", mailAddresses(o.To))
