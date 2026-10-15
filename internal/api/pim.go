@@ -386,30 +386,54 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		if err != nil {
 			continue
 		}
+		var master *ical.Component
+		overrides := map[int64]*ical.Component{}
 		for _, comp := range cal.Events() {
-			if comp.Props.Get(ical.PropRecurrenceID) != nil {
-				continue
+			if comp.Props.Get(ical.PropRecurrenceID) == nil {
+				master = comp.Component
+			} else if rid, err := comp.Props.DateTime(ical.PropRecurrenceID, time.UTC); err == nil {
+				overrides[rid.Unix()] = comp.Component
 			}
-			base, ev, err := eventFromComponent(name, comp.Component)
+		}
+		var series calendarEvent
+		if master != nil {
+			base, ev, err := eventFromComponent(name, master)
 			if err != nil {
 				continue
 			}
+			series = base
 			set, err := ev.RecurrenceSet(time.UTC)
 			if err != nil || set == nil {
 				if base.Start.Before(to) && base.End.After(from) {
 					out = append(out, base)
 				}
-				continue
-			}
-			length := base.End.Sub(base.Start)
-			for _, occurrence := range set.Between(from.Add(-length), to, true) {
-				o := base
-				o.Start, o.End = occurrence, occurrence.Add(length)
-				out = append(out, o)
-				if len(out) > 5000 {
-					break
+			} else {
+				length := base.End.Sub(base.Start)
+				for _, occurrence := range set.Between(from.Add(-length), to, true) {
+					if overrides[occurrence.Unix()] != nil {
+						continue
+					}
+					o := base
+					o.Start, o.End = occurrence, occurrence.Add(length)
+					out = append(out, o)
+					if len(out) > 5000 {
+						break
+					}
 				}
 			}
+		}
+		for _, comp := range overrides {
+			if status, _ := comp.Props.Text(ical.PropStatus); strings.EqualFold(status, "CANCELLED") {
+				continue
+			}
+			o, _, err := eventFromComponent(name, comp)
+			if err != nil || !o.Start.Before(to) || !o.End.After(from) {
+				continue
+			}
+			if master != nil {
+				o.SeriesStart, o.Repeat = series.SeriesStart, series.Repeat
+			}
+			out = append(out, o)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })

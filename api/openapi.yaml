@@ -378,6 +378,38 @@ paths:
                         rejected: { type: integer }
                         reporters: { type: array, items: { type: string } }
                         headerFroms: { type: array, items: { type: string } }
+  /calendar/export:
+    get:
+      tags: [calendar]
+      summary: Download the personal calendar as one iCalendar file
+      responses:
+        "200":
+          description: An iCalendar file with every event and the time zones they use
+          content:
+            text/calendar:
+              schema: { type: string }
+  /calendar/import:
+    post:
+      tags: [calendar]
+      summary: Import events from an iCalendar file into the personal calendar
+      description: Events are grouped by UID, so recurring events keep their exceptions. An event whose UID already exists is replaced.
+      requestBody:
+        required: true
+        content:
+          text/calendar:
+            schema: { type: string, maxLength: 10485760 }
+      responses:
+        "200":
+          description: Counts of imported, replaced, and skipped events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported: { type: integer }
+                  updated: { type: integer }
+                  skipped: { type: integer }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/api-keys:
     get:
       tags: [integrations]

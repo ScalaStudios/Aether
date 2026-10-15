@@ -129,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/directory", s.listDirectory)
 	authed("GET /api/v1/recipients", s.suggestRecipients)
 	authed("GET /api/v1/calendar/events", s.listEvents)
+	authed("GET /api/v1/calendar/export", s.exportCalendar)
+	authed("POST /api/v1/calendar/import", s.importCalendar)
 	authed("POST /api/v1/calendar/events", s.saveEvent)
 	authed("PUT /api/v1/calendar/events/{id}", s.saveEvent)
 	authed("DELETE /api/v1/calendar/events/{id}", s.deleteEvent)
