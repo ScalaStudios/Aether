@@ -37,7 +37,10 @@ func TestConversationAcrossSent(t *testing.T) {
 		"to": []map[string]string{{"address": alice}}, "subject": "Re: " + subject, "text": "Works for me", "inReplyTo": question.MessageID,
 	}, nil, 202)
 	var replyUID uint32
-	waitFor(t, "alice to receive the reply", func() bool { replyUID = findInAPI(w.alice, w.aliceMailbox, "INBOX", "Re: "+subject); return replyUID != 0 })
+	waitFor(t, "alice to receive the reply", func() bool {
+		replyUID = findInAPI(w.alice, w.aliceMailbox, "INBOX", "Re: "+subject)
+		return replyUID != 0
+	})
 
 	reply := open(w.alice, w.aliceMailbox, "INBOX", replyUID)
 	if len(reply.Related) != 1 || reply.Related[0].Folder != "Sent" {

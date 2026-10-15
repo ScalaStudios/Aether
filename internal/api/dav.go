@@ -2,11 +2,14 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -97,12 +100,37 @@ func (s *Server) serveDAV(w http.ResponseWriter, r *http.Request) {
 			Capabilities: []webdav.Capability{caldav.CapabilityCalendar, carddav.CapabilityAddressBook},
 		})
 	case davCalendars:
+		if r.Method == "MKCALENDAR" {
+			var err error
+			if r, err = mkcalendarAsMkcol(r); err != nil {
+				http.Error(w, "invalid MKCALENDAR body", http.StatusBadRequest)
+				return
+			}
+		}
 		(&caldav.Handler{Backend: &calendarBackend{s}, Prefix: davPrefix}).ServeHTTP(w, r)
 	case davContacts:
 		(&carddav.Handler{Backend: &contactsBackend{s}, Prefix: davPrefix}).ServeHTTP(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func mkcalendarAsMkcol(r *http.Request) (*http.Request, error) {
+	var in struct {
+		Name string `xml:"set>prop>displayname"`
+	}
+	if err := xml.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	var name bytes.Buffer
+	if err := xml.EscapeText(&name, []byte(in.Name)); err != nil {
+		return nil, err
+	}
+	r = r.Clone(r.Context())
+	r.Method = "MKCOL"
+	r.Header.Set("Content-Type", "application/xml")
+	r.Body = io.NopCloser(strings.NewReader(`<mkcol xmlns="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><set><prop><resourcetype><collection/><c:calendar/></resourcetype><displayname>` + name.String() + `</displayname></prop></set></mkcol>`))
+	return r, nil
 }
 
 func (s *Server) ensureDAVDefaults(ctx context.Context, userID string) error {
@@ -284,7 +312,7 @@ func (b *calendarBackend) toCalendar(ctx context.Context, c collectionRow) calda
 }
 
 func (b *calendarBackend) CreateCalendar(ctx context.Context, c *caldav.Calendar) error {
-	return b.s.createDAVCollection(ctx, "calendar", c.Path, c.Name, c.Description)
+	return b.s.createDAVCollection(ctx, "calendar", c.Path, cmp.Or(c.Name, "Calendar"), c.Description)
 }
 
 func (b *calendarBackend) ListCalendars(ctx context.Context) ([]caldav.Calendar, error) {

@@ -95,10 +95,10 @@ Create an app password in **Settings → App passwords**. Each one is bound to a
 | Password | the app password |
 | Authentication | normal password (PLAIN/LOGIN over TLS) |
 
-The app passwords and the mail authentication path are covered by automated tests. Interoperability with these clients is expected, because they use standard IMAP and SMTP AUTH PLAIN/LOGIN over TLS, but it has not been tested against real installations of them:
+The app passwords and the mail authentication path are covered by automated tests. iOS Mail has been tested against a production installation: add it under **Other → Add Mail Account** with the mail host name for both servers, and it picks the TLS ports itself. These clients use the same standard IMAP and SMTP AUTH PLAIN/LOGIN over TLS, so they are expected to work, but they have not been tested yet:
 
 - Thunderbird
-- Apple Mail (macOS and iOS)
+- Apple Mail on macOS
 - Outlook for Windows and Mac (IMAP accounts)
 - Android Gmail (IMAP account)
 - K-9 Mail / Thunderbird for Android
@@ -117,7 +117,7 @@ Calendar and contacts apps connect over CalDAV and CardDAV, using the same app p
 | Username | the full mailbox address |
 | Password | an app password for that mailbox |
 
-Discovery works through `/.well-known/caldav` and `/.well-known/carddav`. The server, its discovery, and calendar and contact create, read, query, and delete are covered by automated tests that use the `go-webdav` client. Apple Calendar and Contacts, Thunderbird, and DAVx5 use the same standard, so they are expected to work, but they have not yet been tested against Aether.
+Discovery works through `/.well-known/caldav` and `/.well-known/carddav`. The server, its discovery, and calendar and contact create, read, query, and delete are covered by automated tests that use the `go-webdav` client, and have also been checked with the Python `caldav` client. Apps can create calendars with `MKCALENDAR`. Apple Calendar and Contacts, Thunderbird, and DAVx5 use the same standard, so they are expected to work, but they have not yet been tested against Aether.
 
 ## Bootstrap administrator
 

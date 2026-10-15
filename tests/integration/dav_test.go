@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,18 @@ func TestCalDAVAndCardDAV(t *testing.T) {
 	calendars, err := cal.FindCalendars(ctx, home)
 	if err != nil || len(calendars) == 0 {
 		t.Fatalf("calendars: %v %v", calendars, err)
+	}
+
+	mkcalendar, _ := http.NewRequest("MKCALENDAR", base+home+"from-app/", strings.NewReader(`<?xml version="1.0"?><C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:set><D:prop><D:displayname>Work &amp; travel</D:displayname></D:prop></D:set></C:mkcalendar>`))
+	mkcalendar.SetBasicAuth(alice, w.aliceAppPassword)
+	mkcalendar.Header.Set("Content-Type", "application/xml")
+	resp, err := http.DefaultClient.Do(mkcalendar)
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("MKCALENDAR as calendar apps send it: %v %v", resp, err)
+	}
+	resp.Body.Close()
+	if after, _ := cal.FindCalendars(ctx, home); len(after) != len(calendars)+1 || !slices.ContainsFunc(after, func(c caldav.Calendar) bool { return c.Name == "Work & travel" }) {
+		t.Fatalf("calendar created with MKCALENDAR is missing: %+v", after)
 	}
 
 	start := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Hour)
