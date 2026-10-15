@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"os"
 	"testing"
 )
 
@@ -47,6 +48,13 @@ func TestProfilePictures(t *testing.T) {
 	outsider := setupWorld(t)
 	if code, _ := fetch(outsider.bob, alice); code != 404 {
 		t.Fatalf("someone in another organization should not see alice's picture, got %d", code)
+	}
+	webp, err := os.ReadFile("testdata/avatar.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := uploadAvatar(t, w.alice, webp); code != 204 {
+		t.Fatalf("webp pictures, as identity providers serve them, should be accepted: %d", code)
 	}
 	w.alice.must("DELETE", "/me/avatar", nil, nil, 204)
 	if code, _ := fetch(w.alice, alice); code != 404 {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	_ "golang.org/x/image/webp"
 	"golang.org/x/oauth2"
 )
 
@@ -21,7 +22,7 @@ const (
 	avatarSide       = 256
 	maxAvatarSource  = 2048
 	maxAvatarBytes   = 4 << 20
-	errInvalidAvatar = "Upload a JPEG or PNG picture of at most 2048 by 2048 pixels."
+	errInvalidAvatar = "Upload a JPEG, PNG, or WebP picture of at most 2048 by 2048 pixels."
 )
 
 func avatarJPEG(data []byte) ([]byte, error) {
