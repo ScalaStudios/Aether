@@ -163,6 +163,7 @@ type idClaims struct {
 	Name              string   `json:"name"`
 	PreferredUsername string   `json:"preferred_username"`
 	Groups            []string `json:"groups"`
+	Picture           string   `json:"picture"`
 }
 
 func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +220,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.loginRedirect(w, r, "invalid_token")
 		return
 	}
-	if client.meta.Userinfo != "" && (claims.Email == "" || (claims.Groups == nil && slices.Contains(p.Scopes, "groups"))) {
+	if client.meta.Userinfo != "" && (claims.Email == "" || claims.Picture == "" || (claims.Groups == nil && slices.Contains(p.Scopes, "groups"))) {
 		if info, err := client.provider.UserInfo(ctx, oauth2.StaticTokenSource(token)); err == nil && info.Subject == claims.Subject {
 			info.Claims(&claims)
 		}
@@ -239,6 +240,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	go s.syncProviderAvatar(userID, p.Issuer, claims.Picture, token)
 	authAttempts.WithLabelValues("oidc", "success").Inc()
 	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": "oidc", "provider": p.Slug})
 	http.Redirect(w, r, safeReturnTo(returnTo), http.StatusFound)

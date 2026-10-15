@@ -38,7 +38,7 @@ export function SettingsView() {
       <PageHeader title="Settings" description="Your account details, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes." />
       {session && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
-          <SectionHeader title="Profile" description="Your picture shows next to mail you send to people in your organization. Your name and email are managed by your administrator or identity provider." />
+          <SectionHeader title="Profile" description="Your picture shows next to mail you send to people in your organization. If your sign-in provider has a picture, Aether uses it until you upload your own. Your name and email are managed by your administrator or identity provider." />
           <ProfilePicture email={session.user.email} name={session.user.displayName} />
           <dl className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1">

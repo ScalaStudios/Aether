@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net/http"
@@ -15,17 +16,6 @@ import (
 func TestProfilePictures(t *testing.T) {
 	w := setupWorld(t)
 	alice := "alice@" + w.domain
-	upload := func(c *apiClient, body []byte) int {
-		req, _ := http.NewRequest("PUT", c.base+"/me/avatar", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "image/png")
-		req.Header.Set("X-CSRF-Token", c.csrf)
-		resp, err := c.http.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
-	}
 	fetch := func(c *apiClient, address string) (int, string) {
 		resp, err := c.http.Get(c.base + "/avatars/" + address)
 		if err != nil {
@@ -35,25 +25,21 @@ func TestProfilePictures(t *testing.T) {
 		io.Copy(io.Discard, resp.Body)
 		return resp.StatusCode, resp.Header.Get("Content-Type")
 	}
-	picture := func(side int) []byte {
-		img := image.NewRGBA(image.Rect(0, 0, side, side))
-		img.Set(1, 1, color.RGBA{R: 200, A: 255})
-		var buf bytes.Buffer
-		png.Encode(&buf, img)
-		return buf.Bytes()
-	}
 
 	if code, _ := fetch(w.bob, alice); code != 404 {
 		t.Fatalf("no picture yet should be 404, got %d", code)
 	}
-	if code := upload(w.alice, []byte("<svg onload=alert(1)>")); code != 422 {
+	if code := uploadAvatar(t, w.alice, []byte("<svg onload=alert(1)>")); code != 422 {
 		t.Fatalf("non-image upload should be refused, got %d", code)
 	}
-	if code := upload(w.alice, picture(1024)); code != 422 {
+	if code := uploadAvatar(t, w.alice, picture(t, 4096)); code != 422 {
 		t.Fatalf("oversized picture should be refused, got %d", code)
 	}
-	if code := upload(w.alice, picture(64)); code != 204 {
+	if code := uploadAvatar(t, w.alice, picture(t, 1200)); code != 204 {
 		t.Fatalf("upload: %d", code)
+	}
+	if cfg, err := jpeg.DecodeConfig(bytes.NewReader(w.alice.raw("GET", "/avatars/"+alice))); err != nil || cfg.Width != 256 || cfg.Height != 256 {
+		t.Fatalf("large upload should be stored as a 256 pixel square: %+v %v", cfg, err)
 	}
 	if code, kind := fetch(w.bob, alice); code != 200 || kind != "image/jpeg" {
 		t.Fatalf("colleague should see alice's picture as jpeg, got %d %q", code, kind)
@@ -66,4 +52,26 @@ func TestProfilePictures(t *testing.T) {
 	if code, _ := fetch(w.alice, alice); code != 404 {
 		t.Fatalf("removed picture is still served: %d", code)
 	}
+}
+
+func uploadAvatar(t *testing.T, c *apiClient, body []byte) int {
+	req, _ := http.NewRequest("PUT", c.base+"/me/avatar", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "image/png")
+	req.Header.Set("X-CSRF-Token", c.csrf)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func picture(t *testing.T, side int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, side, side*3/4+1))
+	img.Set(1, 1, color.RGBA{R: 200, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

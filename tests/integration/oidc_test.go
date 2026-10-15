@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -33,6 +34,7 @@ type fakeIssuer struct {
 	subject  string
 	email    string
 	groups   []string
+	picture  []byte
 }
 
 func startFakeIssuer(t *testing.T) *fakeIssuer {
@@ -58,6 +60,10 @@ func startFakeIssuer(t *testing.T) *fakeIssuer {
 		json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})
 	})
 	mux.HandleFunc("/token", f.token)
+	mux.HandleFunc("/picture", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(f.picture)
+	})
 	go http.Serve(ln, mux)
 	return f
 }
@@ -99,7 +105,7 @@ func (f *fakeIssuer) token(w http.ResponseWriter, r *http.Request) {
 	signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: f.key}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "k1"))
 	now := time.Now()
 	idToken, _ := jwt.Signed(signer).Claims(jwt.Claims{Issuer: f.issuer, Subject: f.subject, Audience: jwt.Audience{f.clientID}, IssuedAt: jwt.NewNumericDate(now), Expiry: jwt.NewNumericDate(now.Add(5 * time.Minute))}).
-		Claims(map[string]any{"nonce": q.Get("nonce"), "email": f.email, "email_verified": true, "name": "Halo User", "groups": f.groups}).Serialize()
+		Claims(map[string]any{"nonce": q.Get("nonce"), "email": f.email, "email_verified": true, "name": "Halo User", "groups": f.groups, "picture": f.issuer + "/picture"}).Serialize()
 	json.NewEncoder(w).Encode(map[string]any{"access_token": "at-" + randomSuffix(), "token_type": "Bearer", "expires_in": 300, "id_token": idToken})
 }
 
@@ -148,7 +154,7 @@ func TestOIDCLoginWithPKCE(t *testing.T) {
 	}, &provider, 201)
 	defer w.admin.do("DELETE", "/admin/identity-providers/"+provider.ID, nil, nil)
 
-	f.subject, f.email, f.groups = "halo-"+randomSuffix(), "carol@"+w.domain, []string{"mail-admins"}
+	f.subject, f.email, f.groups, f.picture = "halo-"+randomSuffix(), "carol@"+w.domain, []string{"mail-admins"}, picture(t, 1200)
 	browser, callback, q := oidcAuthorize(t, f, slug)
 	if q.Get("redirect_uri") != provider.RedirectURI {
 		t.Fatalf("redirect_uri %q, want %q", q.Get("redirect_uri"), provider.RedirectURI)
@@ -183,6 +189,25 @@ func TestOIDCLoginWithPKCE(t *testing.T) {
 	browser.must("GET", "/me/mailboxes", nil, &mailboxes, 200)
 	if len(mailboxes) != 1 || mailboxes[0].Address != f.email {
 		t.Fatalf("auto-provisioned mailbox missing: %+v", mailboxes)
+	}
+
+	if env(t, "AETHER_TEST_WEBHOOKS", "") == "true" {
+		avatar := func(c *apiClient) []byte { return c.raw("GET", "/avatars/"+f.email) }
+		waitFor(t, "the provider's picture to be imported", func() bool { return bytes.HasPrefix(avatar(browser), []byte("\xff\xd8")) })
+		var csrf struct {
+			CSRFToken string `json:"csrfToken"`
+		}
+		browser.must("GET", "/session", nil, &csrf, 200)
+		browser.csrf = csrf.CSRFToken
+		if code := uploadAvatar(t, browser, picture(t, 64)); code != 204 {
+			t.Fatalf("upload: %d", code)
+		}
+		uploaded := avatar(browser)
+		oidcLogin(t, f, slug)
+		time.Sleep(2 * time.Second)
+		if !bytes.Equal(avatar(browser), uploaded) {
+			t.Fatal("signing in again replaced the picture the user uploaded")
+		}
 	}
 
 	replay, _ := browser.http.Get(callback)
