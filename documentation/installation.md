@@ -105,7 +105,11 @@ The policy starts in `testing` mode: senders report failures but still deliver. 
 
 The DMARC record that Aether suggests asks receivers such as Google and Microsoft to send daily aggregate reports to `dmarc-reports@<domain>`. Every verified domain accepts mail at that address without a mailbox. Postfix hands the reports to the API, which unpacks the gzip, zip, or XML attachment and stores the results. The domain page then shows, for each sending IP address, how many messages passed DKIM and SPF alignment and how many receivers quarantined or rejected. Use this to find services that send as your domain but are not covered by SPF or DKIM before you tighten the policy.
 
-DANE (TLSA records) is not published, because it needs DNSSEC on the domain and a mail key that stays the same across certificate renewals.
+### DANE
+
+Outbound mail checks DANE. The bundled Unbound resolver validates DNSSEC, and Postfix uses it to look up TLSA records. When a receiving domain publishes signed TLSA records, Postfix only delivers over TLS to a server whose certificate matches them. Domains without TLSA records get opportunistic TLS as before. Unbound sits on an internal `resolver` network at `172.29.53.53`. If `172.29.53.0/24` is already in use on the host, change the subnet and the two addresses in `compose.yml`.
+
+Aether does not publish TLSA records for its own domains, because they need DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 
 ## Outbound relay
 

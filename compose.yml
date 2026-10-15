@@ -42,6 +42,10 @@ services:
     build: ./infrastructure/docker/unbound
     image: aether/unbound:dev
     restart: unless-stopped
+    networks:
+      default:
+      resolver:
+        ipv4_address: 172.29.53.53
 
   tls-init:
     build: ./infrastructure/docker/dovecot
@@ -88,6 +92,10 @@ services:
     build: ./infrastructure/docker/postfix
     image: aether/postfix:dev
     restart: unless-stopped
+    dns: 172.29.53.53
+    networks:
+      - default
+      - resolver
     environment:
       <<: *mail-env
       AETHER_RELAYHOST: ${AETHER_RELAYHOST:-}
@@ -240,3 +248,10 @@ volumes:
   postfix-spool:
   caddy-data:
   caddy-config:
+
+networks:
+  resolver:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.53.0/24
