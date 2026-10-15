@@ -382,6 +382,111 @@
           }
         }
       ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Outbound delivery results",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(postfix_smtp_messages_processed_total[5m]))",
+          "legendFormat": "{{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Mail queue",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (queue) (postfix_showq_queue_depth)",
+          "legendFormat": "{{queue}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Incoming SMTP rejections",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (code) (rate(postfix_smtpd_messages_rejected_total[5m]))",
+          "legendFormat": "{{code}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "rate(postfix_smtpd_sasl_authentication_failures_total[5m])",
+          "legendFormat": "failed SMTP sign-ins",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
     }
   ]
 }

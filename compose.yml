@@ -103,6 +103,7 @@ services:
       AETHER_RELAY_PASSWORD: ${AETHER_RELAY_PASSWORD:-}
     volumes:
       - postfix-spool:/var/spool/postfix
+      - postfix-logs:/var/log/postfix
       - tls:/tls:ro
     ports:
       - "${AETHER_PORT_SMTP:-25}:25"
@@ -199,6 +200,23 @@ services:
       - postfix
       - dovecot
 
+  postfix-exporter:
+    profiles: ["monitoring"]
+    image: ghcr.io/hsn723/postfix_exporter:0.21.2
+    restart: unless-stopped
+    command:
+      - --postfix.logfile_path=/var/log/postfix/mail.log
+      - --postfix.showq_path=/var/spool/postfix/public/showq
+      - --postfix.smtpd_service_label=smtpd
+      - --postfix.smtpd_service_label=submission/smtpd
+      - --postfix.smtpd_service_label=submissions/smtpd
+      - --postfix.smtpd_service_label=sieve-relay/smtpd
+    volumes:
+      - postfix-spool:/var/spool/postfix
+      - postfix-logs:/var/log/postfix:ro
+    depends_on:
+      - postfix
+
   prometheus:
     profiles: ["monitoring"]
     image: prom/prometheus:latest
@@ -246,6 +264,7 @@ volumes:
   rspamd:
   vmail:
   postfix-spool:
+  postfix-logs:
   caddy-data:
   caddy-config:
 

@@ -1,5 +1,5 @@
 compatibility_level = 3.6
-maillog_file = /dev/stdout
+maillog_file = /var/log/postfix/mail.log
 myhostname = __HOSTNAME__
 myorigin = $myhostname
 mydestination = localhost

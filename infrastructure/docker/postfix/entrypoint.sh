@@ -51,4 +51,8 @@ fi
 newaliases
 cp /etc/resolv.conf /etc/hosts /var/spool/postfix/etc/ 2>/dev/null || true
 postfix check
+mkdir -p /var/log/postfix
+touch /var/log/postfix/mail.log
+tail -n 0 -F /var/log/postfix/mail.log &
+(while sleep 86400; do postfix logrotate; find /var/log/postfix -name 'mail.log.*' -mtime +7 -delete; done) &
 exec postfix start-fg
