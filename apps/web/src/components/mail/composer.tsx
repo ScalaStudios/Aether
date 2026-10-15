@@ -2,9 +2,13 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react"
+import { EditorContent, useEditor } from "@tiptap/react"
+import Subscript from "@tiptap/extension-subscript"
+import Superscript from "@tiptap/extension-superscript"
+import TextAlign from "@tiptap/extension-text-align"
+import { TextStyleKit } from "@tiptap/extension-text-style"
 import StarterKit from "@tiptap/starter-kit"
-import { Bold, ChevronDown, Italic, Link2, List, ListOrdered, Paperclip, Send, X } from "lucide-react"
+import { ChevronDown, Paperclip, Send, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -12,6 +16,7 @@ import { z } from "zod"
 
 import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"
+import { FormatToolbar } from "@/components/mail/format-toolbar"
 import { LaterMenu } from "@/components/mail/later-menu"
 import { RecipientInput } from "@/components/recipient-input"
 import { Button } from "@/components/ui/button"
@@ -60,43 +65,24 @@ function AttachmentChip({ name, size, onRemove }: { name: string; size: number; 
 
 const titles: Record<Draft["mode"], string> = { new: "New message", reply: "Reply", replyAll: "Reply all", forward: "Forward", draft: "Draft" }
 
-function Toolbar({ editor }: { editor: Editor }) {
-  const state = useEditorState({
-    editor,
-    selector: ({ editor }) => ({
-      bold: editor.isActive("bold"),
-      italic: editor.isActive("italic"),
-      bulletList: editor.isActive("bulletList"),
-      orderedList: editor.isActive("orderedList"),
-      link: editor.isActive("link"),
-    }),
-  })
-
-  function setLink() {
-    const previous = editor.getAttributes("link").href as string | undefined
-    const url = window.prompt("Link address", previous ?? "https://")
-    if (url === null) return
-    if (url.trim() === "") editor.chain().focus().extendMarkRange("link").unsetLink().run()
-    else editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run()
-  }
-
-  const buttons = [
-    { label: "Bold", icon: Bold, active: state.bold, run: () => editor.chain().focus().toggleBold().run() },
-    { label: "Italic", icon: Italic, active: state.italic, run: () => editor.chain().focus().toggleItalic().run() },
-    { label: "Bulleted list", icon: List, active: state.bulletList, run: () => editor.chain().focus().toggleBulletList().run() },
-    { label: "Numbered list", icon: ListOrdered, active: state.orderedList, run: () => editor.chain().focus().toggleOrderedList().run() },
-    { label: "Link", icon: Link2, active: state.link, run: setLink },
-  ]
-
-  return (
-    <div role="toolbar" aria-label="Formatting" className="flex gap-1 border-b border-border p-1">
-      {buttons.map((b) => (
-        <IconButton key={b.label} type="button" label={b.label} size="icon-sm" aria-pressed={b.active} onClick={b.run} className={b.active ? "bg-muted text-foreground" : undefined}>
-          <b.icon />
-        </IconButton>
-      ))}
-    </div>
-  )
+function flyAway(icon: SVGElement | null) {
+  if (!icon || matchMedia("(prefers-reduced-motion: reduce)").matches) return
+  const r = icon.getBoundingClientRect()
+  const plane = icon.cloneNode(true) as SVGElement
+  plane.setAttribute("aria-hidden", "true")
+  Object.assign(plane.style, { position: "fixed", left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, zIndex: "100", pointerEvents: "none", color: "var(--color-ember)" })
+  document.body.append(plane)
+  plane
+    .animate(
+      [
+        { transform: "translate(0, 0) rotate(0deg) scale(1)", opacity: 1 },
+        { transform: "translate(-6px, 4px) rotate(-8deg) scale(1.15)", opacity: 1, offset: 0.2 },
+        { transform: "translate(120px, -90px) rotate(-14deg) scale(1.3)", opacity: 1, offset: 0.6 },
+        { transform: "translate(260px, -260px) rotate(-20deg) scale(0.8)", opacity: 0 },
+      ],
+      { duration: 800, easing: "cubic-bezier(0.45, 0, 0.55, 1)" }
+    )
+    .finished.finally(() => plane.remove())
 }
 
 export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft: Draft; onClose: () => void }) {
@@ -112,6 +98,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
   const pendingSave = useRef<Promise<unknown> | null>(null)
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const sendIcon = useRef<SVGSVGElement>(null)
   const totalBytes = files.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
 
   const touch = useCallback(() => {
@@ -135,7 +122,13 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
     defaultValues: { to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject },
   })
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: false, link: { openOnClick: false, defaultProtocol: "https" } })],
+    extensions: [
+      StarterKit.configure({ heading: false, link: { openOnClick: false, defaultProtocol: "https" } }),
+      TextStyleKit.configure({ lineHeight: false }),
+      TextAlign.configure({ types: ["paragraph"] }),
+      Subscript,
+      Superscript,
+    ],
     content: draft.html,
     immediatelyRender: false,
     onUpdate: touch,
@@ -205,6 +198,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
       return api(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...(await payload(values, files)), sendAt: sendAt && toRFC3339(sendAt) } })
     },
     onSuccess: (_d, { sendAt }) => {
+      if (!sendAt) flyAway(sendIcon.current)
       toast.success(sendAt ? `Scheduled for ${formatShortDateTime(sendAt)}` : "Message sent")
       qc.invalidateQueries({ queryKey: ["scheduled", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
@@ -291,7 +285,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
               <Input id="compose-subject" autoComplete="off" {...form.register("subject")} />
             </Field>
             <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">
-              {editor && <Toolbar editor={editor} />}
+              {editor && <FormatToolbar editor={editor} />}
               <EditorContent editor={editor} />
             </div>
             {(files.length > 0 || forwarded.length > 0) && (
@@ -331,7 +325,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
             </Button>
             <div className="flex">
               <Button type="submit" loading={send.isPending} className="rounded-r-none hover:shadow-none">
-                <Send aria-hidden />
+                <Send ref={sendIcon} aria-hidden />
                 Send
               </Button>
               <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending} onPick={(at) => submit(at)()}>
