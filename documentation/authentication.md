@@ -117,7 +117,7 @@ Calendar and contacts apps connect over CalDAV and CardDAV, using the same app p
 | Username | the full mailbox address |
 | Password | an app password for that mailbox |
 
-Discovery works through `/.well-known/caldav` and `/.well-known/carddav`. The server, its discovery, and calendar and contact create, read, query, and delete are covered by automated tests that use the `go-webdav` client, and have also been checked with the Python `caldav` client. Apps can create calendars with `MKCALENDAR`. Apple Calendar and Contacts, Thunderbird, and DAVx5 use the same standard, so they are expected to work, but they have not yet been tested against Aether.
+Discovery works through `/.well-known/caldav` and `/.well-known/carddav`. The server, its discovery, and calendar and contact create, read, query, and delete are covered by automated tests that use the `go-webdav` client, and have also been checked with the Python `caldav` client. Apps can create calendars with `MKCALENDAR`. Apple Calendar on iOS has been tested against a production installation: add it under **Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account** with the mail host name and an app password. Apple Contacts, Thunderbird, and DAVx5 use the same standard, so they are expected to work, but they have not yet been tested against Aether.
 
 ## Bootstrap administrator
 
