@@ -11,6 +11,7 @@ export function FormDialog({
   title,
   description,
   submitLabel,
+  cancelLabel = "Cancel",
   pending,
   onSubmit,
   wide,
@@ -23,6 +24,7 @@ export function FormDialog({
   title: string
   description?: React.ReactNode
   submitLabel: string
+  cancelLabel?: string
   pending?: boolean
   onSubmit: React.FormEventHandler<HTMLFormElement>
   wide?: boolean
@@ -45,7 +47,7 @@ export function FormDialog({
               <>
                 <DialogClose asChild>
                   <Button type="button" variant="secondary">
-                    Cancel
+                    {cancelLabel}
                   </Button>
                 </DialogClose>
                 <Button type="submit" loading={pending}>

@@ -7,6 +7,7 @@ import { cn } from "cn"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useSession } from "@/hooks/use-session"
 import { folderIcons, folderLabel } from "@/lib/mail"
 import type { Folder, Mailbox } from "@/lib/types"
 
@@ -58,6 +59,7 @@ export function FolderPane({
   onScheduled?: () => void
   onCompose: () => void
 }) {
+  const userId = useSession().data?.user.id
   return (
     <aside aria-label="Folders" className={cn("min-h-0 flex-col gap-6 border-r border-border bg-card p-4", className)}>
       {mailboxes.length > 1 ? (
@@ -68,7 +70,8 @@ export function FolderPane({
           <SelectContent>
             {mailboxes.map((m) => (
               <SelectItem key={m.id} value={m.id}>
-                {m.address}
+                <span className="truncate">{m.address}</span>
+                {userId && m.ownerUserId !== userId && <span className="text-xs text-fg-tertiary">Shared</span>}
               </SelectItem>
             ))}
           </SelectContent>

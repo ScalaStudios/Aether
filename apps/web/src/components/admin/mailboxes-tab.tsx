@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Inbox, Plus, Trash2 } from "lucide-react"
+import { Inbox, Plus, Trash2, Users } from "lucide-react"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -14,15 +14,15 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
-import { EmptyState, QueryView } from "@/components/states"
+import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { api } from "@/lib/api"
+import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
-import type { Mailbox } from "@/lib/types"
+import type { Delegate, Mailbox } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -40,11 +40,95 @@ const schema = z.object({
 
 type Values = z.infer<typeof schema>
 
+const delegateSchema = z.object({ email: z.email("Enter a valid email address.") })
+
+type DelegateValues = z.infer<typeof delegateSchema>
+
+function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; onOpenChange: (open: boolean) => void }) {
+  const qc = useQueryClient()
+  const key = ["delegates", mailbox?.id]
+  const delegates = useQuery({ queryKey: key, queryFn: () => api<Delegate[]>(`/mailboxes/${mailbox?.id}/delegates`), enabled: !!mailbox })
+  const [removing, setRemoving] = useState<Delegate | null>(null)
+  const form = useForm<DelegateValues>({ resolver: zodResolver(delegateSchema), defaultValues: { email: "" } })
+
+  const add = useMutation({
+    mutationFn: (values: DelegateValues) => api<Delegate>(`/mailboxes/${mailbox?.id}/delegates`, { method: "POST", body: values }),
+    meta: { silent: true },
+    onSuccess: (d) => {
+      toast.success(`Added ${d.email}`)
+      form.reset()
+      qc.invalidateQueries({ queryKey: key })
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 422) form.setError("email", { message: error.message })
+      else toast.error(errorMessage(error))
+    },
+  })
+  const remove = useMutation({
+    mutationFn: (d: Delegate) => api(`/mailboxes/${mailbox?.id}/delegates/${d.userId}`, { method: "DELETE" }),
+    onSuccess: (_d, d) => {
+      toast.success(`Removed ${d.email}`)
+      setRemoving(null)
+      qc.invalidateQueries({ queryKey: key })
+    },
+  })
+
+  return (
+    <>
+      <FormDialog
+        open={!!mailbox}
+        onOpenChange={(open) => {
+          onOpenChange(open)
+          if (!open) form.reset()
+        }}
+        title={`Delegates for ${mailbox?.address}`}
+        description="Delegates can read this mailbox, send as it, and create app passwords for it."
+        submitLabel="Add delegate"
+        cancelLabel="Done"
+        pending={add.isPending}
+        onSubmit={form.handleSubmit((v) => add.mutate(v))}
+      >
+        <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">No delegates yet.</p>}>
+          {(items) => (
+            <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
+              {items.map((d) => (
+                <li key={d.userId} className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{d.displayName || d.email}</span>
+                    {d.displayName && <span className="truncate font-mono text-sm text-fg-tertiary">{d.email}</span>}
+                  </div>
+                  <IconButton type="button" label={`Remove ${d.email}`} size="icon-sm" onClick={() => setRemoving(d)}>
+                    <Trash2 />
+                  </IconButton>
+                </li>
+              ))}
+            </ul>
+          )}
+        </QueryView>
+        <Field id="delegate-email" label="Email" hint="The email of an active person in this organization." error={form.formState.errors.email?.message}>
+          <Input id="delegate-email" type="email" autoComplete="off" spellCheck={false} aria-invalid={!!form.formState.errors.email} {...form.register("email")} />
+        </Field>
+      </FormDialog>
+
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(open) => !open && setRemoving(null)}
+        title={`Remove ${removing?.email}?`}
+        description={`They lose access to ${mailbox?.address}, and the app passwords they created for it stop working.`}
+        confirmLabel="Remove delegate"
+        pending={remove.isPending}
+        onConfirm={() => removing && remove.mutate(removing)}
+      />
+    </>
+  )
+}
+
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
   const mailboxes = useQuery({ queryKey: ["mailboxes", orgId], queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`) })
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
+  const [delegating, setDelegating] = useState<Mailbox | null>(null)
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { domainId: "", localPart: "", displayName: "", password: "", quotaMb: "" },
@@ -108,7 +192,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                 <TableHead>Display name</TableHead>
                 <TableHead>Quota</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-12">
+                <TableHead className="w-20">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -131,9 +215,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => setDeleting(m)}>
-                      <Trash2 />
-                    </IconButton>
+                    <div className="flex items-center gap-1">
+                      <IconButton label={`Delegates for ${m.address}`} size="icon-sm" onClick={() => setDelegating(m)}>
+                        <Users />
+                      </IconButton>
+                      <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => setDeleting(m)}>
+                        <Trash2 />
+                      </IconButton>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -163,13 +252,15 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         <Field id="mb-name" label="Display name" hint="Shown as the sender name. Optional.">
           <Input id="mb-name" autoComplete="off" {...form.register("displayName")} />
         </Field>
-        <Field id="mb-password" label="Password" hint="Optional web sign-in password for the owner, at least 12 characters. Leave empty for single sign-on accounts." error={errors.password?.message}>
+        <Field id="mb-password" label="Password" hint="Optional web sign-in password for the owner, at least 12 characters, or empty for single sign-on. Leave the password empty for a shared mailbox, then add delegates." error={errors.password?.message}>
           <Input id="mb-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} {...form.register("password")} />
         </Field>
         <Field id="mb-quota" label="Quota in MB" hint="Leave empty for no limit." error={errors.quotaMb?.message}>
           <Input id="mb-quota" inputMode="numeric" autoComplete="off" aria-invalid={!!errors.quotaMb} {...form.register("quotaMb")} />
         </Field>
       </FormDialog>
+
+      <DelegatesDialog mailbox={delegating} onOpenChange={(open) => !open && setDelegating(null)} />
 
       <ConfirmDialog
         open={!!deleting}

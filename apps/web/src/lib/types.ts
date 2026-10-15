@@ -72,6 +72,13 @@ export interface Mailbox {
   createdAt: string
 }
 
+export interface Delegate {
+  userId: string
+  email: string
+  displayName: string
+  createdAt: string
+}
+
 export interface Alias {
   id: string
   orgId: string
