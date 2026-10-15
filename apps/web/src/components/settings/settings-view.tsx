@@ -3,11 +3,12 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { KeyRound, Plus, Trash2 } from "lucide-react"
-import { useState, useSyncExternalStore } from "react"
+import { useRef, useState, useSyncExternalStore } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { Avatar, refreshAvatars } from "@/components/avatar"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { CopyButton, CopyField } from "@/components/copy-button"
 import { Field } from "@/components/field"
@@ -24,7 +25,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
-import { api } from "@/lib/api"
+import { api, apiUrl } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { myMailboxesQuery } from "@/lib/queries"
 import type { AppPassword, CreatedAppPassword } from "@/lib/types"
@@ -37,7 +38,8 @@ export function SettingsView() {
       <PageHeader title="Settings" description="Your account details, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes." />
       {session && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
-          <SectionHeader title="Profile" description="Managed by your administrator or identity provider." />
+          <SectionHeader title="Profile" description="Your picture shows next to mail you send to people in your organization. Your name and email are managed by your administrator or identity provider." />
+          <ProfilePicture email={session.user.email} name={session.user.displayName} />
           <dl className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <dt className="text-label text-fg-tertiary">Name</dt>
@@ -71,6 +73,74 @@ export function SettingsView() {
       <AppPasswords />
       <CalendarApps />
     </PageContainer>
+  )
+}
+
+async function squareJpeg(file: File) {
+  const bitmap = await createImageBitmap(file).catch(() => {
+    throw new Error("That file isn't a picture that can be read. Choose a JPEG, PNG, or WebP image.")
+  })
+  const side = Math.min(bitmap.width, bitmap.height)
+  const canvas = document.createElement("canvas")
+  canvas.width = canvas.height = 256
+  const ctx = canvas.getContext("2d")!
+  ctx.fillStyle = "#fff"
+  ctx.fillRect(0, 0, 256, 256)
+  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256)
+  return new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("The picture could not be prepared."))), "image/jpeg", 0.9))
+}
+
+function ProfilePicture({ email, name }: { email: string; name: string }) {
+  const qc = useQueryClient()
+  const fileInput = useRef<HTMLInputElement>(null)
+  const hasPicture = useQuery({
+    queryKey: ["my-avatar"],
+    queryFn: async () => (await fetch(apiUrl(`/avatars/${encodeURIComponent(email.toLowerCase())}`, { v: Date.now() }))).ok,
+  })
+  const changed = () => {
+    refreshAvatars()
+    qc.invalidateQueries({ queryKey: ["my-avatar"] })
+  }
+  const upload = useMutation({
+    mutationFn: async (file: File) => api("/me/avatar", { method: "PUT", body: await squareJpeg(file) }),
+    onSuccess: () => {
+      toast.success("Profile picture updated")
+      changed()
+    },
+  })
+  const remove = useMutation({
+    mutationFn: () => api("/me/avatar", { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("Profile picture removed")
+      changed()
+    },
+  })
+
+  return (
+    <div className="flex items-center gap-4">
+      <Avatar address={email} name={name} className="size-16 text-lg" />
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) upload.mutate(file)
+          e.target.value = ""
+        }}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" loading={upload.isPending} onClick={() => fileInput.current?.click()}>
+          {hasPicture.data ? "Change picture" : "Upload picture"}
+        </Button>
+        {hasPicture.data && (
+          <Button variant="quiet" loading={remove.isPending} onClick={() => remove.mutate()}>
+            Remove
+          </Button>
+        )}
+      </div>
+    </div>
   )
 }
 

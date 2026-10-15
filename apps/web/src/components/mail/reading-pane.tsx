@@ -5,6 +5,7 @@ import { AlarmClock, AlarmClockOff, ArrowLeft, ChevronDown, Download, Flag, Fold
 import { cn } from "cn"
 import { useState } from "react"
 
+import { Avatar } from "@/components/avatar"
 import { IconButton } from "@/components/icon-button"
 import { InvitationCard } from "@/components/mail/invitation-card"
 import { LaterMenu } from "@/components/mail/later-menu"
@@ -99,6 +100,7 @@ function EarlierMessage({ query, mailboxId, folder, showFolder }: { query: UseQu
       >
         {m ? (
           <>
+            {m.from[0] && <Avatar address={m.from[0].address} name={m.from[0].name} />}
             <span className="min-w-0 flex-1 truncate font-semibold">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</span>
             {showFolder && <span className="shrink-0 text-sm text-fg-tertiary">{folder === "INBOX" ? "Inbox" : folder}</span>}
             <time dateTime={m.date} className="shrink-0 text-sm text-fg-tertiary">
@@ -247,11 +249,14 @@ export function ReadingPane({
           <article key={m.uid} className="animate-content flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
             <header className="flex flex-col gap-3">
               <h2 className="text-h3 break-words">{m.subject || "(no subject)"}</h2>
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <p className="font-semibold break-all">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</p>
-                <time dateTime={m.date} className="text-sm text-fg-tertiary">
-                  {formatDateTime(m.date)}
-                </time>
+              <div className="flex items-center gap-3">
+                {m.from[0] && <Avatar address={m.from[0].address} name={m.from[0].name} className="size-10 text-sm" />}
+                <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <p className="font-semibold break-all">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</p>
+                  <time dateTime={m.date} className="text-sm text-fg-tertiary">
+                    {formatDateTime(m.date)}
+                  </time>
+                </div>
               </div>
               <dl className="flex flex-col gap-1">
                 <AddressLine label="To" addresses={m.to} />

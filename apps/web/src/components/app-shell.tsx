@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
 import { cn } from "cn"
 
+import { Avatar } from "@/components/avatar"
 import { ErrorState } from "@/components/states"
 import {
   DropdownMenu,
@@ -89,16 +90,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   )
 }
 
-function initials(user: User) {
-  const source = user.displayName || user.email
-  return source
-    .split(/[\s@.]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("")
-}
-
 function UserMenu({ user }: { user: User }) {
   const { theme, setTheme } = useTheme()
   const logout = useMutation({
@@ -112,9 +103,7 @@ function UserMenu({ user }: { user: User }) {
         aria-label="Account menu"
         className="flex size-11 cursor-pointer items-center justify-center rounded-full"
       >
-        <span className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
-          {initials(user)}
-        </span>
+        <Avatar address={user.email} name={user.displayName} />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="end" className="w-64">
         <DropdownMenuLabel className="flex flex-col gap-1 px-3 py-2">

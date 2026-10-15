@@ -101,6 +101,9 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/me/app-passwords", s.listAppPasswords)
 	authed("POST /api/v1/me/app-passwords", s.createAppPassword)
 	authed("DELETE /api/v1/me/app-passwords/{id}", s.revokeAppPassword)
+	authed("PUT /api/v1/me/avatar", s.putAvatar)
+	authed("DELETE /api/v1/me/avatar", s.deleteAvatar)
+	authed("GET /api/v1/avatars/{address}", s.getAvatar)
 
 	authed("GET /api/v1/mailboxes/{mailboxId}/folders", s.listFolders)
 	authed("GET /api/v1/mailboxes/{mailboxId}/messages", s.listMessages)
