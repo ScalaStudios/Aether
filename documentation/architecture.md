@@ -126,9 +126,8 @@ There is no benchmark harness yet; it is part of Phase 4. In development, the in
 
 ## Known limitations
 
-- The API opens one IMAP connection per request, with no pooling. This is adequate for small installations and will be replaced with a pooled connection per user.
+- The API opens one IMAP connection per request, with no pooling. Measured in October 2026, a request that uses IMAP takes about 14 ms in total, so a pool would save little. Revisit this if the mail routes' 95th percentile latency on the Aether overview dashboard goes above 100 ms.
 - Login, OIDC, and webmail send rate limits are fixed one-minute windows counted in Valkey, so they hold across API replicas. If Valkey is unreachable, the API allows the request and logs an error.
-- Forwarding aliases to external addresses do not rewrite the sender (no SRS), so strict SPF at the receiver may reject forwarded mail.
 
 ## Sender Rewriting Scheme
 
