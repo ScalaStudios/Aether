@@ -63,13 +63,19 @@ storage:
   vmail: 50Gi
   postfixSpool: 5Gi
   rspamd: 2Gi
+  clamav: 2Gi
 
 networkPolicy:
   enabled: true
   ingressControllerNamespaceSelector:
     kubernetes.io/metadata.name: ingress-nginx
 
+clamav:
+  enabled: false
+  image: clamav/clamav:stable
+
 resources:
+  clamav: { requests: { cpu: 100m, memory: 1536Mi }, limits: { memory: 3Gi } }
   api: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 512Mi } }
   web: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
   postfix: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 256Mi } }

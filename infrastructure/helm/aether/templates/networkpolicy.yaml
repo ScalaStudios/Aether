@@ -6,6 +6,9 @@
   (dict "name" "rspamd" "from" (list "postfix") "ports" (list 11332))
   (dict "name" "web" "from" (list) "ports" (list 3000) "ingress" true)
 }}
+{{- if .Values.clamav.enabled }}
+{{- $rules = append $rules (dict "name" "clamav" "from" (list "rspamd") "ports" (list 3310)) }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

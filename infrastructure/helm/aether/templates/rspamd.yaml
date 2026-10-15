@@ -34,6 +34,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             {{- include "aether.secretEnv" (dict "env" "AETHER_VALKEY_PASSWORD" "key" "valkeyPassword" "root" .) | nindent 12 }}
+            {{- if .Values.clamav.enabled }}
+            - { name: AETHER_CLAMAV_ADDR, value: "clamav:3310" }
+            {{- end }}
           ports:
             - { name: milter, containerPort: 11332 }
           readinessProbe:

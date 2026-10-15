@@ -149,6 +149,19 @@ docker compose --profile monitoring up -d
 
 This runs Prometheus, which keeps 30 days of data and scrapes the API, Dovecot, and Rspamd, and Grafana with an "Aether overview" dashboard. Grafana listens only on `127.0.0.1:3300` (set `AETHER_GRAFANA_PORT` to change it). Reach it through an SSH tunnel (`ssh -L 3300:127.0.0.1:3300 <host>`) or your VPN. Sign in as `admin` with `AETHER_GRAFANA_PASSWORD` from `.env`.
 
+## Antivirus
+
+ClamAV is optional, because it needs about 1.5 GB of memory. To turn it on, add both lines to `.env`, then run `docker compose up -d`:
+
+```sh
+COMPOSE_PROFILES=antivirus
+AETHER_CLAMAV_ADDR=clamav:3310
+```
+
+If you already use other profiles, list them all, for example `COMPOSE_PROFILES=antivirus,monitoring`.
+
+Rspamd then sends every attachment to ClamAV and rejects infected mail during the SMTP session, so the sender gets the error. This applies to both incoming and outgoing mail. ClamAV downloads signature updates by itself and keeps them in the `clamav` volume. If ClamAV is not reachable, mail is still delivered unscanned. With Helm, set `clamav.enabled=true`.
+
 ## Upgrades
 
 ```sh

@@ -59,6 +59,7 @@ services:
     environment:
       AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
       AETHER_RSPAMD_METRICS_PASSWORD: ${AETHER_RSPAMD_METRICS_PASSWORD:-}
+      AETHER_CLAMAV_ADDR: ${AETHER_CLAMAV_ADDR:-}
     volumes:
       - rspamd:/var/lib/rspamd
     depends_on:
@@ -161,6 +162,13 @@ services:
       - api
       - web
 
+  clamav:
+    profiles: ["antivirus"]
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    volumes:
+      - clamav:/var/lib/clamav
+
   integration-tests:
     profiles: ["test"]
     image: golang:1.27-bookworm
@@ -170,6 +178,7 @@ services:
       AETHER_TEST_ADMIN_EMAIL: ${AETHER_TEST_ADMIN_EMAIL:-}
       AETHER_TEST_ADMIN_PASSWORD: ${AETHER_TEST_ADMIN_PASSWORD:-}
       AETHER_TEST_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
+      AETHER_TEST_ANTIVIRUS: ${AETHER_CLAMAV_ADDR:+true}
     volumes:
       - .:/src:ro
       - tls:/tls:ro
@@ -216,6 +225,7 @@ secrets:
     environment: AETHER_RSPAMD_METRICS_PASSWORD
 
 volumes:
+  clamav:
   prometheus-data:
   grafana-data:
   gomodcache:

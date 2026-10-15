@@ -14,7 +14,7 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 | --- | --- |
 | Mail transport | **Postfix 3.7**:<br>• Inbound SMTP on port 25.<br>• Submission on 587 (STARTTLS) and 465 (implicit TLS), with SASL authentication through Dovecot.<br>• Recipient validation, aliases, and catch-all, all driven by PostgreSQL.<br>• Sender-login enforcement: a mailbox can only send as itself and as aliases that point to it, in both the envelope and the From header.<br>• SRS for mail that aliases forward to external addresses, so the forwarded copy passes SPF. |
 | Mailbox access | **Dovecot 2.3**:<br>• IMAP on 143 (STARTTLS) and 993 (implicit TLS).<br>• Maildir storage, special-use folders, quotas, and LMTP delivery.<br>• A Sieve rule that files spam into Junk. |
-| Filtering and signing | **Rspamd**:<br>• A milter that scores and filters spam, with DNS blocklists queried through a bundled Unbound resolver.<br>• DKIM signing with per-domain RSA-2048 keys that Aether generates.<br>• ARC signing and outbound rate limiting. |
+| Filtering and signing | **Rspamd**:<br>• A milter that scores and filters spam, with DNS blocklists queried through a bundled Unbound resolver.<br>• DKIM signing with per-domain RSA-2048 keys that Aether generates.<br>• ARC signing and outbound rate limiting.<br>• Optional ClamAV virus scanning. |
 | Control plane | **Go API** (`cmd/aether`):<br>• Organizations, domains, mailboxes, aliases, members, and the audit log.<br>• DNS record guidance and a live DNS check, including MTA-STS policies and TLS reporting.<br>• Domain ownership verification. |
 | Authentication | • Local accounts with Argon2id password hashing.<br>• Account suspension from the console, and automatically from signed Halo webhooks.<br>• OpenID Connect sign-in using the authorization code flow with PKCE S256, nonce checking, and state bound to the browser.<br>• Halo and generic OIDC providers, with group-to-role mapping and optional auto-provisioning.<br>• Mailbox-scoped app passwords for IMAP and SMTP. |
 | Webmail | **Aether Mail** (Next.js):<br>• Folders, paged message list, and server-side search.<br>• Sanitized HTML rendering with remote content blocked.<br>• Attachment download, and attachments in compose (upload or drag and drop, 20 MB per message); forwarding keeps the original attachments.<br>• Compose, reply, reply all, and forward, with drafts autosaved to the IMAP Drafts folder.<br>• Conversation view within a folder, using the server's THREAD=REFERENCES.<br>• Mail rules (move, mark read, flag, forward) and automatic replies, compiled to Sieve and run on the server for every client.<br>• Flags, move, delete, and keyboard shortcuts. |
@@ -33,7 +33,6 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
   - Kubernetes: the Helm chart validates in CI but has not yet run on a real cluster (see [documentation/kubernetes.md](documentation/kubernetes.md))
   - Postfix metrics. Metrics for the API, Dovecot, and Rspamd, a Grafana dashboard, and OpenTelemetry tracing for the API exist already.
   - DMARC aggregate reports
-  - ClamAV
 - **API platform:** scoped API keys, webhooks, and generated SDKs.
 
 Exchange ActiveSync, EWS, and MAPI are not implemented. Do not expect Outlook to connect through Exchange protocols. Outlook works over IMAP and SMTP.

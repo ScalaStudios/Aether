@@ -1,0 +1,42 @@
+{{- if .Values.clamav.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: clamav
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "aether.selector" (dict "name" "clamav" "root" .) | nindent 4 }}
+  ports:
+    - { name: clamd, port: 3310, targetPort: 3310 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clamav
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  serviceName: clamav
+  replicas: 1
+  selector:
+    matchLabels: {{- include "aether.selector" (dict "name" "clamav" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aether.selector" (dict "name" "clamav" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: clamav
+          image: {{ .Values.clamav.image }}
+          ports:
+            - { name: clamd, containerPort: 3310 }
+          readinessProbe:
+            tcpSocket: { port: 3310 }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources: {{- toYaml .Values.resources.clamav | nindent 12 }}
+          volumeMounts:
+            - { name: signatures, mountPath: /var/lib/clamav }
+  volumeClaimTemplates:
+    - metadata:
+        name: signatures
+      spec: {{- include "aether.pvc" (dict "size" .Values.storage.clamav "root" .) | nindent 8 }}
+{{- end }}
