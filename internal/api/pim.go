@@ -326,6 +326,7 @@ type calendarEvent struct {
 	Attendees   []eventAttendee `json:"attendees"`
 	CalendarID  string          `json:"calendarId,omitempty"`
 	ReadOnly    bool            `json:"readOnly,omitempty"`
+	transparent bool
 }
 
 var repeatRules = map[string]string{"daily": "FREQ=DAILY", "weekly": "FREQ=WEEKLY", "monthly": "FREQ=MONTHLY", "yearly": "FREQ=YEARLY"}
@@ -336,6 +337,8 @@ func eventFromComponent(id string, comp *ical.Component) (calendarEvent, *ical.E
 	out.Title, _ = comp.Props.Text(ical.PropSummary)
 	out.Location, _ = comp.Props.Text(ical.PropLocation)
 	out.Description, _ = comp.Props.Text(ical.PropDescription)
+	transp, _ := comp.Props.Text(ical.PropTransparency)
+	out.transparent = strings.EqualFold(transp, "TRANSPARENT")
 	if start := comp.Props.Get(ical.PropDateTimeStart); start != nil && start.ValueType() == ical.ValueDate {
 		out.AllDay = true
 	}
@@ -378,6 +381,15 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		s.internalError(w, r, err)
 		return
 	}
+	out, err := s.eventsIn(ctx, calendars, from, to)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) eventsIn(ctx context.Context, calendars []collectionRow, from, to time.Time) ([]calendarEvent, error) {
 	byID := map[string]collectionRow{}
 	ids := make([]string, len(calendars))
 	for i, c := range calendars {
@@ -387,8 +399,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		SELECT o.collection_id, o.name, o.data FROM dav_objects o
 		WHERE o.collection_id = ANY($1) AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
 	if err != nil {
-		s.internalError(w, r, err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	out := []calendarEvent{}
@@ -396,8 +407,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		first := len(out)
 		var collectionID, name, data string
 		if err := rows.Scan(&collectionID, &name, &data); err != nil {
-			s.internalError(w, r, err)
-			return
+			return nil, err
 		}
 		cal, err := ical.NewDecoder(strings.NewReader(data)).Decode()
 		if err != nil {
@@ -457,7 +467,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
-	writeJSON(w, http.StatusOK, out)
+	return out, rows.Err()
 }
 
 type eventInput struct {

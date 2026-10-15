@@ -135,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/calendar/events", s.saveEvent)
 	authed("PUT /api/v1/calendar/events/{id}", s.saveEvent)
 	authed("DELETE /api/v1/calendar/events/{id}", s.deleteEvent)
+	authed("GET /api/v1/calendar/freebusy", s.freeBusy)
 	authed("GET /api/v1/calendar/calendars", s.listCalendars)
 	authed("POST /api/v1/calendar/calendars", s.createCalendar)
 	authed("PATCH /api/v1/calendar/calendars/{calendarId}", s.updateCalendar)

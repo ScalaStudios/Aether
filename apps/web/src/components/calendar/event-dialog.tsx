@@ -1,12 +1,13 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Trash2 } from "lucide-react"
 import { useState } from "react"
-import { Controller, useForm, useWatch } from "react-hook-form"
+import { type Control, Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
+import { cn } from "cn"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button"
 import { DialogClose } from "@/components/ui/dialog"
 import { Input, Textarea } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { attendeeStatusLabels } from "@/lib/format"
@@ -245,6 +247,7 @@ export function EventDialog({
               render={({ field }) => (
                 <Field id="event-attendees" label="Attendees" error={errors.attendees?.message}>
                   <RecipientInput id="event-attendees" value={field.value} onChange={field.onChange} invalid={!!errors.attendees} placeholder="Add people by email" suggest />
+                  <Availability control={form.control} target={target} />
                   {event && event.attendees.length > 0 && <AttendeeList attendees={event.attendees} />}
                 </Field>
               )}
@@ -293,5 +296,33 @@ function AttendeeList({ organizer, attendees }: { organizer?: string; attendees:
         </li>
       ))}
     </ul>
+  )
+}
+
+function Availability({ control, target }: { control: Control<Values>; target: EventSelection }) {
+  const v = useWatch({ control })
+  const values = { allDay: !!v.allDay, startDate: v.startDate ?? "", startTime: v.startTime ?? "", endDate: v.endDate ?? "", endTime: v.endTime ?? "" }
+  const valid = !values.allDay && !!values.startDate && !!values.startTime && !!values.endDate && !!values.endTime
+  const { start, end } = valid ? range(values) : { start: target.start, end: target.end }
+  const unchanged = !!target.event && start.getTime() === target.start.getTime() && end.getTime() === target.end.getTime()
+  const attendees = (v.attendees ?? []).map((a) => a?.address ?? "").filter(Boolean)
+  const debounced = useDebouncedValue(valid && !unchanged && attendees.length > 0 && end > start ? JSON.stringify({ start: toRFC3339(start), end: toRFC3339(end), attendees }) : "", 400)
+  const key: { start: string; end: string; attendees: string[] } | null = debounced ? JSON.parse(debounced) : null
+  const freeBusy = useQuery({
+    queryKey: ["freebusy", key],
+    queryFn: () =>
+      api<{ email: string; known: boolean; busy: { start: string; end: string }[] }[]>(
+        `/calendar/freebusy?${new URLSearchParams([["start", key!.start], ["end", key!.end], ...key!.attendees.map((a) => ["attendee", a])])}`
+      ),
+    enabled: !!key,
+  })
+  if (!key || !freeBusy.data) return null
+  const known = freeBusy.data.filter((f) => f.known)
+  const busy = known.filter((f) => f.busy.length > 0).map((f) => (v.attendees ?? []).find((a) => a?.address?.toLowerCase() === f.email)?.name || f.email)
+  if (known.length === 0) return null
+  return (
+    <p role="status" className={cn("text-sm", busy.length ? "text-warning" : "text-fg-tertiary")}>
+      {busy.length ? `Busy at this time: ${busy.join(", ")}` : known.length === 1 ? "Free at this time." : "Everyone from your organization is free at this time."}
+    </p>
   )
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -233,4 +234,74 @@ func (s *Server) unshareCalendar(w http.ResponseWriter, r *http.Request, p *prin
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+const maxFreeBusyAttendees = 50
+
+type busyPeriod struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+}
+
+type freeBusy struct {
+	Email string       `json:"email"`
+	Known bool         `json:"known"`
+	Busy  []busyPeriod `json:"busy"`
+}
+
+func (s *Server) freeBusy(w http.ResponseWriter, r *http.Request, p *principal) {
+	q := r.URL.Query()
+	from, err1 := time.Parse(time.RFC3339, q.Get("start"))
+	to, err2 := time.Parse(time.RFC3339, q.Get("end"))
+	emails := q["attendee"]
+	if err1 != nil || err2 != nil || !to.After(from) || to.Sub(from) > 31*24*time.Hour || len(emails) == 0 || len(emails) > maxFreeBusyAttendees {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_request", "Give start and end at most 31 days apart, and 1 to 50 attendee addresses.")
+		return
+	}
+	for i := range emails {
+		emails[i] = strings.ToLower(strings.TrimSpace(emails[i]))
+	}
+	rows, err := s.db.Query(r.Context(), `
+		SELECT a.email, c.id, c.slug FROM unnest($1::text[]) AS a(email)
+		JOIN users u ON u.id = coalesce((SELECT id FROM users WHERE email = a.email), (SELECT owner_user_id FROM mailboxes WHERE address = a.email LIMIT 1))
+		JOIN dav_collections c ON c.user_id = u.id AND c.kind = 'calendar'
+		WHERE u.status = 'active' AND EXISTS (
+			SELECT 1 FROM organization_members x JOIN organization_members y ON x.org_id = y.org_id WHERE x.user_id = u.id AND y.user_id = $2)`, emails, p.User.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	calendars := map[string][]collectionRow{}
+	for rows.Next() {
+		var email string
+		var c collectionRow
+		if err := rows.Scan(&email, &c.ID, &c.Slug); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		calendars[email] = append(calendars[email], c)
+	}
+	if err := rows.Err(); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := make([]freeBusy, len(emails))
+	for i, email := range emails {
+		out[i] = freeBusy{Email: email, Busy: []busyPeriod{}}
+		if len(calendars[email]) == 0 {
+			continue
+		}
+		events, err := s.eventsIn(r.Context(), calendars[email], from, to)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		out[i].Known = true
+		for _, e := range events {
+			if !e.AllDay && !e.transparent {
+				out[i].Busy = append(out[i].Busy, busyPeriod{Start: e.Start, End: e.End})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

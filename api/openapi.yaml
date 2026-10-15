@@ -1060,6 +1060,37 @@ paths:
         - { name: calendar, in: query, schema: { type: string, default: personal }, description: The calendarId of the event }
       responses:
         "204": { description: "Deleted, including every occurrence" }
+  /calendar/freebusy:
+    get:
+      tags: [calendar]
+      summary: Busy times of people in your organizations
+      description: Returns only start and end times, never event details. Timed events count as busy. All-day events and events marked free (TRANSP:TRANSPARENT) do not. Addresses outside your organizations come back with known set to false.
+      parameters:
+        - { name: start, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, schema: { type: string, format: date-time }, description: At most 31 days after start }
+        - { name: attendee, in: query, required: true, style: form, explode: true, schema: { type: array, maxItems: 50, items: { type: string, format: email } } }
+      responses:
+        "200":
+          description: One entry per attendee, in request order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [email, known, busy]
+                  properties:
+                    email: { type: string }
+                    known: { type: boolean }
+                    busy:
+                      type: array
+                      items:
+                        type: object
+                        required: [start, end]
+                        properties:
+                          start: { type: string, format: date-time }
+                          end: { type: string, format: date-time }
+        "422": { $ref: "#/components/responses/Error" }
   /calendar/calendars:
     get:
       tags: [calendar]
