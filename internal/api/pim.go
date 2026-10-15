@@ -672,6 +672,13 @@ func (s *Server) deleteEvent(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	var data string
+	if calendar.Access != "owner" {
+		err = s.db.QueryRow(ctx, `SELECT data FROM dav_objects WHERE collection_id = $1 AND name = $2`, calendar.ID, name).Scan(&data)
+		if cal, decodeErr := ical.NewDecoder(strings.NewReader(data)).Decode(); err == nil && decodeErr == nil && masterEvent(cal) != nil && eventOrganizer(masterEvent(cal)).Address != "" {
+			writeError(w, http.StatusForbidden, "meeting", "This is a meeting with other people. Only the calendar's owner can cancel it.")
+			return
+		}
+	}
 	err = s.db.QueryRow(ctx, `DELETE FROM dav_objects WHERE collection_id = $1 AND name = $2 RETURNING data`, calendar.ID, name).Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)

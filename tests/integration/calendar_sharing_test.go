@@ -131,6 +131,17 @@ func TestCalendarSharing(t *testing.T) {
 	if len(aliceEvents) != 3 {
 		t.Fatalf("alice should see her event and both of bob's: %+v", aliceEvents)
 	}
+	var meeting, idea struct {
+		ID string `json:"id"`
+	}
+	withGuest := event("Planning", team.ID)
+	withGuest["attendees"] = []string{"guest@example.org"}
+	w.alice.must("POST", "/calendar/events", withGuest, &meeting, 201)
+	if code := w.bob.do("DELETE", "/calendar/events/"+meeting.ID+"?calendar="+shared.ID, nil, nil); code != 403 {
+		t.Fatalf("an editor deleting the owner's meeting would leave guests uninformed, got %d", code)
+	}
+	w.bob.must("POST", "/calendar/events", event("Scratch", shared.ID), &idea, 201)
+	w.bob.must("DELETE", "/calendar/events/"+idea.ID+"?calendar="+shared.ID, nil, nil, 204)
 
 	var orgWide calendarView
 	w.admin.must("POST", "/calendar/calendars", map[string]string{"name": "Holidays " + randomSuffix()}, &orgWide, 201)
