@@ -330,12 +330,12 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
               Discard
             </Button>
             <div className="flex">
-              <Button type="submit" loading={send.isPending} className="rounded-r-none">
+              <Button type="submit" loading={send.isPending} className="rounded-r-none hover:shadow-none">
                 <Send aria-hidden />
                 Send
               </Button>
               <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending} onPick={(at) => submit(at)()}>
-                <Button type="button" size="icon" aria-label="Schedule send" className="rounded-l-none border-l-ink/20">
+                <Button type="button" size="icon" aria-label="Schedule send" className="h-auto self-stretch rounded-l-none border-l-ink/20 hover:shadow-none">
                   <ChevronDown />
                 </Button>
               </LaterMenu>
