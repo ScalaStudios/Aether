@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
-import { formatDate, formatPercent } from "@/lib/format"
+import { formatDate, formatPercent, plural } from "@/lib/format"
 import { domainsQuery } from "@/lib/queries"
 import type { DMARCSource, DMARCSummary, DNSRecord, DNSStatus, Domain } from "@/lib/types"
 
@@ -54,10 +54,6 @@ const purposes: Record<DNSRecord["purpose"], string> = {
 }
 
 const periods = [7, 30, 90].map((days) => ({ value: days, label: `${days} days` }))
-
-function plural(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`
-}
 
 function aligned(s: DMARCSource) {
   return Math.max(s.dkimAligned, s.spfAligned)

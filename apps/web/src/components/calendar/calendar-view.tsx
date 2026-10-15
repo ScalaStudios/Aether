@@ -1,8 +1,9 @@
 "use client"
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { cn } from "cn"
 
 import { EventDialog, type EventSelection } from "@/components/calendar/event-dialog"
@@ -11,7 +12,9 @@ import { SegmentedControl } from "@/components/segmented-control"
 import { Spinner } from "@/components/spinner"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
-import { api } from "@/lib/api"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { api, apiUrl, errorMessage } from "@/lib/api"
+import { plural } from "@/lib/format"
 import { addDays, eventRange, eventsOn, layoutDay, sameDay, startOfDay, startOfWeek, toRFC3339, useNow } from "@/lib/calendar"
 import type { CalendarEvent } from "@/lib/types"
 
@@ -58,6 +61,54 @@ export function CalendarView() {
   const now = useNow()
   if (!now) return <RowsSkeleton rows={6} className="p-6" />
   return <Calendar now={now} />
+}
+
+function CalendarMenu() {
+  const qc = useQueryClient()
+  const fileInput = useRef<HTMLInputElement>(null)
+  const importFile = useMutation({
+    mutationFn: (file: File) => api<{ imported: number; updated: number; skipped: number }>("/calendar/import", { method: "POST", body: file }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["calendar-events"] })
+      toast.success(`Imported ${plural(r.imported + r.updated, "event")}`, { description: r.skipped ? `Skipped ${plural(r.skipped, "event")} that couldn't be read.` : undefined })
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
+  return (
+    <>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".ics,text/calendar"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) importFile.mutate(file)
+          e.target.value = ""
+        }}
+      />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="secondary" size="icon" aria-label="Calendar options" loading={importFile.isPending}>
+            <Ellipsis />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
+            <Upload aria-hidden />
+            Import .ics file
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <a href={apiUrl("/calendar/export")} download="calendar.ics">
+              <Download aria-hidden />
+              Export .ics file
+            </a>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  )
 }
 
 function Calendar({ now }: { now: Date }) {
@@ -132,6 +183,7 @@ function Calendar({ now }: { now: Date }) {
           value={view}
           onChange={setView}
         />
+        <CalendarMenu />
         <Button onClick={newEvent}>
           <Plus aria-hidden />
           New event

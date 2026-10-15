@@ -16,6 +16,10 @@ export function formatBytes(bytes: number) {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
+export function plural(count: number, noun: string) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`
+}
+
 export function formatPercent(part: number, total: number) {
   return `${total ? Math.round((part / total) * 100) : 0}%`
 }
