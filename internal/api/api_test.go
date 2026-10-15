@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"testing"
 	"time"
@@ -107,5 +108,46 @@ func TestDAVStatusCodeReadsLibraryErrors(t *testing.T) {
 	}
 	if got := davStatusCode(errors.New("plain")); got != 0 {
 		t.Fatalf("plain error gave status %d", got)
+	}
+}
+
+func TestPublicAddressBlocksInternalTargets(t *testing.T) {
+	blocked := []string{"127.0.0.1", "10.1.2.3", "172.18.0.5", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "64:ff9b::a00:1", "240.0.0.1"}
+	for _, ip := range blocked {
+		if publicAddress(netip.MustParseAddr(ip)) {
+			t.Errorf("%s should be blocked", ip)
+		}
+	}
+	for _, ip := range []string{"1.1.1.1", "31.77.212.35", "2606:4700:4700::1111"} {
+		if !publicAddress(netip.MustParseAddr(ip)) {
+			t.Errorf("%s should be allowed", ip)
+		}
+	}
+}
+
+func TestAPIKeyScopes(t *testing.T) {
+	k := &apiKeyIdentity{Scopes: []string{"domains:read", "mailboxes:write"}}
+	cases := []struct {
+		method, resource string
+		want             bool
+	}{
+		{"GET", "domains", true},
+		{"POST", "domains", false},
+		{"DELETE", "mailboxes", true},
+		{"GET", "mailboxes", true},
+		{"GET", "audit", false},
+		{"GET", "", true},
+	}
+	for _, c := range cases {
+		if got := k.permits(c.method, c.resource); got != c.want {
+			t.Errorf("%s %s = %v, want %v", c.method, c.resource, got, c.want)
+		}
+	}
+}
+
+func TestWebhookSignatureMatchesVerifier(t *testing.T) {
+	secret, body, now := []byte("whsec_x"), []byte(`{"type":"webhook.test"}`), time.Now()
+	if !verifySignature(signWebhook(secret, body, now), body, secret, now) {
+		t.Fatal("webhook signature does not verify")
 	}
 }

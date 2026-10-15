@@ -25,18 +25,19 @@ import (
 const sessionCookie = "aether_session"
 
 type Server struct {
-	cfg     *config.Config
-	db      *pgxpool.Pool
-	box     *secrets.Box
-	kv      *redis.Client
-	mail    *mail.Client
-	log     *slog.Logger
-	oidc    *oidcCache
-	resolve resolver
+	cfg           *config.Config
+	db            *pgxpool.Pool
+	box           *secrets.Box
+	kv            *redis.Client
+	mail          *mail.Client
+	log           *slog.Logger
+	oidc          *oidcCache
+	resolve       resolver
+	webhookClient *http.Client
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -67,6 +68,14 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/organizations/{orgId}/members", s.listMembers)
 	authed("POST /api/v1/organizations/{orgId}/members", s.setMember)
 	authed("GET /api/v1/organizations/{orgId}/audit", s.listAudit)
+	authed("GET /api/v1/organizations/{orgId}/api-keys", s.listAPIKeys)
+	authed("POST /api/v1/organizations/{orgId}/api-keys", s.createAPIKey)
+	authed("DELETE /api/v1/api-keys/{keyId}", s.revokeAPIKey)
+	authed("GET /api/v1/organizations/{orgId}/webhooks", s.listWebhooks)
+	authed("POST /api/v1/organizations/{orgId}/webhooks", s.createWebhook)
+	authed("DELETE /api/v1/webhooks/{webhookId}", s.deleteWebhook)
+	authed("GET /api/v1/webhooks/{webhookId}/deliveries", s.listDeliveries)
+	authed("POST /api/v1/webhooks/{webhookId}/test", s.testWebhook)
 
 	authed("GET /api/v1/organizations/{orgId}/domains", s.listDomains)
 	authed("POST /api/v1/organizations/{orgId}/domains", s.createDomain)
@@ -162,6 +171,7 @@ type principal struct {
 	providerID  *string
 	idToken     *string
 	roles       map[string]string
+	apiKey      *apiKeyIdentity
 }
 
 func (p *principal) orgRole(orgID string) string {
@@ -178,6 +188,12 @@ func (p *principal) canAdminOrg(orgID string) bool {
 
 func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *principal)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(token, apiKeyPrefix) {
+			if p, ok := s.apiKeyPrincipal(w, r, token); ok {
+				h(w, r, p)
+			}
+			return
+		}
 		c, err := r.Cookie(sessionCookie)
 		if err != nil || c.Value == "" {
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "Sign in to continue.")
@@ -301,16 +317,30 @@ func (s *Server) clientIP(r *http.Request) string {
 
 func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID *string, action, targetType, targetID string, meta map[string]any) {
 	var actor *string
-	if p != nil {
-		actor = &p.User.ID
-	}
 	if meta == nil {
 		meta = map[string]any{}
 	}
-	_, err := s.db.Exec(ctx, `INSERT INTO audit_events (actor_user_id, org_id, action, target_type, target_id, ip, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		actor, orgID, action, targetType, targetID, s.clientIP(r), meta)
+	switch {
+	case p != nil && p.apiKey != nil:
+		meta["apiKeyId"], meta["apiKeyName"] = p.apiKey.ID, p.apiKey.Name
+	case p != nil:
+		actor = &p.User.ID
+	}
+	var eventID int64
+	var at time.Time
+	err := s.db.QueryRow(ctx, `INSERT INTO audit_events (actor_user_id, org_id, action, target_type, target_id, ip, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		actor, orgID, action, targetType, targetID, s.clientIP(r), meta).Scan(&eventID, &at)
 	if err != nil {
 		s.log.Error("audit write failed", "action", action, "err", err)
+		return
+	}
+	if orgID != nil {
+		s.enqueueWebhooks(ctx, *orgID, action, map[string]any{
+			"id": strconv.FormatInt(eventID, 10), "type": action, "createdAt": at, "organizationId": *orgID,
+			"actor":  map[string]any{"userId": actor, "apiKeyId": meta["apiKeyId"]},
+			"target": map[string]string{"type": targetType, "id": targetID},
+			"data":   meta,
+		})
 	}
 }
 

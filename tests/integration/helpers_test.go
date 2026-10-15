@@ -51,10 +51,11 @@ func mailTLS(t *testing.T) *tls.Config {
 }
 
 type apiClient struct {
-	t    *testing.T
-	base string
-	http *http.Client
-	csrf string
+	t      *testing.T
+	base   string
+	http   *http.Client
+	csrf   string
+	bearer string
 }
 
 func newClient(t *testing.T) *apiClient {
@@ -73,6 +74,9 @@ func (c *apiClient) do(method, path string, body any, out any) int {
 	req.Header.Set("Content-Type", "application/json")
 	if c.csrf != "" {
 		req.Header.Set("X-CSRF-Token", c.csrf)
+	}
+	if c.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearer)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

@@ -28,6 +28,7 @@ type Config struct {
 	TrustProxy            bool
 	AllowHTTPIssuers      bool
 	MTASTSMode            string
+	WebhookAllowPrivate   bool
 }
 
 func Load() (*Config, error) {
@@ -48,6 +49,7 @@ func Load() (*Config, error) {
 		TrustProxy:            os.Getenv("AETHER_TRUST_PROXY") == "true",
 		AllowHTTPIssuers:      os.Getenv("AETHER_OIDC_ALLOW_HTTP") == "true",
 		MTASTSMode:            env("AETHER_MTA_STS_MODE", "testing"),
+		WebhookAllowPrivate:   os.Getenv("AETHER_WEBHOOK_ALLOW_PRIVATE") == "true",
 	}
 	var errs []error
 	if c.DatabaseURL == "" {

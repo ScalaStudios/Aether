@@ -235,6 +235,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		for s.sendNextScheduled(ctx) {
 		}
 		s.wakeSnoozed(ctx)
+		s.deliverWebhooks(ctx)
 		select {
 		case <-ctx.Done():
 			return

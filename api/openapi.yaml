@@ -9,6 +9,7 @@ servers:
   - url: /api/v1
 security:
   - session: []
+  - apiKey: []
 tags:
   - name: auth
   - name: organizations
@@ -21,6 +22,7 @@ tags:
   - name: identity-providers
   - name: contacts
   - name: calendar
+  - name: integrations
 paths:
   /auth/providers:
     get:
@@ -346,6 +348,128 @@ paths:
       responses:
         "204": { description: Saved }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/api-keys:
+    get:
+      tags: [integrations]
+      summary: List active API keys (session only)
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: API keys without their tokens
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/APIKey" } }
+    post:
+      tags: [integrations]
+      summary: Create an API key (session only). The token is returned once.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string, maxLength: 100 }
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write"]
+                expiresAt: { type: string, format: date-time }
+      responses:
+        "201":
+          description: The key and its token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key: { $ref: "#/components/schemas/APIKey" }
+                  token: { type: string }
+  /api-keys/{keyId}:
+    delete:
+      tags: [integrations]
+      summary: Revoke an API key (session only)
+      parameters: [{ name: keyId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/webhooks:
+    get:
+      tags: [integrations]
+      summary: List webhooks
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: Webhooks
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Webhook" } }
+    post:
+      tags: [integrations]
+      summary: Create a webhook. The signing secret is returned once.
+      description: "Every audit event in the organization (for example mailbox.create or domain.verify) is posted to the URL as JSON. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri, description: Must be https and must resolve to a public address }
+                events: { type: array, items: { type: string }, description: "Audit action names, or * for all" }
+      responses:
+        "201":
+          description: The webhook and its secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook: { $ref: "#/components/schemas/Webhook" }
+                  secret: { type: string }
+  /webhooks/{webhookId}:
+    delete:
+      tags: [integrations]
+      summary: Delete a webhook and its delivery history
+      parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /webhooks/{webhookId}/deliveries:
+    get:
+      tags: [integrations]
+      summary: The 50 most recent deliveries
+      parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Deliveries, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    event: { type: string }
+                    status: { type: string, enum: [pending, delivered, failed] }
+                    attempts: { type: integer }
+                    responseCode: { type: [integer, "null"] }
+                    lastError: { type: [string, "null"] }
+                    createdAt: { type: string, format: date-time }
+                    deliveredAt: { type: [string, "null"], format: date-time }
+  /webhooks/{webhookId}/test:
+    post:
+      tags: [integrations]
+      summary: Queue a webhook.test delivery
+      parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "202": { description: Queued }
   /organizations/{orgId}/audit:
     get:
       tags: [organizations]
@@ -914,6 +1038,10 @@ components:
       in: cookie
       name: aether_session
       description: State-changing requests must also send the session csrfToken in the X-CSRF-Token header.
+    apiKey:
+      type: http
+      scheme: bearer
+      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes, aliases, members, audit, and webhooks. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1185,6 +1313,24 @@ components:
         filename: { type: string }
         contentType: { type: string }
         size: { type: integer }
+    APIKey:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: The first characters of the token, for recognizing it }
+        scopes: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: [string, "null"], format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+    Webhook:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+        events: { type: array, items: { type: string } }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
     ScheduledMessage:
       type: object
       required: [id, sendAt, subject, to, error]
