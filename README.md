@@ -30,7 +30,7 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 - **Token-based mail login:** SASL OAUTHBEARER or XOAUTH2 for IMAP and SMTP, using Halo access tokens. App passwords are the protocol credential today.
 - **SCIM provisioning:** Halo can push users to Aether over SCIM. Suspensions already arrive through Halo webhooks.
 - **Operations:**
-  - Kubernetes Helm chart
+  - Kubernetes: the Helm chart validates in CI but has not yet run on a real cluster (see [documentation/kubernetes.md](documentation/kubernetes.md))
   - OpenTelemetry tracing, and metrics for Postfix, Dovecot, and Rspamd. API metrics and a Grafana dashboard exist already.
   - Backup and restore tooling
   - MTA-STS and TLS-RPT publishing

@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "aether.selector" (dict "name" "api" "root" .) | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }
+    - { name: metrics, port: 9090, targetPort: 9090 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.api }}
+  selector:
+    matchLabels: {{- include "aether.selector" (dict "name" "api" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aether.selector" (dict "name" "api" "root" .) | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      securityContext: {{- include "aether.podSecurity" . | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "aether.image" (dict "name" "api" "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - { name: AETHER_PUBLIC_URL, value: {{ .Values.publicUrl | quote }} }
+            - { name: AETHER_MAIL_HOSTNAME, value: {{ .Values.mailHostname | quote }} }
+            - { name: AETHER_MAIL_TLS_CA_FILE, value: /tls/fullchain.pem }
+            - { name: AETHER_TRUST_PROXY, value: "true" }
+            - { name: AETHER_METRICS_LISTEN, value: ":9090" }
+            - { name: AETHER_LOCAL_LOGIN, value: {{ .Values.localLogin | quote }} }
+            {{- include "aether.secretEnv" (dict "env" "AETHER_DATABASE_URL" "key" "databaseUrl" "root" .) | nindent 12 }}
+            {{- include "aether.secretEnv" (dict "env" "AETHER_SECRET_KEY" "key" "secretKey" "root" .) | nindent 12 }}
+            {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) | nindent 12 }}
+            {{- include "aether.secretEnv" (dict "env" "AETHER_VALKEY_PASSWORD" "key" "valkeyPassword" "root" .) | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources: {{- toYaml .Values.resources.api | nindent 12 }}
+          securityContext:
+            {{- include "aether.restrictedSecurity" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: mail-tls, mountPath: /tls, readOnly: true }
+      volumes: {{- include "aether.tlsVolume" . | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "aether.selector" (dict "name" "web" "root" .) | nindent 4 }}
+  ports:
+    - { name: http, port: 3000, targetPort: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.web }}
+  selector:
+    matchLabels: {{- include "aether.selector" (dict "name" "web" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aether.selector" (dict "name" "web" "root" .) | nindent 8 }}
+    spec:
+      securityContext: {{- include "aether.podSecurity" . | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: web
+          image: {{ include "aether.image" (dict "name" "web" "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            tcpSocket: { port: http }
+          resources: {{- toYaml .Values.resources.web | nindent 12 }}
+          securityContext: {{- include "aether.restrictedSecurity" . | nindent 12 }}

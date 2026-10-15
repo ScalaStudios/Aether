@@ -1,0 +1,14 @@
+Aether is starting in namespace {{ .Release.Namespace }}.
+
+1. Point DNS at the cluster:
+   - {{ (urlParse .Values.publicUrl).host }} → your ingress controller
+   - {{ .Values.mailHostname }} → the external IPs of services {{ .Release.Name }}-mail-smtp and {{ .Release.Name }}-mail-imap
+     kubectl get svc -n {{ .Release.Namespace }} {{ .Release.Name }}-mail-smtp {{ .Release.Name }}-mail-imap
+   Ask your provider to set reverse DNS for the SMTP address to {{ .Values.mailHostname }}.
+
+2. Create the first platform administrator:
+   kubectl exec -n {{ .Release.Namespace }} deploy/api -- aether bootstrap-admin --email you@example.com
+
+3. Mail TLS comes from secret {{ .Values.mailTLS.secretName }}{{ if .Values.mailTLS.certManager.enabled }} (issued by cert-manager){{ else }}; create it before the mail pods can start{{ end }}.
+
+Back up the {{ include "aether.secretName" . }} secret. Without secretKey, stored DKIM keys and identity provider secrets cannot be decrypted.

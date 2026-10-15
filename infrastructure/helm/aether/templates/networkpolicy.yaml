@@ -1,0 +1,88 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $rules := list
+  (dict "name" "postgres" "from" (list "api" "dovecot" "postfix") "ports" (list 5432))
+  (dict "name" "valkey" "from" (list "api" "rspamd") "ports" (list 6379))
+  (dict "name" "unbound" "from" (list "rspamd") "ports" (list 53))
+  (dict "name" "rspamd" "from" (list "postfix") "ports" (list 11332))
+  (dict "name" "web" "from" (list) "ports" (list 3000) "ingress" true)
+}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: ["Ingress"]
+{{- range $rules }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}
+  labels: {{- include "aether.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "aether.selector" (dict "name" .name "root" $) | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- include "aether.allowFrom" .from | nindent 8 }}
+        {{- if .ingress }}
+        - namespaceSelector:
+            matchLabels: {{- toYaml $.Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
+        {{- end }}
+      ports:
+        {{- range .ports }}
+        - port: {{ . }}
+        {{- end }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "aether.selector" (dict "name" "api" "root" .) | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
+      ports: [{ port: 8080 }]
+    - ports: [{ port: 9090 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-dovecot
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "aether.selector" (dict "name" "dovecot" "root" .) | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports: [{ port: 143 }, { port: 993 }]
+    - from: {{- include "aether.allowFrom" (list "postfix") | nindent 8 }}
+      ports: [{ port: 24 }, { port: 12345 }]
+    - from: {{- include "aether.allowFrom" (list "api") | nindent 8 }}
+      ports: [{ port: 4190 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-postfix
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "aether.selector" (dict "name" "postfix" "root" .) | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports: [{ port: 25 }, { port: 465 }, { port: 587 }]
+    - from: {{- include "aether.allowFrom" (list "dovecot") | nindent 8 }}
+      ports: [{ port: 10025 }]
+{{- end }}

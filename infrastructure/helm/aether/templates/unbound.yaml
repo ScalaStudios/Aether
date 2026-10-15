@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: unbound
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "aether.selector" (dict "name" "unbound" "root" .) | nindent 4 }}
+  ports:
+    - { name: dns-udp, port: 53, targetPort: 53, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: 53, protocol: TCP }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unbound
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "aether.selector" (dict "name" "unbound" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aether.selector" (dict "name" "unbound" "root" .) | nindent 8 }}
+    spec:
+      securityContext: {{- include "aether.podSecurity" . | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: unbound
+          image: {{ include "aether.image" (dict "name" "unbound" "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: dns-udp, containerPort: 53, protocol: UDP }
+            - { name: dns-tcp, containerPort: 53, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: 53 }
+          resources: {{- toYaml .Values.resources.unbound | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"], add: ["NET_BIND_SERVICE", "SETUID", "SETGID", "CHOWN"] }

@@ -1,0 +1,13 @@
+{{- if .Values.mailTLS.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-mail
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.mailTLS.secretName }}
+  dnsNames: [{{ .Values.mailHostname | quote }}]
+  issuerRef:
+    name: {{ .Values.mailTLS.certManager.issuerName }}
+    kind: {{ .Values.mailTLS.certManager.issuerKind }}
+{{- end }}

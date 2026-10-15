@@ -1,0 +1,9 @@
+apiVersion: v2
+name: aether
+description: Aether self-hosted mail, calendar, and contacts by Scala Studios
+type: application
+version: 0.1.0
+appVersion: "main"
+annotations:
+  licenses: AGPL-3.0-or-later
+home: https://github.com/ScalaStudios/Aether

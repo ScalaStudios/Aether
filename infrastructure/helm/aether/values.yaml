@@ -1,0 +1,80 @@
+publicUrl: https://mail.example.com
+mailHostname: mail.example.com
+
+image:
+  registry: ghcr.io/scalastudios
+  tag: main
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+secrets:
+  existingSecret: ""
+  secretKey: ""
+  mailDbPassword: ""
+  dovecotMasterPassword: ""
+  sieveRelayPassword: ""
+  valkeyPassword: ""
+  postgresPassword: ""
+  databaseUrl: ""
+  relayPassword: ""
+
+relay:
+  host: ""
+  user: ""
+
+localLogin: true
+dovecotMasterAllowNets: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+mailTLS:
+  secretName: aether-mail-tls
+  certManager:
+    enabled: false
+    issuerName: letsencrypt
+    issuerKind: ClusterIssuer
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  tlsSecretName: aether-web-tls
+
+mailService:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  annotations: {}
+  loadBalancerIP: ""
+
+postgresql:
+  enabled: true
+  image: postgres:17-alpine
+  storage: 10Gi
+
+valkey:
+  image: valkey/valkey:8-alpine
+  storage: 1Gi
+
+storageClass: ""
+
+storage:
+  vmail: 50Gi
+  postfixSpool: 5Gi
+  rspamd: 2Gi
+
+networkPolicy:
+  enabled: true
+  ingressControllerNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+
+resources:
+  api: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 512Mi } }
+  web: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+  postfix: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 256Mi } }
+  dovecot: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 1Gi } }
+  rspamd: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+  unbound: { requests: { cpu: 20m, memory: 32Mi }, limits: { memory: 256Mi } }
+  valkey: { requests: { cpu: 20m, memory: 64Mi }, limits: { memory: 512Mi } }
+  postgres: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+
+replicas:
+  api: 2
+  web: 2

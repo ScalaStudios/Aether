@@ -1,0 +1,34 @@
+{{- if .Values.ingress.enabled }}
+{{- $host := (urlParse .Values.publicUrl).host }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: {{- include "aether.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          {{- range list "/api" "/dav" "/.well-known/caldav" "/.well-known/carddav" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { name: http } }
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: web, port: { name: http } }
+{{- end }}
