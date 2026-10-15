@@ -111,6 +111,12 @@ Two mail services also serve metrics inside the Compose network:
 
 Postfix has no metrics endpoint.
 
+### Tracing
+
+The API exports OpenTelemetry traces over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in `.env`, for example `http://otel-collector:4318`. Set `OTEL_EXPORTER_OTLP_HEADERS` if the collector needs an API key. Each request becomes a span named after its route, with child spans for PostgreSQL queries and Valkey commands.
+
+Spans record SQL text without parameter values, and Valkey command names without arguments. They do record the client IP address, the user agent, and the request path, and DAV paths contain user IDs. With Helm, set the same variables in `api.extraEnv`.
+
 For a ready-made setup, start the optional profile:
 
 ```sh

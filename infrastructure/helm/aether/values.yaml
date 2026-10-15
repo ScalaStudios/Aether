@@ -78,3 +78,6 @@ resources:
 replicas:
   api: 2
   web: 2
+
+api:
+  extraEnv: []

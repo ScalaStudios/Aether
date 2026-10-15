@@ -31,7 +31,7 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 - **SCIM provisioning:** Halo can push users to Aether over SCIM. Suspensions already arrive through Halo webhooks.
 - **Operations:**
   - Kubernetes: the Helm chart validates in CI but has not yet run on a real cluster (see [documentation/kubernetes.md](documentation/kubernetes.md))
-  - OpenTelemetry tracing and Postfix metrics. Metrics for the API, Dovecot, and Rspamd, with a Grafana dashboard, exist already.
+  - Postfix metrics. Metrics for the API, Dovecot, and Rspamd, a Grafana dashboard, and OpenTelemetry tracing for the API exist already.
   - Backup and restore tooling
   - MTA-STS and TLS-RPT publishing
   - DMARC aggregate reports

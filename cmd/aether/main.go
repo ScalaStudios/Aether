@@ -15,7 +15,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 
 	"github.com/scalastudios/aether/internal/api"
 	"github.com/scalastudios/aether/internal/auth"
@@ -72,6 +80,11 @@ func serve(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	shutdownTracing, err := setupTracing(ctx)
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+	defer shutdownTracing()
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
@@ -90,6 +103,9 @@ func serve(log *slog.Logger) error {
 	}
 	kv := redis.NewClient(&redis.Options{Addr: cfg.ValkeyAddr, Password: cfg.ValkeyPassword})
 	defer kv.Close()
+	if err := redisotel.InstrumentTracing(kv, redisotel.WithDBStatement(false)); err != nil {
+		return err
+	}
 	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.SieveAddr, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword)
 	if err != nil {
 		return err
@@ -99,7 +115,7 @@ func serve(log *slog.Logger) error {
 		log.Error("DKIM key sync incomplete; affected domains send unsigned mail", "err", err)
 	}
 	httpServer := &http.Server{
-		Addr: cfg.Listen, Handler: srv.Handler(),
+		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
@@ -125,6 +141,39 @@ func serve(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+func setupTracing(ctx context.Context) (func(), error) {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" && os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" {
+		return func() {}, nil
+	}
+	exporter, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := resource.New(ctx, resource.WithAttributes(semconv.ServiceName("aether-api")), resource.WithFromEnv(), resource.WithTelemetrySDK())
+	if err != nil {
+		return nil, err
+	}
+	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter), sdktrace.WithResource(res))
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		provider.Shutdown(ctx)
+	}, nil
+}
+
+func tracedHandler(h http.Handler) http.Handler {
+	return otelhttp.NewHandler(h, "http",
+		otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/healthz" && r.URL.Path != "/readyz" }),
+		otelhttp.WithSpanNameFormatter(func(op string, r *http.Request) string {
+			if r.Pattern != "" {
+				return r.Pattern
+			}
+			return r.Method
+		}))
 }
 
 func bootstrapAdmin(args []string) error {

@@ -44,6 +44,9 @@ spec:
             {{- include "aether.secretEnv" (dict "env" "AETHER_SECRET_KEY" "key" "secretKey" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_VALKEY_PASSWORD" "key" "valkeyPassword" "root" .) | nindent 12 }}
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
             - { name: metrics, containerPort: 9090 }
