@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query"
+import { useQueries, type UseQueryResult } from "@tanstack/react-query"
 import { AlarmClock, AlarmClockOff, ArrowLeft, ChevronDown, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
 import { cn } from "cn"
 import { useState } from "react"
@@ -62,12 +62,31 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
   )
 }
 
-function EarlierMessage({ uid, mailboxId, folder }: { uid: number; mailboxId: string; folder: string }) {
-  const [open, setOpen] = useState(false)
-  const query = useQuery({
+function messageQuery(mailboxId: string, folder: string, uid: number) {
+  return {
     queryKey: ["message", mailboxId, folder, uid],
     queryFn: () => api<Message>(`/mailboxes/${mailboxId}/messages/${uid}`, { query: { folder } }),
-  })
+  }
+}
+
+function Conversation({ message, earlier, mailboxId, folder }: { message: Message; earlier: number[]; mailboxId: string; folder: string }) {
+  const items = [...earlier.map((uid) => ({ folder, uid })), ...(message.related ?? [])]
+  const queries = useQueries({ queries: items.map((i) => messageQuery(mailboxId, i.folder, i.uid)) })
+  if (items.length === 0) return null
+  const order = items.map((item, i) => ({ item, query: queries[i] }))
+  order.sort((a, b) => (b.query.data ? Date.parse(b.query.data.date) : 0) - (a.query.data ? Date.parse(a.query.data.date) : 0))
+  return (
+    <section aria-label="More in this conversation" className="flex flex-col gap-2 border-t border-border pt-4">
+      <h3 className="text-label text-fg-tertiary">More in this conversation</h3>
+      {order.map(({ item, query }) => (
+        <EarlierMessage key={`${item.folder}-${item.uid}`} query={query} mailboxId={mailboxId} folder={item.folder} showFolder={item.folder !== folder} />
+      ))}
+    </section>
+  )
+}
+
+function EarlierMessage({ query, mailboxId, folder, showFolder }: { query: UseQueryResult<Message>; mailboxId: string; folder: string; showFolder: boolean }) {
+  const [open, setOpen] = useState(false)
   const m = query.data
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border">
@@ -81,6 +100,7 @@ function EarlierMessage({ uid, mailboxId, folder }: { uid: number; mailboxId: st
         {m ? (
           <>
             <span className="min-w-0 flex-1 truncate font-semibold">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</span>
+            {showFolder && <span className="shrink-0 text-sm text-fg-tertiary">{folder === "INBOX" ? "Inbox" : folder}</span>}
             <time dateTime={m.date} className="shrink-0 text-sm text-fg-tertiary">
               {formatDateTime(m.date)}
             </time>
@@ -234,14 +254,7 @@ export function ReadingPane({
             </header>
             {m.invitation && <InvitationCard key={`${m.uid}-${m.invitation.method}`} message={m} mailboxId={mailboxId} folder={folder} />}
             <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
-            {earlier.length > 0 && (
-              <section aria-label="Earlier in this conversation" className="flex flex-col gap-2 border-t border-border pt-4">
-                <h3 className="text-label text-fg-tertiary">Earlier in this conversation</h3>
-                {earlier.map((uid) => (
-                  <EarlierMessage key={uid} uid={uid} mailboxId={mailboxId} folder={folder} />
-                ))}
-              </section>
-            )}
+            <Conversation message={m} earlier={earlier} mailboxId={mailboxId} folder={folder} />
           </article>
         )
       )}

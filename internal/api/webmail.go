@@ -116,10 +116,15 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, p *principal
 			inv = s.describeInvitation(ctx, p.User, m, strings.ToLower(msg.From[0].Address), msg.Calendar)
 		}
 	}
+	related, err := s.mail.Related(m.Address, folderParam(r), msg)
+	if err != nil {
+		s.log.Warn("finding related messages failed", "mailbox", m.ID, "err", err)
+	}
 	writeJSON(w, http.StatusOK, struct {
 		*mailpkg.Message
-		Invitation *invitation `json:"invitation,omitempty"`
-	}{msg, inv})
+		Invitation *invitation       `json:"invitation,omitempty"`
+		Related    []mailpkg.Related `json:"related"`
+	}{msg, inv, nonNil(related)})
 }
 
 func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, p *principal) {

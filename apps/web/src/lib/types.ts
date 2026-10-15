@@ -215,6 +215,7 @@ export interface Message extends MessageSummary {
   html: string
   attachments: Attachment[]
   invitation?: Invitation
+  related?: { folder: string; uid: number; date: string }[]
 }
 
 export interface OutgoingMessage {

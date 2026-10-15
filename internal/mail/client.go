@@ -420,6 +420,84 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 	return out, err
 }
 
+type Related struct {
+	Folder string    `json:"folder"`
+	UID    uint32    `json:"uid"`
+	Date   time.Time `json:"date"`
+}
+
+const maxRelatedIDs = 20
+
+func anyOf(list []imap.SearchCriteria) imap.SearchCriteria {
+	if len(list) == 1 {
+		return list[0]
+	}
+	return imap.SearchCriteria{Or: [][2]imap.SearchCriteria{{list[0], anyOf(list[1:])}}}
+}
+
+func (c *Client) Related(address, folder string, m *Message) ([]Related, error) {
+	var ids []string
+	for _, id := range append([]string{m.MessageID, m.InReplyTo}, m.References...) {
+		if id != "" && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > maxRelatedIDs {
+		ids = append(ids[:1], ids[len(ids)-maxRelatedIDs+1:]...)
+	}
+	out := []Related{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	err := c.with(address, func(ic *imapclient.Client) error {
+		sent, err := c.specialFolder(ic, "sent")
+		if err != nil {
+			return nil
+		}
+		other := sent
+		if folder == sent {
+			other = "INBOX"
+		}
+		if folder == other {
+			return nil
+		}
+		if _, err := ic.Select(other, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+			return nil
+		}
+		var any []imap.SearchCriteria
+		for _, id := range ids {
+			for _, key := range []string{"Message-ID", "In-Reply-To", "References"} {
+				any = append(any, imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: key, Value: id}}})
+			}
+		}
+		criteria := anyOf(any)
+		data, err := ic.UIDSearch(&criteria, nil).Wait()
+		if err != nil {
+			return err
+		}
+		uids := data.AllUIDs()
+		if len(uids) == 0 {
+			return nil
+		}
+		msgs, err := ic.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{UID: true, Envelope: true, InternalDate: true}).Collect()
+		if err != nil {
+			return err
+		}
+		for _, msg := range msgs {
+			if msg.Envelope != nil && angleID(msg.Envelope.MessageID) == m.MessageID {
+				continue
+			}
+			date := msg.InternalDate
+			if msg.Envelope != nil && !msg.Envelope.Date.IsZero() {
+				date = msg.Envelope.Date
+			}
+			out = append(out, Related{Folder: other, UID: uint32(msg.UID), Date: date})
+		}
+		return nil
+	})
+	return out, err
+}
+
 func fetchPart(ic *imapclient.Client, uidSet imap.UIDSet, path []int) ([]byte, error) {
 	section := &imap.FetchItemBinarySection{Part: path, Peek: true}
 	msgs, err := ic.Fetch(uidSet, &imap.FetchOptions{UID: true, BinarySection: []*imap.FetchItemBinarySection{section}}).Collect()

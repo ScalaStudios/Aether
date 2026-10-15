@@ -1425,6 +1425,16 @@ components:
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
             invitation: { $ref: "#/components/schemas/Invitation" }
+            related:
+              type: array
+              description: Messages from the same conversation in Sent, or in the Inbox when reading from Sent
+              items:
+                type: object
+                required: [folder, uid, date]
+                properties:
+                  folder: { type: string }
+                  uid: { type: integer }
+                  date: { type: string, format: date-time }
     Invitation:
       type: object
       required: [method, event, organizer, status, applied]
