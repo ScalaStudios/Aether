@@ -47,6 +47,9 @@ const purposes: Record<DNSRecord["purpose"], string> = {
   spf: "SPF",
   dkim: "DKIM",
   dmarc: "DMARC",
+  "mta-sts-host": "MTA-STS policy host",
+  "mta-sts": "MTA-STS",
+  "tls-rpt": "TLS reporting",
 }
 
 function DomainVerifiedBadge({ domain }: { domain: Domain }) {

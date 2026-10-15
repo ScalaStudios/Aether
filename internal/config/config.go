@@ -27,6 +27,7 @@ type Config struct {
 	LocalLogin            bool
 	TrustProxy            bool
 	AllowHTTPIssuers      bool
+	MTASTSMode            string
 }
 
 func Load() (*Config, error) {
@@ -46,6 +47,7 @@ func Load() (*Config, error) {
 		LocalLogin:            env("AETHER_LOCAL_LOGIN", "true") == "true",
 		TrustProxy:            os.Getenv("AETHER_TRUST_PROXY") == "true",
 		AllowHTTPIssuers:      os.Getenv("AETHER_OIDC_ALLOW_HTTP") == "true",
+		MTASTSMode:            env("AETHER_MTA_STS_MODE", "testing"),
 	}
 	var errs []error
 	if c.DatabaseURL == "" {
@@ -56,6 +58,9 @@ func Load() (*Config, error) {
 	}
 	if c.DovecotMasterPassword == "" {
 		errs = append(errs, errors.New("AETHER_DOVECOT_MASTER_PASSWORD is required"))
+	}
+	if c.MTASTSMode != "testing" && c.MTASTSMode != "enforce" {
+		errs = append(errs, errors.New("AETHER_MTA_STS_MODE must be testing or enforce"))
 	}
 	u, err := url.Parse(os.Getenv("AETHER_PUBLIC_URL"))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {

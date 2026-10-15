@@ -54,7 +54,7 @@ export interface DNSRecord {
   type: "MX" | "TXT" | "CNAME" | "PTR"
   name: string
   value: string
-  purpose: "verification" | "mx" | "spf" | "dkim" | "dmarc"
+  purpose: "verification" | "mx" | "spf" | "dkim" | "dmarc" | "mta-sts-host" | "mta-sts" | "tls-rpt"
   status: DNSStatus
   found: string[]
 }

@@ -40,6 +40,7 @@ spec:
             - { name: AETHER_TRUST_PROXY, value: "true" }
             - { name: AETHER_METRICS_LISTEN, value: ":9090" }
             - { name: AETHER_LOCAL_LOGIN, value: {{ .Values.localLogin | quote }} }
+            - { name: AETHER_MTA_STS_MODE, value: {{ .Values.mtaSts.mode | quote }} }
             {{- include "aether.secretEnv" (dict "env" "AETHER_DATABASE_URL" "key" "databaseUrl" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_SECRET_KEY" "key" "secretKey" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) | nindent 12 }}

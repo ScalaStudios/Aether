@@ -52,6 +52,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/dav/", s.serveDAV)
 	mux.HandleFunc("/.well-known/caldav", s.serveDAV)
 	mux.HandleFunc("/.well-known/carddav", s.serveDAV)
+	mux.HandleFunc("GET /.well-known/mta-sts.txt", s.mtaSTSPolicyFile)
+	mux.HandleFunc("GET /internal/tls-ask", s.tlsAsk)
 
 	authed := func(pattern string, h func(http.ResponseWriter, *http.Request, *principal)) {
 		mux.HandleFunc(pattern, s.withPrincipal(h))

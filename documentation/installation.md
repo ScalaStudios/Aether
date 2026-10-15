@@ -46,7 +46,7 @@
 
 6. Sign in at `AETHER_PUBLIC_URL`.
 7. Create an organization and add your domain.
-8. Publish the five DNS records shown on the domain page: ownership TXT, MX, SPF, DKIM, and DMARC.
+8. Publish the DNS records shown on the domain page. Ownership TXT, MX, SPF, DKIM, and DMARC are required. The MTA-STS and TLS reporting records are recommended (see "MTA-STS and TLS reporting" below).
 9. Click **Verify**. Mail for a domain is accepted only after the domain is verified.
 
 ## Behind an existing reverse proxy
@@ -71,13 +71,37 @@ If ports 80 and 443 already belong to another web server on the host, skip the b
    }
    ```
 
-3. Reuse the proxy's certificate for SMTP and IMAP:
+3. For each mail domain, also serve `mta-sts.<domain>` and send `/.well-known/mta-sts.txt` to the API port:
+
+   ```caddyfile
+   mta-sts.example.com {
+   	reverse_proxy /.well-known/mta-sts.txt 127.0.0.1:20100
+   }
+   ```
+
+4. Reuse the proxy's certificate for SMTP and IMAP:
 
    ```sh
    ./scripts/sync-tls-cert.sh /path/to/mail.example.com.crt /path/to/mail.example.com.key
    ```
 
    The script copies the files only when they have changed, then reloads Postfix and Dovecot. Run it from a timer so that renewals are picked up.
+
+## MTA-STS and TLS reporting
+
+MTA-STS tells other mail servers to deliver to your domain only over TLS, and only to the mail hostname with a valid certificate. Aether serves the policy at `https://mta-sts.<domain>/.well-known/mta-sts.txt` for every verified domain. The bundled Caddy obtains certificates for these hosts on demand, but only for domains that Aether has verified.
+
+To turn MTA-STS on for a domain, publish the three records from the domain page:
+
+| Record | Purpose |
+| --- | --- |
+| `mta-sts.<domain>` | Points to the web host, so the policy can be fetched |
+| `_mta-sts.<domain>` TXT | Announces the policy. Its `id` changes whenever the policy changes, and the domain page then shows the record as a mismatch until you update it. |
+| `_smtp._tls.<domain>` TXT | Asks other servers to send daily TLS reports to `postmaster@<domain>` |
+
+The policy starts in `testing` mode: senders report failures but still deliver. Once the mail certificate is trusted and the TLS reports show no failures, set `AETHER_MTA_STS_MODE=enforce` in `.env`, restart the API, and update the `_mta-sts` record with the new id.
+
+DANE (TLSA records) is not published, because it needs DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 
 ## Outbound relay
 

@@ -1,3 +1,9 @@
+{
+	on_demand_tls {
+		ask http://api:8080/internal/tls-ask
+	}
+}
+
 {$AETHER_SITE_ADDRESS} {
 	encode zstd gzip
 	request_body {
@@ -15,5 +21,17 @@
 	}
 	handle {
 		reverse_proxy web:3000
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	handle /.well-known/mta-sts.txt {
+		reverse_proxy api:8080
+	}
+	handle {
+		respond 404
 	}
 }

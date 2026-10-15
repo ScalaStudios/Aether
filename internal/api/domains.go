@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +33,7 @@ var domainPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+
 type resolver interface {
 	LookupTXT(ctx context.Context, name string) ([]string, error)
 	LookupMX(ctx context.Context, name string) ([]*net.MX, error)
+	LookupHost(ctx context.Context, name string) ([]string, error)
 }
 
 type domain struct {
@@ -199,12 +203,63 @@ func (s *Server) expectedRecords(d *domain) []dnsRecord {
 		{Type: "TXT", Name: d.Name, Value: "v=spf1 mx -all", Purpose: "spf"},
 		{Type: "TXT", Name: d.DKIMSelector + "._domainkey." + d.Name, Value: d.DKIMRecord, Purpose: "dkim"},
 		{Type: "TXT", Name: "_dmarc." + d.Name, Value: "v=DMARC1; p=quarantine; adkim=s; aspf=s", Purpose: "dmarc"},
+		{Type: "CNAME", Name: "mta-sts." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "mta-sts-host"},
+		{Type: "TXT", Name: "_mta-sts." + d.Name, Value: "v=STSv1; id=" + s.mtaSTSPolicyID(), Purpose: "mta-sts"},
+		{Type: "TXT", Name: "_smtp._tls." + d.Name, Value: "v=TLSRPTv1; rua=mailto:postmaster@" + d.Name, Purpose: "tls-rpt"},
 	}
+}
+
+func (s *Server) mtaSTSPolicy() string {
+	maxAge := "86400"
+	if s.cfg.MTASTSMode == "enforce" {
+		maxAge = "604800"
+	}
+	return "version: STSv1\r\nmode: " + s.cfg.MTASTSMode + "\r\nmx: " + s.cfg.MailHostname + "\r\nmax_age: " + maxAge + "\r\n"
+}
+
+func (s *Server) mtaSTSPolicyID() string {
+	sum := sha256.Sum256([]byte(s.mtaSTSPolicy()))
+	return hex.EncodeToString(sum[:8])
+}
+
+func (s *Server) servesMTASTS(ctx context.Context, host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	name, ok := strings.CutPrefix(strings.ToLower(host), "mta-sts.")
+	if !ok {
+		return false
+	}
+	var found bool
+	err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM domains WHERE name = $1 AND verified_at IS NOT NULL AND active)`, name).Scan(&found)
+	return err == nil && found
+}
+
+func (s *Server) mtaSTSPolicyFile(w http.ResponseWriter, r *http.Request) {
+	if !s.servesMTASTS(r.Context(), r.Host) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "max-age=300")
+	w.Write([]byte(s.mtaSTSPolicy()))
+}
+
+func (s *Server) tlsAsk(w http.ResponseWriter, r *http.Request) {
+	if !s.servesMTASTS(r.Context(), r.URL.Query().Get("domain")) {
+		http.NotFound(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) checkRecord(ctx context.Context, rec *dnsRecord) {
 	rec.Found = []string{}
 	var err error
+	if rec.Type == "CNAME" {
+		s.checkHost(ctx, rec)
+		return
+	}
 	if rec.Type == "MX" {
 		var mxs []*net.MX
 		mxs, err = s.resolve.LookupMX(ctx, rec.Name)
@@ -237,6 +292,34 @@ func (s *Server) checkRecord(ctx context.Context, rec *dnsRecord) {
 	}
 }
 
+func (s *Server) checkHost(ctx context.Context, rec *dnsRecord) {
+	got, err := s.resolve.LookupHost(ctx, rec.Name)
+	rec.Found = got
+	if rec.Found == nil {
+		rec.Found = []string{}
+	}
+	var dnsErr *net.DNSError
+	switch {
+	case err != nil && errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+		rec.Status = "missing"
+		return
+	case err != nil:
+		rec.Status = "error"
+		return
+	}
+	want, err := s.resolve.LookupHost(ctx, strings.TrimSuffix(rec.Value, "."))
+	if err != nil {
+		rec.Status = "error"
+		return
+	}
+	rec.Status = "mismatch"
+	for _, g := range got {
+		if slices.Contains(want, g) {
+			rec.Status = "ok"
+		}
+	}
+}
+
 func recordMatches(rec *dnsRecord, found, mailHost string) bool {
 	normalized := strings.ToLower(strings.Join(strings.Fields(found), ""))
 	switch rec.Purpose {
@@ -252,6 +335,10 @@ func recordMatches(rec *dnsRecord, found, mailHost string) bool {
 		return false
 	case "dmarc":
 		return strings.HasPrefix(normalized, "v=dmarc1;")
+	case "mta-sts":
+		return normalized == strings.ToLower(strings.Join(strings.Fields(rec.Value), ""))
+	case "tls-rpt":
+		return strings.HasPrefix(normalized, "v=tlsrptv1;")
 	case "dkim":
 		_, pub, _ := strings.Cut(rec.Value, "p=")
 		return strings.Contains(strings.ReplaceAll(found, " ", ""), "p="+pub)

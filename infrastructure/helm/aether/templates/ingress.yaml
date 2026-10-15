@@ -15,7 +15,11 @@ spec:
   ingressClassName: {{ . }}
   {{- end }}
   tls:
-    - hosts: [{{ $host | quote }}]
+    - hosts:
+        - {{ $host | quote }}
+        {{- range .Values.mtaSts.domains }}
+        - {{ printf "mta-sts.%s" . | quote }}
+        {{- end }}
       secretName: {{ .Values.ingress.tlsSecretName }}
   rules:
     - host: {{ $host | quote }}
@@ -31,4 +35,13 @@ spec:
             pathType: Prefix
             backend:
               service: { name: web, port: { name: http } }
+    {{- range .Values.mtaSts.domains }}
+    - host: {{ printf "mta-sts.%s" . | quote }}
+      http:
+        paths:
+          - path: /.well-known/mta-sts.txt
+            pathType: Exact
+            backend:
+              service: { name: api, port: { name: http } }
+    {{- end }}
 {{- end }}

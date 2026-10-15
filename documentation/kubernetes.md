@@ -29,3 +29,5 @@ helm install aether infrastructure/helm/aether -n aether --create-namespace \
 ## Status
 
 CI checks the chart with `helm lint`, renders it with `helm template`, and validates the result against Kubernetes schemas with `kubeconform`. It has not yet been installed on a real cluster.
+
+To serve MTA-STS policies, list your mail domains in `mtaSts.domains`. The ingress then routes `mta-sts.<domain>` to the API and includes those hosts in its TLS certificate. Set `mtaSts.mode` to `enforce` once TLS reports show no failures.

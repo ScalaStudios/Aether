@@ -36,6 +36,8 @@ func TestRecordMatches(t *testing.T) {
 	dkim := &dnsRecord{Purpose: "dkim", Value: "v=DKIM1; k=rsa; p=ABC123"}
 	spf := &dnsRecord{Purpose: "spf"}
 	dmarc := &dnsRecord{Purpose: "dmarc"}
+	sts := &dnsRecord{Purpose: "mta-sts", Value: "v=STSv1; id=abc123"}
+	tlsrpt := &dnsRecord{Purpose: "tls-rpt"}
 	checks := []struct {
 		rec   *dnsRecord
 		found string
@@ -48,6 +50,10 @@ func TestRecordMatches(t *testing.T) {
 		{spf, "v=spf1 include:_spf.google.com -all", false},
 		{dmarc, "v=DMARC1; p=none", true},
 		{dmarc, "v=spf1 -all", false},
+		{sts, "v=STSv1;id=abc123", true},
+		{sts, "v=STSv1; id=stale", false},
+		{tlsrpt, "v=TLSRPTv1; rua=mailto:tls@example.com", true},
+		{tlsrpt, "v=DMARC1; p=none", false},
 	}
 	for _, c := range checks {
 		if got := recordMatches(c.rec, c.found, "mail.example.com"); got != c.want {
