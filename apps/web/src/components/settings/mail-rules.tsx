@@ -24,7 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api"
 import { folderLabel } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { AutoReply, MailRule, RuleField } from "@/lib/types"
+import type { AutoReply, Mailbox, MailRule, RuleField } from "@/lib/types"
 
 const fields: Record<RuleField, string> = { from: "From", to: "To", cc: "Cc", subject: "Subject" }
 const keepInPlace = "__keep__"
@@ -85,6 +85,24 @@ function summary(rule: MailRule) {
   return { when, then }
 }
 
+export function MailboxPicker({ mailboxes, value, onChange }: { mailboxes?: Mailbox[]; value: string | null; onChange: (id: string) => void }) {
+  if ((mailboxes?.length ?? 0) < 2) return null
+  return (
+    <Select value={value ?? undefined} onValueChange={onChange}>
+      <SelectTrigger aria-label="Mailbox" className="w-64">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {mailboxes?.map((m) => (
+          <SelectItem key={m.id} value={m.id}>
+            {m.address}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
 export function MailRules() {
   const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read") })
   const [chosen, setChosen] = useState<string | null>(null)
@@ -95,22 +113,7 @@ export function MailRules() {
       <SectionHeader
         title="Mail rules and automatic replies"
         description="These run on the mail server as messages arrive, so they apply in Aether Mail and in every other mail client. Rules run in order, after spam filtering."
-        actions={
-          (mailboxes.data?.length ?? 0) > 1 && (
-            <Select value={mailboxId ?? undefined} onValueChange={setChosen}>
-              <SelectTrigger aria-label="Mailbox" className="w-64">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {mailboxes.data?.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.address}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )
-        }
+        actions={<MailboxPicker mailboxes={mailboxes.data} value={mailboxId} onChange={setChosen} />}
       />
       {mailboxId ? (
         <>

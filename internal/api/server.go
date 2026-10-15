@@ -124,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/v1/mailboxes/{mailboxId}/rules", s.saveRules)
 	authed("GET /api/v1/mailboxes/{mailboxId}/auto-reply", s.getAutoReply)
 	authed("PUT /api/v1/mailboxes/{mailboxId}/auto-reply", s.saveAutoReply)
+	authed("GET /api/v1/mailboxes/{mailboxId}/signatures", s.getSignatures)
+	authed("PUT /api/v1/mailboxes/{mailboxId}/signatures", s.saveSignatures)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}/drafts/{uid}", s.deleteDraft)
 
 	authed("GET /api/v1/contacts", s.listContacts)

@@ -312,6 +312,18 @@ export interface AutoReply {
   end?: string
 }
 
+export interface Signature {
+  id: string
+  name: string
+  html: string
+}
+
+export interface SignatureSettings {
+  signatures: Signature[]
+  newMessage: string
+  replies: string
+}
+
 export interface Contact {
   id: string
   name: string

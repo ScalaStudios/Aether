@@ -1,13 +1,8 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { EditorContent, useEditor } from "@tiptap/react"
-import Subscript from "@tiptap/extension-subscript"
-import Superscript from "@tiptap/extension-superscript"
-import TextAlign from "@tiptap/extension-text-align"
-import { TextStyleKit } from "@tiptap/extension-text-style"
-import StarterKit from "@tiptap/starter-kit"
 import { ChevronDown, Paperclip, Send, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
@@ -16,13 +11,14 @@ import { z } from "zod"
 
 import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"
-import { FormatToolbar } from "@/components/mail/format-toolbar"
+import { FormatToolbar, mailEditorExtensions } from "@/components/mail/format-toolbar"
 import { LaterMenu } from "@/components/mail/later-menu"
 import { RecipientInput } from "@/components/recipient-input"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { api } from "@/lib/api"
+import { signaturesQuery } from "@/lib/queries"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
 import type { Draft } from "@/lib/mail"
@@ -121,17 +117,15 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
     resolver: zodResolver(schema),
     defaultValues: { to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject },
   })
+  const placingSignature = useRef(false)
+  const signatures = useQuery(signaturesQuery(mailbox.id))
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ heading: false, link: { openOnClick: false, defaultProtocol: "https" } }),
-      TextStyleKit.configure({ lineHeight: false }),
-      TextAlign.configure({ types: ["paragraph"] }),
-      Subscript,
-      Superscript,
-    ],
+    extensions: mailEditorExtensions,
     content: draft.html,
     immediatelyRender: false,
-    onUpdate: touch,
+    onUpdate: () => {
+      if (!placingSignature.current) touch()
+    },
     autofocus: draft.to.length ? "start" : false,
     editorProps: {
       attributes: {
@@ -174,6 +168,19 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
       dirty.current = true
     },
   })
+
+  const signaturePlaced = useRef(draft.mode === "draft")
+  useEffect(() => {
+    const settings = signatures.data
+    if (!editor || !settings || signaturePlaced.current) return
+    signaturePlaced.current = true
+    const chosen = settings.signatures.find((sig) => sig.id === (draft.mode === "new" ? settings.newMessage : settings.replies))
+    if (!chosen) return
+    const doc = editor.state.doc
+    placingSignature.current = true
+    editor.commands.insertContentAt(draft.mode === "new" ? doc.content.size : (doc.firstChild?.nodeSize ?? 0), `<p></p>${chosen.html}${draft.mode === "new" ? "" : "<p></p>"}`, { updateSelection: false })
+    placingSignature.current = false
+  }, [editor, signatures.data, draft.mode])
 
   const save = useCallback(() => {
     if (pendingSave.current || !dirty.current) return pendingSave.current
@@ -285,7 +292,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
               <Input id="compose-subject" autoComplete="off" {...form.register("subject")} />
             </Field>
             <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">
-              {editor && <FormatToolbar editor={editor} />}
+              {editor && <FormatToolbar editor={editor} signatures={signatures.data?.signatures} />}
               <EditorContent editor={editor} />
             </div>
             {(files.length > 0 || forwarded.length > 0) && (

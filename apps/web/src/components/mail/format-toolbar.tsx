@@ -1,6 +1,11 @@
 "use client"
 
+import SubscriptMark from "@tiptap/extension-subscript"
+import SuperscriptMark from "@tiptap/extension-superscript"
+import TextAlign from "@tiptap/extension-text-align"
+import { TextStyleKit } from "@tiptap/extension-text-style"
 import { useEditorState, type Editor } from "@tiptap/react"
+import StarterKit from "@tiptap/starter-kit"
 import {
   AlignCenter,
   AlignLeft,
@@ -15,6 +20,7 @@ import {
   List,
   ListOrdered,
   Redo2,
+  Signature as SignatureIcon,
   RemoveFormatting,
   Strikethrough,
   Subscript,
@@ -30,6 +36,15 @@ import { IconButton } from "@/components/icon-button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import type { Signature } from "@/lib/types"
+
+export const mailEditorExtensions = [
+  StarterKit.configure({ heading: false, link: { openOnClick: false, defaultProtocol: "https" } }),
+  TextStyleKit.configure({ lineHeight: false }),
+  TextAlign.configure({ types: ["paragraph"] }),
+  SubscriptMark,
+  SuperscriptMark,
+]
 
 const fonts = [
   { label: "Default font", value: "default" },
@@ -82,7 +97,7 @@ function ColorMenu({ label, icon: Icon, current, colors, onPick, onClear, clearL
   )
 }
 
-export function FormatToolbar({ editor }: { editor: Editor }) {
+export function FormatToolbar({ editor, signatures }: { editor: Editor; signatures?: Signature[] }) {
   const state = useEditorState({
     editor,
     selector: ({ editor }) => ({
@@ -203,6 +218,28 @@ export function FormatToolbar({ editor }: { editor: Editor }) {
       </DropdownMenu>
       <Divider />
       {button({ label: "Link", icon: Link2, active: state.link, run: setLink })}
+      {signatures && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger aria-label="Insert signature" className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground aria-expanded:bg-muted max-md:size-11">
+                <SignatureIcon className="size-4" />
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent>Insert signature</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent className="w-56">
+            {signatures.map((sig) => (
+              <DropdownMenuItem key={sig.id} onSelect={() => chain().insertContent(sig.html).run()}>
+                {sig.name}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuItem asChild>
+              <a href="/settings#signatures" target="_blank" rel="noopener">{signatures.length ? "Manage signatures" : "Create a signature"}</a>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }

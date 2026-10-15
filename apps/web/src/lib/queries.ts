@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 
 import { api } from "@/lib/api"
-import type { CalendarInfo, Domain, Folder, Mailbox, Organization } from "@/lib/types"
+import type { CalendarInfo, Domain, Folder, Mailbox, Organization, SignatureSettings } from "@/lib/types"
 
 export const myMailboxesQuery = queryOptions({
   queryKey: ["my-mailboxes"],
@@ -23,6 +23,12 @@ export const foldersQuery = (mailboxId: string) =>
   queryOptions({
     queryKey: ["folders", mailboxId],
     queryFn: () => api<Folder[]>(`/mailboxes/${mailboxId}/folders`),
+  })
+
+export const signaturesQuery = (mailboxId: string) =>
+  queryOptions({
+    queryKey: ["signatures", mailboxId],
+    queryFn: () => api<SignatureSettings>(`/mailboxes/${mailboxId}/signatures`),
   })
 
 export const calendarsQuery = queryOptions({

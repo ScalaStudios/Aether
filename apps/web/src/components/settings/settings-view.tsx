@@ -16,6 +16,7 @@ import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { PageContainer } from "@/components/page-container"
 import { MailRules } from "@/components/settings/mail-rules"
+import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -69,6 +70,7 @@ export function SettingsView() {
           </dl>
         </section>
       )}
+      <Signatures />
       <MailRules />
       <AppPasswords />
       <CalendarApps />
