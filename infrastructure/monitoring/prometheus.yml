@@ -4,3 +4,12 @@ scrape_configs:
   - job_name: aether-api
     static_configs:
       - targets: ["api:9090"]
+  - job_name: dovecot
+    static_configs:
+      - targets: ["dovecot:9900"]
+  - job_name: rspamd
+    http_headers:
+      Password:
+        files: ["/run/secrets/rspamd-metrics-password"]
+    static_configs:
+      - targets: ["rspamd:11334"]

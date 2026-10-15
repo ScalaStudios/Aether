@@ -277,6 +277,111 @@
           }
         }
       ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Spam filter actions",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (type) (rate(rspamd_actions_total[5m]))",
+          "legendFormat": "{{type}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Mailbox sign-ins (IMAP and SMTP)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(dovecot_auth_total{success=\"yes\"}[5m]))",
+          "legendFormat": "succeeded",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(dovecot_auth_count[5m])) - sum(rate(dovecot_auth_total{success=\"yes\"}[5m]))",
+          "legendFormat": "failed",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Messages delivered to mailboxes",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(dovecot_mail_delivery_total[5m])",
+          "legendFormat": "delivered",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
     }
   ]
 }

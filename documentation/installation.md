@@ -104,13 +104,20 @@ The API serves Prometheus metrics on port 9090 inside the Compose network (`AETH
 
 No metric carries a user, mailbox, or address label.
 
+Two mail services also serve metrics inside the Compose network:
+
+- Dovecot, on port 9900: mailbox sign-ins, IMAP commands, and deliveries.
+- Rspamd, on port 11334: scanned messages and filter actions. The endpoint requires the `Password` header, set to `AETHER_RSPAMD_METRICS_PASSWORD`. That password is read-only and cannot train the filter or change settings.
+
+Postfix has no metrics endpoint.
+
 For a ready-made setup, start the optional profile:
 
 ```sh
 docker compose --profile monitoring up -d
 ```
 
-This runs Prometheus, which keeps 30 days of data, and Grafana with an "Aether overview" dashboard. Grafana listens only on `127.0.0.1:3300` (set `AETHER_GRAFANA_PORT` to change it). Reach it through an SSH tunnel (`ssh -L 3300:127.0.0.1:3300 <host>`) or your VPN. Sign in as `admin` with `AETHER_GRAFANA_PASSWORD` from `.env`.
+This runs Prometheus, which keeps 30 days of data and scrapes the API, Dovecot, and Rspamd, and Grafana with an "Aether overview" dashboard. Grafana listens only on `127.0.0.1:3300` (set `AETHER_GRAFANA_PORT` to change it). Reach it through an SSH tunnel (`ssh -L 3300:127.0.0.1:3300 <host>`) or your VPN. Sign in as `admin` with `AETHER_GRAFANA_PASSWORD` from `.env`.
 
 ## Upgrades
 

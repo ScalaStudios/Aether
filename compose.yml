@@ -58,6 +58,7 @@ services:
     restart: unless-stopped
     environment:
       AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
+      AETHER_RSPAMD_METRICS_PASSWORD: ${AETHER_RSPAMD_METRICS_PASSWORD:-}
     volumes:
       - rspamd:/var/lib/rspamd
     depends_on:
@@ -184,6 +185,8 @@ services:
     volumes:
       - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
+    secrets:
+      - rspamd-metrics-password
     depends_on:
       - api
 
@@ -204,6 +207,10 @@ services:
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
+
+secrets:
+  rspamd-metrics-password:
+    environment: AETHER_RSPAMD_METRICS_PASSWORD
 
 volumes:
   prometheus-data:
