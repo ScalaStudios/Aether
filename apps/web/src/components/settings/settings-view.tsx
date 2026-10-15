@@ -196,7 +196,7 @@ function AppPasswords() {
                       <SelectValue placeholder={mailboxes.isPending ? "Loading mailboxes…" : "Choose a mailbox"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {mailboxes.data?.map((m) => (
+                      {mailboxes.data?.filter((m) => m.access !== "read").map((m) => (
                         <SelectItem key={m.id} value={m.id}>
                           {m.address}
                         </SelectItem>

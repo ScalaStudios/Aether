@@ -137,6 +137,7 @@ export function ReadingPane({
   onSnooze,
   onUnsnooze,
   deleting,
+  readOnly,
 }: {
   className?: string
   mailboxId: string
@@ -153,6 +154,7 @@ export function ReadingPane({
   onSnooze: (until: Date) => void
   onUnsnooze?: () => void
   deleting: boolean
+  readOnly?: boolean
 }) {
   if (!selected) {
     return (
@@ -170,62 +172,66 @@ export function ReadingPane({
         <IconButton label="Back to messages" className="md:hidden" onClick={onBack}>
           <ArrowLeft />
         </IconButton>
-        <IconButton label="Reply" disabled={!m} onClick={() => onReply("reply")}>
-          <Reply />
-        </IconButton>
-        <IconButton label="Reply all" disabled={!m} onClick={() => onReply("replyAll")}>
-          <ReplyAll />
-        </IconButton>
-        <IconButton label="Forward" disabled={!m} onClick={() => onReply("forward")}>
-          <Forward />
-        </IconButton>
-        <span className="mx-1 h-6 w-px bg-border" />
-        <IconButton label={m?.seen ? "Mark as unread" : "Mark as read"} disabled={!m} onClick={() => m && onFlags({ seen: !m.seen })}>
-          {m?.seen ? <Mail /> : <MailOpen />}
-        </IconButton>
-        <IconButton label={m?.flagged ? "Remove flag" : "Flag"} aria-pressed={m?.flagged ?? false} disabled={!m} onClick={() => m && onFlags({ flagged: !m.flagged })}>
-          <Flag className={cn(m?.flagged && "fill-current text-ember")} />
-        </IconButton>
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <Button variant="quiet" size="icon" aria-label="Move to folder" disabled={!m}>
-                  <FolderInput />
+        {!readOnly && (
+          <>
+            <IconButton label="Reply" disabled={!m} onClick={() => onReply("reply")}>
+              <Reply />
+            </IconButton>
+            <IconButton label="Reply all" disabled={!m} onClick={() => onReply("replyAll")}>
+              <ReplyAll />
+            </IconButton>
+            <IconButton label="Forward" disabled={!m} onClick={() => onReply("forward")}>
+              <Forward />
+            </IconButton>
+            <span className="mx-1 h-6 w-px bg-border" />
+            <IconButton label={m?.seen ? "Mark as unread" : "Mark as read"} disabled={!m} onClick={() => m && onFlags({ seen: !m.seen })}>
+              {m?.seen ? <Mail /> : <MailOpen />}
+            </IconButton>
+            <IconButton label={m?.flagged ? "Remove flag" : "Flag"} aria-pressed={m?.flagged ?? false} disabled={!m} onClick={() => m && onFlags({ flagged: !m.flagged })}>
+              <Flag className={cn(m?.flagged && "fill-current text-ember")} />
+            </IconButton>
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="quiet" size="icon" aria-label="Move to folder" disabled={!m}>
+                      <FolderInput />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>Move to folder</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Move to</DropdownMenuLabel>
+                {folders
+                  .filter((f) => f.name !== folder)
+                  .map((f) => {
+                    const Icon = folderIcons[f.specialUse]
+                    return (
+                      <DropdownMenuItem key={f.name} onSelect={() => onMove(f.name)}>
+                        <Icon aria-hidden className="text-fg-tertiary" />
+                        {folderLabel(f)}
+                      </DropdownMenuItem>
+                    )
+                  })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {onUnsnooze ? (
+              <IconButton label="Unsnooze" disabled={!m || deleting} onClick={onUnsnooze}>
+                <AlarmClockOff />
+              </IconButton>
+            ) : (
+              <LaterMenu label="Snooze" submitLabel="Snooze" laterToday disabled={!m || deleting} onPick={onSnooze}>
+                <Button variant="quiet" size="icon" aria-label="Snooze">
+                  <AlarmClock />
                 </Button>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent>Move to folder</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Move to</DropdownMenuLabel>
-            {folders
-              .filter((f) => f.name !== folder)
-              .map((f) => {
-                const Icon = folderIcons[f.specialUse]
-                return (
-                  <DropdownMenuItem key={f.name} onSelect={() => onMove(f.name)}>
-                    <Icon aria-hidden className="text-fg-tertiary" />
-                    {folderLabel(f)}
-                  </DropdownMenuItem>
-                )
-              })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {onUnsnooze ? (
-          <IconButton label="Unsnooze" disabled={!m || deleting} onClick={onUnsnooze}>
-            <AlarmClockOff />
-          </IconButton>
-        ) : (
-          <LaterMenu label="Snooze" submitLabel="Snooze" laterToday disabled={!m || deleting} onPick={onSnooze}>
-            <Button variant="quiet" size="icon" aria-label="Snooze">
-              <AlarmClock />
-            </Button>
-          </LaterMenu>
+              </LaterMenu>
+            )}
+            <IconButton label="Delete" disabled={!m || deleting} onClick={onDelete}>
+              <Trash2 />
+            </IconButton>
+          </>
         )}
-        <IconButton label="Delete" disabled={!m || deleting} onClick={onDelete}>
-          <Trash2 />
-        </IconButton>
       </div>
       {query.isPending ? (
         <div aria-busy aria-label="Loading message" className="flex flex-col gap-4 p-6">
@@ -252,7 +258,7 @@ export function ReadingPane({
                 <AddressLine label="Cc" addresses={m.cc} />
               </dl>
             </header>
-            {m.invitation && <InvitationCard key={`${m.uid}-${m.invitation.method}`} message={m} mailboxId={mailboxId} folder={folder} />}
+            {m.invitation && !readOnly && <InvitationCard key={`${m.uid}-${m.invitation.method}`} message={m} mailboxId={mailboxId} folder={folder} />}
             <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
             <Conversation message={m} earlier={earlier} mailboxId={mailboxId} folder={folder} />
           </article>

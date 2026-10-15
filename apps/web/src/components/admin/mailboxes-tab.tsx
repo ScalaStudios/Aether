@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Inbox, Plus, Trash2, Users } from "lucide-react"
 import { useState } from "react"
-import { useForm } from "react-hook-form"
+import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -14,15 +14,17 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
+import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
-import type { Delegate, Mailbox } from "@/lib/types"
+import type { Delegate, DelegateAccess, Mailbox } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -40,7 +42,12 @@ const schema = z.object({
 
 type Values = z.infer<typeof schema>
 
-const delegateSchema = z.object({ email: z.email("Enter a valid email address.") })
+const delegateSchema = z.object({ email: z.email("Enter a valid email address."), access: z.enum(["full", "read"]) })
+
+const accessOptions = [
+  { value: "full" as const, label: "Full access" },
+  { value: "read" as const, label: "Read only" },
+]
 
 type DelegateValues = z.infer<typeof delegateSchema>
 
@@ -49,13 +56,13 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
   const key = ["delegates", mailbox?.id]
   const delegates = useQuery({ queryKey: key, queryFn: () => api<Delegate[]>(`/mailboxes/${mailbox?.id}/delegates`), enabled: !!mailbox })
   const [removing, setRemoving] = useState<Delegate | null>(null)
-  const form = useForm<DelegateValues>({ resolver: zodResolver(delegateSchema), defaultValues: { email: "" } })
+  const form = useForm<DelegateValues>({ resolver: zodResolver(delegateSchema), defaultValues: { email: "", access: "full" } })
 
   const add = useMutation({
     mutationFn: (values: DelegateValues) => api<Delegate>(`/mailboxes/${mailbox?.id}/delegates`, { method: "POST", body: values }),
     meta: { silent: true },
     onSuccess: (d) => {
-      toast.success(`Added ${d.email}`)
+      toast.success(`${d.email} has ${d.access === "read" ? "read-only" : "full"} access`)
       form.reset()
       qc.invalidateQueries({ queryKey: key })
     },
@@ -82,7 +89,7 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
           if (!open) form.reset()
         }}
         title={`Delegates for ${mailbox?.address}`}
-        description="Delegates can read this mailbox, send as it, and create app passwords for it."
+        description="Full access lets a delegate read, organize, and send as this mailbox, and create app passwords for it. Read only allows reading in Aether Mail and nothing else."
         submitLabel="Add delegate"
         cancelLabel="Done"
         pending={add.isPending}
@@ -97,6 +104,18 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
                     <span className="truncate">{d.displayName || d.email}</span>
                     {d.displayName && <span className="truncate font-mono text-sm text-fg-tertiary">{d.email}</span>}
                   </div>
+                  <Select value={d.access} onValueChange={(access) => add.mutate({ email: d.email, access: access as DelegateAccess })}>
+                    <SelectTrigger aria-label={`Access for ${d.email}`} className="w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {accessOptions.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <IconButton type="button" label={`Remove ${d.email}`} size="icon-sm" onClick={() => setRemoving(d)}>
                     <Trash2 />
                   </IconButton>
@@ -108,6 +127,11 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
         <Field id="delegate-email" label="Email" hint="The email of an active person in this organization." error={form.formState.errors.email?.message}>
           <Input id="delegate-email" type="email" autoComplete="off" spellCheck={false} aria-invalid={!!form.formState.errors.email} {...form.register("email")} />
         </Field>
+        <Controller
+          control={form.control}
+          name="access"
+          render={({ field }) => <SegmentedControl label="Access" options={accessOptions} value={field.value} onChange={field.onChange} />}
+        />
       </FormDialog>
 
       <ConfirmDialog

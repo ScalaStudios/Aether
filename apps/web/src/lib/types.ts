@@ -87,12 +87,16 @@ export interface Mailbox {
   quotaBytes: number
   active: boolean
   createdAt: string
+  access?: "owner" | DelegateAccess
 }
+
+export type DelegateAccess = "read" | "full"
 
 export interface Delegate {
   userId: string
   email: string
   displayName: string
+  access: DelegateAccess
   createdAt: string
 }
 

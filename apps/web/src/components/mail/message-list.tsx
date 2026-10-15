@@ -39,7 +39,7 @@ export function MessageList({
   selectedUid: number | null
   onOpen: (summary: MessageSummary) => void
   onShowFolders: () => void
-  onCompose: () => void
+  onCompose?: () => void
   onHelp: () => void
   wakeTimes?: Map<number, string>
 }) {
@@ -77,9 +77,11 @@ export function MessageList({
           {total !== undefined && (
             <span className="text-xs text-fg-tertiary tabular-nums">{total} {total === 1 ? "message" : "messages"}</span>
           )}
-          <IconButton label="New message" size="icon-sm" className="lg:hidden" onClick={onCompose}>
-            <PenSquare />
-          </IconButton>
+          {onCompose && (
+            <IconButton label="New message" size="icon-sm" className="lg:hidden" onClick={onCompose}>
+              <PenSquare />
+            </IconButton>
+          )}
           <IconButton label="Keyboard shortcuts" size="icon-sm" className="max-md:hidden" onClick={onHelp}>
             <Keyboard />
           </IconButton>

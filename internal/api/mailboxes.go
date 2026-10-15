@@ -59,12 +59,20 @@ func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) myMailboxes(w http.ResponseWriter, r *http.Request, p *principal) {
-	out, err := collectMailboxes(s.db.Query(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes m WHERE m.active AND `+mailboxAccess("$1")+` ORDER BY m.owner_user_id = $1 DESC, address`, p.User.ID))
+	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, `+mailboxAccessLevel("$1")+` FROM mailboxes m WHERE m.active AND `+mailboxAccess("$1")+` ORDER BY m.owner_user_id = $1 DESC, address`, p.User.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[struct {
+		mailbox
+		Access string `json:"access"`
+	}])
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(out))
 }
 
 func (s *Server) orgDomain(r *http.Request, orgID, domainID string) (string, error) {
@@ -393,7 +401,7 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, p *pr
 	out.Password = secrets.Token(20)
 	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO app_passwords (user_id, mailbox_id, name, token_hash)
-		SELECT $1, m.id, $3, $4 FROM mailboxes m WHERE m.id = $2 AND m.active AND `+mailboxAccess("$1")+`
+		SELECT $1, m.id, $3, $4 FROM mailboxes m WHERE m.id = $2 AND m.active AND `+fullMailboxAccess("$1")+`
 		RETURNING id, name, mailbox_id, created_at, (SELECT address FROM mailboxes WHERE id = $2), (SELECT org_id FROM mailboxes WHERE id = $2)`,
 		p.User.ID, in.MailboxID, in.Name, secrets.SHA256Hex(out.Password)).
 		Scan(&out.ID, &out.Name, &out.MailboxID, &out.CreatedAt, &out.MailboxAddress, &orgID)

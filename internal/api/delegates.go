@@ -13,10 +13,19 @@ func mailboxAccess(userParam string) string {
 	return `(m.owner_user_id = ` + userParam + ` OR EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + `))`
 }
 
+func fullMailboxAccess(userParam string) string {
+	return `(m.owner_user_id = ` + userParam + ` OR EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + ` AND md.access = 'full'))`
+}
+
+func mailboxAccessLevel(userParam string) string {
+	return `CASE WHEN m.owner_user_id = ` + userParam + ` THEN 'owner' ELSE coalesce((SELECT md.access FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + `), 'none') END`
+}
+
 type delegate struct {
 	UserID      string    `json:"userId"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"displayName"`
+	Access      string    `json:"access"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
@@ -26,7 +35,7 @@ func (s *Server) listDelegates(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `
-		SELECT u.id, u.email, u.display_name, md.created_at FROM mailbox_delegates md JOIN users u ON u.id = md.user_id
+		SELECT u.id, u.email, u.display_name, md.access, md.created_at FROM mailbox_delegates md JOIN users u ON u.id = md.user_id
 		WHERE md.mailbox_id = $1 ORDER BY u.email`, m.ID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -46,12 +55,21 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	var in struct {
-		Email string `json:"email"`
+		Email  string `json:"email"`
+		Access string `json:"access"`
 	}
 	if !decode(w, r, 4<<10, &in) {
 		return
 	}
 	var d delegate
+	if in.Access == "" {
+		in.Access = "full"
+	}
+	if in.Access != "read" && in.Access != "full" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_access", "Access must be read or full.")
+		return
+	}
+	d.Access = in.Access
 	err := s.db.QueryRow(r.Context(), `
 		SELECT u.id, u.email, u.display_name FROM users u
 		WHERE u.email = $1 AND u.status = 'active'
@@ -70,14 +88,23 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		writeError(w, http.StatusUnprocessableEntity, "already_owner", "This person already owns the mailbox.")
 		return
 	}
-	err = s.db.QueryRow(r.Context(), `
-		INSERT INTO mailbox_delegates (mailbox_id, user_id) VALUES ($1, $2)
-		ON CONFLICT (mailbox_id, user_id) DO UPDATE SET mailbox_id = EXCLUDED.mailbox_id RETURNING created_at`, m.ID, d.UserID).Scan(&d.CreatedAt)
+	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(r.Context(), `
+			INSERT INTO mailbox_delegates (mailbox_id, user_id, access) VALUES ($1, $2, $3)
+			ON CONFLICT (mailbox_id, user_id) DO UPDATE SET access = EXCLUDED.access RETURNING created_at`, m.ID, d.UserID, d.Access).Scan(&d.CreatedAt); err != nil {
+			return err
+		}
+		if d.Access == "full" {
+			return nil
+		}
+		_, err := tx.Exec(r.Context(), `UPDATE app_passwords SET revoked_at = now() WHERE mailbox_id = $1 AND user_id = $2 AND revoked_at IS NULL`, m.ID, d.UserID)
+		return err
+	})
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_add", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": d.Email})
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_add", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": d.Email, "access": d.Access})
 	writeJSON(w, http.StatusOK, d)
 }
 

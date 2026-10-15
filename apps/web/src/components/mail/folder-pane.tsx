@@ -57,7 +57,7 @@ export function FolderPane({
   scheduled?: number
   scheduledActive?: boolean
   onScheduled?: () => void
-  onCompose: () => void
+  onCompose?: () => void
 }) {
   const userId = useSession().data?.user.id
   return (
@@ -79,10 +79,14 @@ export function FolderPane({
       ) : (
         <p className="truncate px-2 text-sm text-fg-tertiary">{mailbox.address}</p>
       )}
-      <Button onClick={onCompose} className="w-full">
-        <PenSquare aria-hidden />
-        New message
-      </Button>
+      {onCompose ? (
+        <Button onClick={onCompose} className="w-full">
+          <PenSquare aria-hidden />
+          New message
+        </Button>
+      ) : (
+        <p className="rounded-lg bg-muted px-3 py-2 text-sm text-fg-secondary">Read only. You can read this mailbox but not send, move, or delete.</p>
+      )}
       <nav aria-label="Mail folders" className="-mx-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2">
         {folders.isPending ? (
           <RowsSkeleton rows={5} />

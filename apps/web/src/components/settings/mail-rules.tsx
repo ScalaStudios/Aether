@@ -86,7 +86,7 @@ function summary(rule: MailRule) {
 }
 
 export function MailRules() {
-  const mailboxes = useQuery(myMailboxesQuery)
+  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read") })
   const [chosen, setChosen] = useState<string | null>(null)
   const mailboxId = chosen ?? mailboxes.data?.[0]?.id ?? null
 

@@ -41,6 +41,7 @@ export function MailView() {
   const mailboxes = useQuery(myMailboxesQuery)
   const [mailboxId, setMailboxId] = useState<string | null>(null)
   const mailbox = mailboxes.data?.find((m) => m.id === mailboxId) ?? mailboxes.data?.[0]
+  const readOnly = mailbox?.access === "read"
   const mbx = mailbox?.id ?? ""
 
   const folders = useQuery({
@@ -183,7 +184,7 @@ export function MailView() {
   async function open(summary: MessageSummary) {
     if (isDrafts) return openDraft(summary.uid, folder)
     setSelectedUid(summary.uid)
-    if (!summary.seen) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
+    if (!summary.seen && !readOnly) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
   }
 
   function step(delta: number) {
@@ -232,7 +233,7 @@ export function MailView() {
         Escape: () => setSelectedUid(null),
       }
       const action = actions[e.key]
-      if (!action) return
+      if (!action || (readOnly && "craf#e".includes(e.key))) return
       e.preventDefault()
       action()
     }
@@ -282,7 +283,7 @@ export function MailView() {
           setSelectedUid(null)
           setShowFolders(false)
         }}
-        onCompose={() => startCompose("new")}
+        onCompose={readOnly ? undefined : () => startCompose("new")}
       />
       {showScheduled ? (
         <ScheduledList
@@ -305,7 +306,7 @@ export function MailView() {
           selectedUid={selectedUid}
           onOpen={open}
           onShowFolders={() => setShowFolders(true)}
-          onCompose={() => startCompose("new")}
+          onCompose={readOnly ? undefined : () => startCompose("new")}
           onHelp={() => setHelpOpen(true)}
           wakeTimes={folder === SNOOZED ? wakeTimes : undefined}
         />
@@ -326,6 +327,7 @@ export function MailView() {
         onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
         onUnsnooze={folder === SNOOZED ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
         deleting={remove.isPending}
+        readOnly={readOnly}
       />
       {compose && <Composer key={compose.key} mailbox={mailbox} draft={compose.draft} onClose={() => setCompose(null)} />}
       <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />

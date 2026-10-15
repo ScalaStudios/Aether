@@ -27,12 +27,17 @@ func (s *Server) ownedMailbox(w http.ResponseWriter, r *http.Request, p *princip
 		return nil, false
 	}
 	m := &ownedMailbox{}
+	var access string
 	err := s.db.QueryRow(r.Context(), `
-		SELECT m.id, m.org_id, m.address, m.display_name FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		SELECT m.id, m.org_id, m.address, m.display_name, `+mailboxAccessLevel("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
 		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, p.User.ID).
-		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName)
+		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &access)
 	if err != nil {
 		notFound(w)
+		return nil, false
+	}
+	if access == "read" && r.Method != http.MethodGet {
+		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to this mailbox.")
 		return nil, false
 	}
 	return m, true

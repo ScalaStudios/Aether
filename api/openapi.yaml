@@ -724,7 +724,7 @@ paths:
   /mailboxes/{mailboxId}/delegates:
     get:
       tags: [mailboxes]
-      summary: People with full access to this mailbox besides its owner
+      summary: People with access to this mailbox besides its owner
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       responses:
         "200":
@@ -734,7 +734,8 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/Delegate" } }
     post:
       tags: [mailboxes]
-      summary: Give an organization member full access, including sending as the mailbox and app passwords for it
+      summary: Give an organization member access to this mailbox, or change their access
+      description: Full access covers reading, organizing, sending as the mailbox, and app passwords for it. Read access only allows reading in Aether Mail; the API refuses every other request, and changing a delegate to read revokes their app passwords for the mailbox.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -745,6 +746,7 @@ paths:
               required: [email]
               properties:
                 email: { type: string, format: email }
+                access: { type: string, enum: [full, read], default: full }
       responses:
         "200":
           description: The delegate
@@ -1626,6 +1628,7 @@ components:
         userId: { type: string, format: uuid }
         email: { type: string }
         displayName: { type: string }
+        access: { type: string, enum: [full, read] }
         createdAt: { type: string, format: date-time }
     APIKey:
       type: object

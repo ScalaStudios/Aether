@@ -2,7 +2,10 @@
 
 package integration
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 func TestSharedMailboxDelegation(t *testing.T) {
 	w := setupWorld(t)
@@ -60,4 +63,66 @@ func TestSharedMailboxDelegation(t *testing.T) {
 		ic.Close()
 		t.Fatal("removed delegate's app password still works over IMAP")
 	}
+}
+
+func TestReadOnlyDelegate(t *testing.T) {
+	w := setupWorld(t)
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	info := "info@" + w.domain
+	var shared idOnly
+	w.admin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": "info", "displayName": "Info"}, &shared, 201)
+	delegates := "/mailboxes/" + shared.ID + "/delegates"
+	base := "/mailboxes/" + shared.ID
+
+	var full struct {
+		UserID string
+		Access string
+	}
+	w.admin.must("POST", delegates, map[string]string{"email": alice}, &full, 200)
+	if full.Access != "full" {
+		t.Fatalf("delegates default to full access, got %q", full.Access)
+	}
+	pass := createAppPassword(t, w.alice, shared.ID)
+	subject := "for info " + randomSuffix()
+	w.bob.must("POST", "/mailboxes/"+w.bobMailbox+"/send", map[string]any{"to": []map[string]string{{"address": info}}, "subject": subject, "text": "hello"}, nil, 202)
+	var uid uint32
+	waitFor(t, "info to receive mail", func() bool { uid = findInAPI(w.alice, shared.ID, "INBOX", subject); return uid != 0 })
+
+	var readOnly struct{ Access string }
+	w.admin.must("POST", delegates, map[string]string{"email": alice, "access": "read"}, &readOnly, 200)
+	if readOnly.Access != "read" {
+		t.Fatalf("access not changed to read: %+v", readOnly)
+	}
+	var mine []struct{ ID, Access string }
+	w.alice.must("GET", "/me/mailboxes", nil, &mine, 200)
+	for _, m := range mine {
+		if m.ID == shared.ID && m.Access != "read" {
+			t.Fatalf("mailbox list should report read access: %+v", m)
+		}
+	}
+	message := base + "/messages/" + itoaUID(uid)
+	w.alice.must("GET", message, nil, nil, 200)
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"PATCH", message, map[string]bool{"seen": true}},
+		{"DELETE", message, nil},
+		{"POST", base + "/send", map[string]any{"to": []map[string]string{{"address": bob}}, "subject": "nope", "text": "nope"}},
+	} {
+		if code := w.alice.do(c.method, c.path, c.body, nil); code != 403 {
+			t.Fatalf("%s %s by a read-only delegate returned %d, want 403", c.method, c.path, code)
+		}
+	}
+	if code := w.alice.do("POST", "/me/app-passwords", map[string]string{"name": "phone", "mailboxId": shared.ID}, nil); code != 422 {
+		t.Fatalf("read-only delegates must not get app passwords, got %d", code)
+	}
+	if ic, err := imapLogin(t, info, pass); err == nil {
+		ic.Close()
+		t.Fatal("app password made with full access still works after the downgrade")
+	}
+}
+
+func itoaUID(uid uint32) string {
+	return strconv.FormatUint(uint64(uid), 10)
 }
