@@ -338,6 +338,29 @@ export interface CalendarEvent {
   repeat: Repeat
   organizer?: string
   attendees: Attendee[]
+  calendarId?: string
+  readOnly?: boolean
+  color?: string
+}
+
+export type CalendarAccess = "owner" | "write" | "read"
+
+export interface CalendarShare {
+  id: string
+  access: Exclude<CalendarAccess, "owner">
+  email?: string
+  name?: string
+  orgId?: string
+  orgName?: string
+}
+
+export interface CalendarInfo {
+  id: string
+  name: string
+  color: string
+  access: CalendarAccess
+  owner?: { name: string; email: string }
+  shares?: CalendarShare[]
 }
 
 export type AttendeeStatus = "needs-action" | "accepted" | "tentative" | "declined"
@@ -357,9 +380,10 @@ export interface Invitation {
   applied: boolean
 }
 
-export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart" | "organizer" | "attendees"> & {
+export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart" | "organizer" | "attendees" | "calendarId" | "readOnly" | "color"> & {
   repeat: Exclude<Repeat, "custom">
   attendees: string[]
+  calendarId: string
 }
 
 export interface ScheduledMessage {

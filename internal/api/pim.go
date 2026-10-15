@@ -324,6 +324,8 @@ type calendarEvent struct {
 	Repeat      string          `json:"repeat"`
 	Organizer   string          `json:"organizer,omitempty"`
 	Attendees   []eventAttendee `json:"attendees"`
+	CalendarID  string          `json:"calendarId,omitempty"`
+	ReadOnly    bool            `json:"readOnly,omitempty"`
 }
 
 var repeatRules = map[string]string{"daily": "FREQ=DAILY", "weekly": "FREQ=WEEKLY", "monthly": "FREQ=MONTHLY", "yearly": "FREQ=YEARLY"}
@@ -371,9 +373,19 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		writeError(w, http.StatusUnprocessableEntity, "invalid_range", "Give start and end as RFC 3339 times, at most 400 days apart.")
 		return
 	}
+	calendars, err := s.davCollections(ctx, "calendar")
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	byID := map[string]collectionRow{}
+	ids := make([]string, len(calendars))
+	for i, c := range calendars {
+		byID[c.ID], ids[i] = c, c.ID
+	}
 	rows, err := s.db.Query(ctx, `
-		SELECT o.name, o.data FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
-		WHERE c.user_id = $1 AND c.kind = 'calendar' AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, p.User.ID, from, to)
+		SELECT o.collection_id, o.name, o.data FROM dav_objects o
+		WHERE o.collection_id = ANY($1) AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -381,8 +393,9 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 	defer rows.Close()
 	out := []calendarEvent{}
 	for rows.Next() {
-		var name, data string
-		if err := rows.Scan(&name, &data); err != nil {
+		first := len(out)
+		var collectionID, name, data string
+		if err := rows.Scan(&collectionID, &name, &data); err != nil {
 			s.internalError(w, r, err)
 			return
 		}
@@ -439,6 +452,9 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 			}
 			out = append(out, o)
 		}
+		for i := first; i < len(out); i++ {
+			out[i].CalendarID, out[i].ReadOnly = byID[collectionID].Slug, byID[collectionID].Access == "read"
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
 	writeJSON(w, http.StatusOK, out)
@@ -453,6 +469,7 @@ type eventInput struct {
 	Description string    `json:"description"`
 	Repeat      string    `json:"repeat"`
 	Attendees   []string  `json:"attendees"`
+	CalendarID  string    `json:"calendarId"`
 }
 
 func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -480,7 +497,10 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "The location or description is too long.")
 		return
 	}
-	calendar, err := s.davCollection(ctx, "calendar", "personal")
+	if in.CalendarID == "" {
+		in.CalendarID = "personal"
+	}
+	calendar, err := s.writableCollection(ctx, "calendar", in.CalendarID)
 	if err != nil {
 		s.davError(w, r, err)
 		return
@@ -498,9 +518,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			return
 		}
 		var etag, data string
-		err := s.db.QueryRow(ctx, `
-			SELECT c.id, o.uid, o.etag, o.data FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
-			WHERE c.user_id = $1 AND c.kind = 'calendar' AND o.name = $2`, p.User.ID, name).Scan(&calendar.ID, &uid, &etag, &data)
+		err := s.db.QueryRow(ctx, `SELECT uid, etag, data FROM dav_objects WHERE collection_id = $1 AND name = $2`, calendar.ID, name).Scan(&uid, &etag, &data)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(w)
 			return
@@ -619,6 +637,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	out, _, _ := eventFromComponent(name, event.Component)
+	out.CalendarID = calendar.Slug
 	writeJSON(w, status, out)
 }
 
@@ -628,8 +647,22 @@ func (s *Server) deleteEvent(w http.ResponseWriter, r *http.Request, p *principa
 		notFound(w)
 		return
 	}
+	ctx, err := s.pimContext(r, p)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	slug := r.URL.Query().Get("calendar")
+	if slug == "" {
+		slug = "personal"
+	}
+	calendar, err := s.writableCollection(ctx, "calendar", slug)
+	if err != nil {
+		s.davError(w, r, err)
+		return
+	}
 	var data string
-	err := s.db.QueryRow(r.Context(), `DELETE FROM dav_objects o USING dav_collections c WHERE c.id = o.collection_id AND c.user_id = $1 AND c.kind = 'calendar' AND o.name = $2 RETURNING o.data`, p.User.ID, name).Scan(&data)
+	err = s.db.QueryRow(ctx, `DELETE FROM dav_objects WHERE collection_id = $1 AND name = $2 RETURNING data`, calendar.ID, name).Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return

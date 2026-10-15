@@ -1055,9 +1055,83 @@ paths:
               schema: { $ref: "#/components/schemas/CalendarEvent" }
     delete:
       tags: [calendar]
-      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: calendar, in: query, schema: { type: string, default: personal }, description: The calendarId of the event }
       responses:
         "204": { description: "Deleted, including every occurrence" }
+  /calendar/calendars:
+    get:
+      tags: [calendar]
+      summary: List your calendars and the calendars shared with you
+      responses:
+        "200":
+          description: Your own calendars first, then shared ones. Shared calendars have ids that start with shared-.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Calendar" } }
+    post:
+      tags: [calendar]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Calendar" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/calendars/{calendarId}:
+    parameters: [{ name: calendarId, in: path, required: true, schema: { type: string } }]
+    patch:
+      tags: [calendar]
+      summary: Rename or recolor a calendar you own
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarInput" }
+      responses:
+        "204": { description: Updated }
+    delete:
+      tags: [calendar]
+      summary: Delete a calendar you own and every event in it
+      responses:
+        "204": { description: Deleted }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/calendars/{calendarId}/shares:
+    post:
+      tags: [calendar]
+      summary: Share a calendar you own with a person or an organization
+      description: Give either the email of someone who belongs to one of your organizations, or an organization you administer to share with all of its members. Sharing again changes the access.
+      parameters: [{ name: calendarId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [access]
+              properties:
+                email: { type: string, format: email }
+                orgId: { type: string, format: uuid }
+                access: { type: string, enum: [read, write] }
+      responses:
+        "204": { description: Shared }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/calendars/{calendarId}/shares/{shareId}:
+    delete:
+      tags: [calendar]
+      summary: Stop sharing a calendar
+      parameters:
+        - { name: calendarId, in: path, required: true, schema: { type: string } }
+        - { name: shareId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: No longer shared }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -1418,6 +1492,41 @@ components:
         repeat: { type: string, enum: ["", daily, weekly, monthly, yearly, custom] }
         organizer: { type: string, description: Present when the event has attendees }
         attendees: { type: array, items: { $ref: "#/components/schemas/Attendee" } }
+        calendarId: { type: string }
+        readOnly: { type: boolean, description: The calendar is shared with you to view only }
+    Calendar:
+      type: object
+      required: [id, name, color, access]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        color: { type: string, description: A hex color, or empty for the default }
+        access: { type: string, enum: [owner, write, read] }
+        owner:
+          type: object
+          description: Present on calendars shared with you
+          properties:
+            name: { type: string }
+            email: { type: string }
+        shares:
+          type: array
+          description: Present on calendars you own that are shared
+          items:
+            type: object
+            required: [id, access]
+            properties:
+              id: { type: string, format: uuid }
+              access: { type: string, enum: [read, write] }
+              email: { type: string }
+              name: { type: string }
+              orgId: { type: string, format: uuid }
+              orgName: { type: string }
+    CalendarInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+        color: { type: string, pattern: "^(#[0-9a-fA-F]{6})?$" }
     CalendarEventInput:
       type: object
       required: [title, start, end]
@@ -1434,6 +1543,7 @@ components:
           maxItems: 100
           items: { type: string, format: email }
           description: Saving sends invitations to these addresses from your own mailbox; removed attendees get a cancellation
+        calendarId: { type: string, default: personal, description: The calendar to create the event in, or that holds the event being updated }
     MailRule:
       type: object
       required: [name, enabled, match, conditions, actions]

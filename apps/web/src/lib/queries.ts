@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 
 import { api } from "@/lib/api"
-import type { Domain, Folder, Mailbox, Organization } from "@/lib/types"
+import type { CalendarInfo, Domain, Folder, Mailbox, Organization } from "@/lib/types"
 
 export const myMailboxesQuery = queryOptions({
   queryKey: ["my-mailboxes"],
@@ -24,3 +24,8 @@ export const foldersQuery = (mailboxId: string) =>
     queryKey: ["folders", mailboxId],
     queryFn: () => api<Folder[]>(`/mailboxes/${mailboxId}/folders`),
   })
+
+export const calendarsQuery = queryOptions({
+  queryKey: ["calendars"],
+  queryFn: () => api<CalendarInfo[]>("/calendar/calendars"),
+})

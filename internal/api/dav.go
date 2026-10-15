@@ -134,12 +134,23 @@ func parseDAVPath(ctx context.Context, p, section string) (davObjectPath, error)
 }
 
 type collectionRow struct {
-	ID, Slug, Name, Description string
-	UpdatedAt                   time.Time
+	ID, Slug, Name, Description, Color string
+	UpdatedAt                          time.Time
+	Access                             string
 }
 
+const sharedSlugPrefix = "shared-"
+
+const accessibleCollections = `
+	SELECT id, slug, name, description, color, updated_at, 'owner' AS access, created_at FROM dav_collections WHERE user_id = $1 AND kind = $2
+	UNION ALL
+	SELECT c.id, 'shared-' || c.id, c.name, c.description, c.color, c.updated_at, max(s.access), c.created_at
+	FROM calendar_shares s JOIN dav_collections c ON c.id = s.collection_id
+	WHERE $2 = 'calendar' AND c.user_id <> $1 AND (s.user_id = $1 OR s.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1))
+	GROUP BY c.id`
+
 func (s *Server) davCollections(ctx context.Context, kind string) ([]collectionRow, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, slug, name, description, updated_at FROM dav_collections WHERE user_id = $1 AND kind = $2 ORDER BY created_at`, davUser(ctx), kind)
+	rows, err := s.db.Query(ctx, `SELECT id, slug, name, description, color, updated_at, access FROM (`+accessibleCollections+`) a ORDER BY access <> 'owner', created_at`, davUser(ctx), kind)
 	if err != nil {
 		return nil, err
 	}
@@ -148,18 +159,26 @@ func (s *Server) davCollections(ctx context.Context, kind string) ([]collectionR
 
 func (s *Server) davCollection(ctx context.Context, kind, slug string) (*collectionRow, error) {
 	var c collectionRow
-	err := s.db.QueryRow(ctx, `SELECT id, slug, name, description, updated_at FROM dav_collections WHERE user_id = $1 AND kind = $2 AND slug = $3`, davUser(ctx), kind, slug).
-		Scan(&c.ID, &c.Slug, &c.Name, &c.Description, &c.UpdatedAt)
+	err := s.db.QueryRow(ctx, `SELECT id, slug, name, description, color, updated_at, access FROM (`+accessibleCollections+`) a WHERE slug = $3`, davUser(ctx), kind, slug).
+		Scan(&c.ID, &c.Slug, &c.Name, &c.Description, &c.Color, &c.UpdatedAt, &c.Access)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, davNotFound()
 	}
 	return &c, err
 }
 
+func (s *Server) writableCollection(ctx context.Context, kind, slug string) (*collectionRow, error) {
+	c, err := s.davCollection(ctx, kind, slug)
+	if err == nil && c.Access == "read" {
+		return nil, webdav.NewHTTPError(http.StatusForbidden, errors.New("this calendar is shared with you read-only"))
+	}
+	return c, err
+}
+
 func (s *Server) createDAVCollection(ctx context.Context, kind, p, name, description string) error {
 	section := map[string]string{"calendar": davCalendars, "addressbook": davContacts}[kind]
 	dp, err := parseDAVPath(ctx, p, section)
-	if err != nil || dp.name != "" {
+	if err != nil || dp.name != "" || strings.HasPrefix(dp.slug, sharedSlugPrefix) {
 		return webdav.NewHTTPError(http.StatusForbidden, errors.New("collections can only be created in the home set"))
 	}
 	_, err = s.db.Exec(ctx, `INSERT INTO dav_collections (user_id, kind, slug, name, description) VALUES ($1, $2, $3, $4, $5)`, davUser(ctx), kind, dp.slug, name, description)
@@ -381,7 +400,7 @@ func (b *calendarBackend) PutCalendarObject(ctx context.Context, p string, cal *
 	if err != nil || dp.name == "" {
 		return nil, davNotFound()
 	}
-	c, err := b.s.davCollection(ctx, "calendar", dp.slug)
+	c, err := b.s.writableCollection(ctx, "calendar", dp.slug)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +424,7 @@ func (b *calendarBackend) DeleteCalendarObject(ctx context.Context, p string) er
 	if err != nil || dp.name == "" {
 		return davNotFound()
 	}
-	c, err := b.s.davCollection(ctx, "calendar", dp.slug)
+	c, err := b.s.writableCollection(ctx, "calendar", dp.slug)
 	if err != nil {
 		return err
 	}

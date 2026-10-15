@@ -21,7 +21,7 @@ import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { attendeeStatusLabels } from "@/lib/format"
 import { addDays, dateValue, eventRange, fromValues, timeValue, toRFC3339 } from "@/lib/calendar"
-import type { Attendee, CalendarEvent, CalendarEventInput } from "@/lib/types"
+import type { Attendee, CalendarEvent, CalendarEventInput, CalendarInfo } from "@/lib/types"
 
 export interface EventSelection {
   key: number
@@ -50,6 +50,7 @@ const schema = z
     location: z.string().trim().max(500, "Use 500 characters or fewer."),
     description: z.string().max(10000, "Use 10,000 characters or fewer."),
     attendees: z.array(z.object({ name: z.string().optional(), address: z.string() })).max(100, "Invite 100 people or fewer."),
+    calendarId: z.string(),
   })
   .refine((v) => v.allDay || (v.startTime && v.endTime), { message: "Choose a start and end time.", path: ["endDate"] })
   .refine((v) => v.allDay || !v.startTime || !v.endTime || range(v).end > range(v).start, { message: "The event must end after it starts.", path: ["endDate"] })
@@ -69,6 +70,7 @@ function toValues({ event, start, end, allDay }: EventSelection): Values {
     location: event?.location ?? "",
     description: event?.description ?? "",
     attendees: event?.attendees.map(({ name, address }) => ({ name, address })) ?? [],
+    calendarId: event?.calendarId ?? "personal",
   }
 }
 
@@ -84,10 +86,23 @@ function seriesShift(target: EventSelection, start: Date, end: Date, allDay: boo
   return { start: new Date(start.getTime() + offset), end: new Date(end.getTime() + offset) }
 }
 
-export function EventDialog({ target, open, onOpenChange }: { target: EventSelection; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function EventDialog({
+  target,
+  calendars,
+  open,
+  onOpenChange,
+}: {
+  target: EventSelection
+  calendars: CalendarInfo[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const qc = useQueryClient()
   const { event } = target
-  const readOnly = event?.repeat === "custom"
+  const viewOnly = !!event?.readOnly
+  const readOnly = event?.repeat === "custom" || viewOnly
+  const writable = calendars.filter((c) => c.access !== "read")
+  const calendarQuery = { calendar: event?.calendarId }
   const session = useSession()
   const invited = !!event?.organizer && event.organizer !== session.data?.user.email.toLowerCase()
   const [deleting, setDeleting] = useState(false)
@@ -100,7 +115,7 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
       const repeat = v.repeat === "none" || v.repeat === "custom" ? "" : v.repeat
       const picked = range(v)
       const { start, end } = repeat ? seriesShift(target, picked.start, picked.end, v.allDay) : picked
-      const body: CalendarEventInput = { title: v.title, start: toRFC3339(start), end: toRFC3339(end), allDay: v.allDay, location: v.location, description: v.description, repeat, attendees: v.attendees.map((a) => a.address) }
+      const body: CalendarEventInput = { title: v.title, start: toRFC3339(start), end: toRFC3339(end), allDay: v.allDay, location: v.location, description: v.description, repeat, attendees: v.attendees.map((a) => a.address), calendarId: v.calendarId }
       return event
         ? api<CalendarEvent>(`/calendar/events/${encodeURIComponent(event.id)}`, { method: "PUT", body })
         : api<CalendarEvent>("/calendar/events", { method: "POST", body })
@@ -112,7 +127,7 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
     },
   })
   const remove = useMutation({
-    mutationFn: () => api(`/calendar/events/${encodeURIComponent(event?.id ?? "")}`, { method: "DELETE" }),
+    mutationFn: () => api(`/calendar/events/${encodeURIComponent(event?.id ?? "")}`, { method: "DELETE", query: calendarQuery }),
     onSuccess: () => {
       toast.success("Event deleted")
       setDeleting(false)
@@ -121,7 +136,7 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
     },
   })
 
-  const deleteButton = event && (
+  const deleteButton = event && !viewOnly && (
     <Button type="button" variant="secondary" onClick={() => setDeleting(true)}>
       <Trash2 aria-hidden />
       Delete
@@ -135,7 +150,9 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
         onOpenChange={onOpenChange}
         title={readOnly ? event.title : event ? "Edit event" : "New event"}
         description={
-          readOnly
+          viewOnly
+            ? "This calendar is shared with you to view only."
+            : readOnly
             ? "Custom repeat (edit in the app that created it). Aether can’t save this repeat pattern, so the event is read-only here."
             : event?.repeat
               ? "Changes apply to every occurrence of this repeating event."
@@ -156,6 +173,28 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
         }
       >
         <fieldset disabled={readOnly} className="contents">
+          {!event && writable.length > 1 && (
+            <Controller
+              control={form.control}
+              name="calendarId"
+              render={({ field }) => (
+                <Field id="event-calendar" label="Calendar">
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger id="event-calendar" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {writable.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.owner ? `${c.name} (${c.owner.name || c.owner.email})` : c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            />
+          )}
           <Field id="event-title" label="Title" error={errors.title?.message}>
             <Input id="event-title" autoComplete="off" aria-invalid={!!errors.title} {...form.register("title")} />
           </Field>

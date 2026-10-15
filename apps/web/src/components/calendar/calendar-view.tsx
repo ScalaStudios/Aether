@@ -1,11 +1,12 @@
 "use client"
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
+import { CalendarCog, ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
 
+import { CalendarsDialog } from "@/components/calendar/calendars-dialog"
 import { EventDialog, type EventSelection } from "@/components/calendar/event-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SegmentedControl } from "@/components/segmented-control"
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { plural } from "@/lib/format"
+import { calendarsQuery } from "@/lib/queries"
 import { addDays, eventRange, eventsOn, layoutDay, sameDay, startOfDay, startOfWeek, toRFC3339, useNow } from "@/lib/calendar"
 import type { CalendarEvent } from "@/lib/types"
 
@@ -42,9 +44,9 @@ function EventButton({ event, onOpen, detail, className, style }: { event: Calen
     <button
       type="button"
       onClick={() => onOpen(event)}
-      style={style}
+      style={{ ...style, "--event": event.color || "var(--color-ember)" } as React.CSSProperties}
       className={cn(
-        "flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-md border-l-2 border-ember bg-card bg-linear-to-r from-ember/16 to-ember/16 px-2 py-1 text-left text-xs leading-4 text-foreground transition-colors duration-160 ease-brand hover:from-ember/28 hover:to-ember/28",
+        "flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-md border-l-2 border-(--event) bg-card bg-linear-to-r from-(--event)/16 to-(--event)/16 px-2 py-1 text-left text-xs leading-4 text-foreground transition-colors duration-160 ease-brand hover:from-(--event)/28 hover:to-(--event)/28",
         className
       )}
     >
@@ -63,7 +65,7 @@ export function CalendarView() {
   return <Calendar now={now} />
 }
 
-function CalendarMenu() {
+function CalendarMenu({ onManage }: { onManage: () => void }) {
   const qc = useQueryClient()
   const fileInput = useRef<HTMLInputElement>(null)
   const importFile = useMutation({
@@ -95,6 +97,10 @@ function CalendarMenu() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={onManage}>
+            <CalendarCog aria-hidden />
+            Calendars and sharing
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
             <Upload aria-hidden />
             Import .ics file
@@ -127,7 +133,17 @@ function Calendar({ now }: { now: Date }) {
     queryFn: () => api<CalendarEvent[]>("/calendar/events", { query: { start: toRFC3339(start), end: toRFC3339(end) } }),
     placeholderData: keepPreviousData,
   })
-  const list = events.data ?? []
+  const calendars = useQuery(calendarsQuery)
+  const [managing, setManaging] = useState(false)
+  const [hidden, setHidden] = useState<string[]>(() => JSON.parse(localStorage.getItem("aether.hiddenCalendars") ?? "[]"))
+  const colors = new Map(calendars.data?.map((c) => [c.id, c.color]))
+  const list = (events.data ?? []).filter((e) => !hidden.includes(e.calendarId ?? "")).map((e) => ({ ...e, color: colors.get(e.calendarId ?? "") }))
+
+  function toggleCalendar(id: string) {
+    const next = hidden.includes(id) ? hidden.filter((h) => h !== id) : [...hidden, id]
+    setHidden(next)
+    localStorage.setItem("aether.hiddenCalendars", JSON.stringify(next))
+  }
 
   function move(delta: number) {
     setAnchor(view === "week" ? addDays(day, 7 * delta) : new Date(day.getFullYear(), day.getMonth() + delta, 1))
@@ -183,7 +199,7 @@ function Calendar({ now }: { now: Date }) {
           value={view}
           onChange={setView}
         />
-        <CalendarMenu />
+        <CalendarMenu onManage={() => setManaging(true)} />
         <Button onClick={newEvent}>
           <Plus aria-hidden />
           New event
@@ -199,7 +215,8 @@ function Calendar({ now }: { now: Date }) {
       ) : (
         <MonthGrid days={days} month={day.getMonth()} events={list} now={now} busy={events.isPending} onOpen={openEvent} onCreate={create} onShowDay={showDay} />
       )}
-      {selection && <EventDialog key={selection.key} target={selection} open={dialogOpen} onOpenChange={setDialogOpen} />}
+      {selection && <EventDialog key={selection.key} target={selection} calendars={calendars.data ?? []} open={dialogOpen} onOpenChange={setDialogOpen} />}
+      <CalendarsDialog open={managing} onOpenChange={setManaging} hidden={hidden} onToggle={toggleCalendar} />
     </div>
   )
 }
