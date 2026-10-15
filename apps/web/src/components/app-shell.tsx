@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation } from "@tanstack/react-query"
-import { LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
+import { BookUser, CalendarDays, LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
@@ -25,6 +25,8 @@ import type { User } from "@/lib/types"
 
 const nav: { href: string; label: string; icon: LucideIcon; admin?: boolean }[] = [
   { href: "/mail", label: "Mail", icon: Mail },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
+  { href: "/contacts", label: "Contacts", icon: BookUser },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/admin", label: "Administration", icon: ShieldCheck, admin: true },
 ]
@@ -57,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav aria-label="Primary" className={railClass}>
         <span className="hidden pb-4 text-center font-display text-[15px] font-extrabold tracking-tight md:block">Aether</span>
         {session.isPending
-          ? Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="m-2 h-12 md:mx-4" />)
+          ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="m-2 h-12 md:mx-4" />)
           : items.map((item) => {
               const active = pathname.startsWith(item.href)
               return (

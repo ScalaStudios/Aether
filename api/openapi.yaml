@@ -1053,12 +1053,13 @@ components:
         source: { type: string, enum: [contact, directory] }
     CalendarEvent:
       type: object
-      required: [id, title, start, end, allDay, location, description, repeat]
+      required: [id, title, start, end, seriesStart, allDay, location, description, repeat]
       properties:
         id: { type: string }
         title: { type: string }
         start: { type: string, format: date-time }
         end: { type: string, format: date-time }
+        seriesStart: { type: string, format: date-time, description: Start of the first occurrence; equals start for events that do not repeat }
         allDay: { type: boolean }
         location: { type: string }
         description: { type: string }
@@ -1068,7 +1069,7 @@ components:
       required: [title, start, end]
       properties:
         title: { type: string, maxLength: 300 }
-        start: { type: string, format: date-time }
+        start: { type: string, format: date-time, description: For all-day events, send local midnight with its UTC offset; the date part is stored }
         end: { type: string, format: date-time, description: Exclusive; for all-day events the midnight after the last day }
         allDay: { type: boolean }
         location: { type: string }

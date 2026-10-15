@@ -67,9 +67,10 @@ func TestContactsDirectoryAndCalendarAPI(t *testing.T) {
 	}
 	w.alice.must("POST", "/calendar/events", map[string]any{"title": "Standup", "start": start, "end": start.Add(15 * time.Minute), "repeat": "weekly"}, &event, 201)
 	var occurrences []struct {
-		ID    string    `json:"id"`
-		Title string    `json:"title"`
-		Start time.Time `json:"start"`
+		ID          string    `json:"id"`
+		Title       string    `json:"title"`
+		Start       time.Time `json:"start"`
+		SeriesStart time.Time `json:"seriesStart"`
 	}
 	q := url.Values{"start": {start.Add(-time.Hour).Format(time.RFC3339)}, "end": {start.AddDate(0, 0, 20).Format(time.RFC3339)}}
 	w.alice.must("GET", "/calendar/events?"+q.Encode(), nil, &occurrences, 200)
@@ -77,6 +78,9 @@ func TestContactsDirectoryAndCalendarAPI(t *testing.T) {
 	for _, o := range occurrences {
 		if o.ID == event.ID {
 			count++
+			if !o.SeriesStart.Equal(start) {
+				t.Fatalf("occurrence on %s reports series start %s, want %s", o.Start, o.SeriesStart, start)
+			}
 		}
 	}
 	if count != 3 {

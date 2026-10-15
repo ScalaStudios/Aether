@@ -1,13 +1,13 @@
 "use client"
 
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
-import { Flag, FolderOpen, Keyboard, Paperclip, PenSquare, Search, SearchX } from "lucide-react"
+import { Flag, FolderOpen, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { cn } from "cn"
 
 import { IconButton } from "@/components/icon-button"
+import { SearchInput } from "@/components/search-input"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
-import { Input } from "@/components/ui/input"
 import { formatListDate } from "@/lib/format"
 import { folderIcons, folderLabel, senderLabel } from "@/lib/mail"
 import type { Folder, MessagePage, MessageSummary } from "@/lib/types"
@@ -82,19 +82,7 @@ export function MessageList({
             <Keyboard />
           </IconButton>
         </div>
-        <div className="relative">
-          <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-fg-tertiary" />
-          <Input
-            ref={searchRef}
-            type="search"
-            aria-label="Search mail"
-            placeholder="Search this folder"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
-            className="pl-10"
-          />
-        </div>
+        <SearchInput ref={searchRef} aria-label="Search mail" placeholder="Search this folder" value={search} onChange={(e) => onSearchChange(e.target.value)} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {query.isPending ? (

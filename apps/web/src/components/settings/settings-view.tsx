@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { KeyRound, Plus, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useState, useSyncExternalStore } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -34,7 +34,7 @@ export function SettingsView() {
 
   return (
     <PageContainer>
-      <PageHeader title="Settings" description="Your account details, mail rules, and the app passwords that let mail clients connect to your mailboxes." />
+      <PageHeader title="Settings" description="Your account details, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes." />
       {session && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
           <SectionHeader title="Profile" description="Managed by your administrator or identity provider." />
@@ -69,6 +69,7 @@ export function SettingsView() {
       )}
       <MailRules />
       <AppPasswords />
+      <CalendarApps />
     </PageContainer>
   )
 }
@@ -117,7 +118,7 @@ function AppPasswords() {
   const host = typeof window === "undefined" ? "" : window.location.hostname
 
   return (
-    <section className="flex flex-col gap-6">
+    <section id="app-passwords" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
         title="App passwords"
         description="Use an app password instead of your sign-in password in IMAP and SMTP mail clients. Each one works for a single mailbox."
@@ -247,5 +248,65 @@ function ClientSettings({ password, username, host }: { password: string; userna
       </dl>
       <p className="text-sm text-fg-tertiary">Authentication: normal password. Use the full mailbox address as the username for both servers.</p>
     </div>
+  )
+}
+
+const noSubscribe = () => () => {}
+
+function CalendarApps() {
+  const host = useSyncExternalStore(noSubscribe, () => window.location.host, () => "")
+  const mailboxes = useQuery(myMailboxesQuery)
+  const server = host && `https://${host}/dav/`
+  const apps: [string, string][] = [
+    ["iPhone and iPad", "In Settings, open the accounts list for Calendar, choose Add Account, then Other. Add a CalDAV account for your calendar and a CardDAV account for your contacts."],
+    ["Mac", "In System Settings, open Internet Accounts, then Add Other Account. Add a CalDAV account and a CardDAV account."],
+    ["Thunderbird", "For the calendar, choose New Calendar, then On the Network. For contacts, choose New Address Book, then Add CardDAV Address Book."],
+    ["Android with DAVx⁵", "Add an account and choose Login with URL and user name, then pick the calendar and address book to sync."],
+  ]
+
+  return (
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
+      <SectionHeader
+        title="Calendar and contacts apps"
+        description="Your Aether calendar and contacts sync to phone and desktop apps over CalDAV and CardDAV. These apps need an app password, not the password you use to sign in on the web."
+      />
+      <dl className="flex flex-col rounded-xl border border-border">
+        <div className="flex flex-col gap-1 border-b border-border p-4 sm:flex-row sm:items-center sm:gap-4">
+          <dt className="w-32 shrink-0 text-label text-fg-tertiary">Server address</dt>
+          <dd className="flex min-w-0 items-center gap-2">
+            <span className="font-mono text-sm break-all">{server}</span>
+            {server && <CopyButton value={server} label="Copy server address" />}
+          </dd>
+        </div>
+        <div className="flex flex-col gap-1 border-b border-border p-4 sm:flex-row sm:gap-4">
+          <dt className="w-32 shrink-0 text-label text-fg-tertiary">Username</dt>
+          <dd className="text-sm">
+            Your full mailbox address
+            {mailboxes.data?.length ? (
+              <>
+                , for example <span className="font-mono">{mailboxes.data[0].address}</span>
+              </>
+            ) : null}
+          </dd>
+        </div>
+        <div className="flex flex-col gap-1 p-4 sm:flex-row sm:gap-4">
+          <dt className="w-32 shrink-0 text-label text-fg-tertiary">Password</dt>
+          <dd className="text-sm">
+            An app password for that mailbox.{" "}
+            <Button variant="link" asChild>
+              <a href="#app-passwords">Create one under App passwords</a>
+            </Button>
+          </dd>
+        </div>
+      </dl>
+      <ul className="flex flex-col gap-3">
+        {apps.map(([name, steps]) => (
+          <li key={name} className="flex flex-col gap-1">
+            <span className="font-semibold">{name}</span>
+            <span className="text-sm text-fg-secondary">{steps} Enter the server address, username and app password above.</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

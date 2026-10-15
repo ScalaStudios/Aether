@@ -315,6 +315,7 @@ type calendarEvent struct {
 	Title       string    `json:"title"`
 	Start       time.Time `json:"start"`
 	End         time.Time `json:"end"`
+	SeriesStart time.Time `json:"seriesStart"`
 	AllDay      bool      `json:"allDay"`
 	Location    string    `json:"location"`
 	Description string    `json:"description"`
@@ -344,6 +345,7 @@ func eventFromComponent(id string, comp *ical.Component) (calendarEvent, *ical.E
 	if out.Start, err = ev.DateTimeStart(time.UTC); err != nil {
 		return out, ev, err
 	}
+	out.SeriesStart = out.Start
 	if out.End, err = ev.DateTimeEnd(time.UTC); err != nil || out.End.IsZero() {
 		out.End = out.Start.Add(time.Hour)
 		if out.AllDay {

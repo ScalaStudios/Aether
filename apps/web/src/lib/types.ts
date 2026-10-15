@@ -251,3 +251,36 @@ export interface AutoReply {
   start?: string
   end?: string
 }
+
+export interface Contact {
+  id: string
+  name: string
+  emails: string[]
+  phones: string[]
+  organization: string
+  notes: string
+}
+
+export type ContactInput = Omit<Contact, "id">
+
+export interface Recipient {
+  name: string
+  address: string
+  source: "contact" | "directory"
+}
+
+export type Repeat = "" | "daily" | "weekly" | "monthly" | "yearly" | "custom"
+
+export interface CalendarEvent {
+  id: string
+  title: string
+  start: string
+  end: string
+  seriesStart: string
+  allDay: boolean
+  location: string
+  description: string
+  repeat: Repeat
+}
+
+export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart"> & { repeat: Exclude<Repeat, "custom"> }

@@ -15,6 +15,7 @@ export function FormDialog({
   onSubmit,
   wide,
   footer,
+  leading,
   children,
 }: {
   open: boolean
@@ -26,6 +27,7 @@ export function FormDialog({
   onSubmit: React.FormEventHandler<HTMLFormElement>
   wide?: boolean
   footer?: React.ReactNode
+  leading?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -38,6 +40,7 @@ export function FormDialog({
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-6">
           <div className="flex flex-col gap-4">{children}</div>
           <DialogFooter>
+            {leading && <div className="flex flex-col sm:mr-auto sm:flex-row">{leading}</div>}
             {footer ?? (
               <>
                 <DialogClose asChild>

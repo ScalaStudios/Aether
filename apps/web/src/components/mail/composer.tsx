@@ -241,7 +241,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
       name={name}
       render={({ field, fieldState }) => (
         <Field id={`compose-${name}`} label={label} error={fieldState.error?.message ?? fieldState.error?.root?.message}>
-          <RecipientInput id={`compose-${name}`} value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" />
+          <RecipientInput id={`compose-${name}`} value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" suggest />
         </Field>
       )}
     />

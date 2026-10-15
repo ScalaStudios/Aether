@@ -2,6 +2,7 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
 import { Inbox } from "lucide-react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
@@ -12,6 +13,7 @@ import { MessageList } from "@/components/mail/message-list"
 import { ReadingPane } from "@/components/mail/reading-pane"
 import { ShortcutsDialog } from "@/components/mail/shortcuts-dialog"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api"
 import { buildDraft, type ComposeMode, type Draft } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
@@ -46,11 +48,7 @@ export function MailView() {
   const folder = folderName ?? folders.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX"
 
   const [search, setSearch] = useState("")
-  const [q, setQ] = useState("")
-  useEffect(() => {
-    const timer = setTimeout(() => setQ(search.trim()), 300)
-    return () => clearTimeout(timer)
-  }, [search])
+  const q = useDebouncedValue(search.trim(), 300)
 
   const isDrafts = folders.data?.find((f) => f.name === folder)?.specialUse === "drafts"
   const listKey = ["messages", mbx, folder]
@@ -70,6 +68,16 @@ export function MailView() {
   const [compose, setCompose] = useState<{ key: number; draft: Draft } | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const router = useRouter()
+  const composeTo = useSearchParams().get("compose")
+  const [composedTo, setComposedTo] = useState<string | null>(null)
+  if (mailbox && composeTo !== composedTo) {
+    setComposedTo(composeTo)
+    if (composeTo) setCompose({ key: (compose?.key ?? 0) + 1, draft: { ...buildDraft("new", undefined, mailbox.address, folder), to: [{ address: composeTo }] } })
+  }
+  useEffect(() => {
+    if (composeTo && composeTo === composedTo) router.replace("/mail", { scroll: false })
+  }, [composeTo, composedTo, router])
 
   const message = useQuery({
     queryKey: ["message", mbx, folder, selectedUid],

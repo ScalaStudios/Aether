@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { Suspense } from "react"
 
 import { MailView } from "@/components/mail/mail-view"
 
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 }
 
 export default function MailPage() {
-  return <MailView />
+  return (
+    <Suspense>
+      <MailView />
+    </Suspense>
+  )
 }
