@@ -88,6 +88,9 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/organizations/{orgId}/mailboxes", s.createMailbox)
 	authed("PATCH /api/v1/mailboxes/{mailboxId}", s.updateMailbox)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}", s.deleteMailbox)
+	authed("GET /api/v1/mailboxes/{mailboxId}/delegates", s.listDelegates)
+	authed("POST /api/v1/mailboxes/{mailboxId}/delegates", s.addDelegate)
+	authed("DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}", s.removeDelegate)
 
 	authed("GET /api/v1/organizations/{orgId}/aliases", s.listAliases)
 	authed("POST /api/v1/organizations/{orgId}/aliases", s.createAlias)

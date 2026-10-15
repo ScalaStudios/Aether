@@ -631,6 +631,47 @@ paths:
         - { name: part, in: path, required: true, schema: { type: string, pattern: "^[0-9]+(\\.[0-9]+)*$" } }
       responses:
         "200": { description: "Attachment bytes, served as a download" }
+  /mailboxes/{mailboxId}/delegates:
+    get:
+      tags: [mailboxes]
+      summary: People with full access to this mailbox besides its owner
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: Delegates
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Delegate" } }
+    post:
+      tags: [mailboxes]
+      summary: Give an organization member full access, including sending as the mailbox and app passwords for it
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: The delegate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Delegate" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/delegates/{userId}:
+    delete:
+      tags: [mailboxes]
+      summary: Remove a delegate and revoke the app passwords they created for this mailbox
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/send:
     post:
       tags: [mail]
@@ -1313,6 +1354,13 @@ components:
         filename: { type: string }
         contentType: { type: string }
         size: { type: integer }
+    Delegate:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        email: { type: string }
+        displayName: { type: string }
+        createdAt: { type: string, format: date-time }
     APIKey:
       type: object
       properties:

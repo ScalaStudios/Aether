@@ -29,7 +29,7 @@ func (s *Server) ownedMailbox(w http.ResponseWriter, r *http.Request, p *princip
 	m := &ownedMailbox{}
 	err := s.db.QueryRow(r.Context(), `
 		SELECT m.id, m.org_id, m.address, m.display_name FROM mailboxes m JOIN domains d ON d.id = m.domain_id
-		WHERE m.id = $1 AND m.owner_user_id = $2 AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, p.User.ID).
+		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, p.User.ID).
 		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName)
 	if err != nil {
 		notFound(w)
