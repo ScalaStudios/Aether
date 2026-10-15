@@ -214,6 +214,7 @@ export interface Message extends MessageSummary {
   text: string
   html: string
   attachments: Attachment[]
+  invitation?: Invitation
 }
 
 export interface OutgoingMessage {
@@ -335,9 +336,31 @@ export interface CalendarEvent {
   location: string
   description: string
   repeat: Repeat
+  organizer?: string
+  attendees: Attendee[]
 }
 
-export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart"> & { repeat: Exclude<Repeat, "custom"> }
+export type AttendeeStatus = "needs-action" | "accepted" | "tentative" | "declined"
+
+export interface Attendee {
+  name?: string
+  address: string
+  status: AttendeeStatus
+}
+
+export interface Invitation {
+  method: "request" | "reply" | "cancel"
+  event: CalendarEvent
+  organizer: Address
+  status: AttendeeStatus | ""
+  eventId?: string
+  applied: boolean
+}
+
+export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart" | "organizer" | "attendees"> & {
+  repeat: Exclude<Repeat, "custom">
+  attendees: string[]
+}
 
 export interface ScheduledMessage {
   id: string

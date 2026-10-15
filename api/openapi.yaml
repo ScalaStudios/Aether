@@ -683,6 +683,34 @@ paths:
                 to: { type: string }
       responses:
         "204": { description: Moved }
+  /mailboxes/{mailboxId}/messages/{uid}/invitation:
+    post:
+      tags: [mail, calendar]
+      summary: Respond to the calendar invitation, reply, or cancellation in a message
+      description: |
+        accepted, tentative, and declined answer an invitation. Accepting adds the event to the personal calendar, declining removes it, and each sends a reply to the organizer.
+        apply updates the sender's response on an event you organize. remove takes a cancelled event out of the calendar.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response: { type: string, enum: [accepted, tentative, declined, apply, remove] }
+      responses:
+        "200":
+          description: The invitation after the response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "422": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}/attachments/{part}:
     get:
       tags: [mail]
@@ -1322,6 +1350,24 @@ components:
             text: { type: string }
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+            invitation: { $ref: "#/components/schemas/Invitation" }
+    Invitation:
+      type: object
+      required: [method, event, organizer, status, applied]
+      properties:
+        method: { type: string, enum: [request, reply, cancel] }
+        event: { $ref: "#/components/schemas/CalendarEvent" }
+        organizer: { $ref: "#/components/schemas/Address" }
+        status: { type: string, enum: ["", needs-action, accepted, tentative, declined], description: Your response to a request, or the sender's response in a reply }
+        eventId: { type: string, description: The matching event in your calendar, if there is one }
+        applied: { type: boolean, description: Whether your calendar already reflects this message }
+    Attendee:
+      type: object
+      required: [address, status]
+      properties:
+        name: { type: string }
+        address: { type: string }
+        status: { type: string, enum: [needs-action, accepted, tentative, declined] }
     AutoReply:
       type: object
       required: [enabled, subject, message]
@@ -1359,7 +1405,7 @@ components:
         source: { type: string, enum: [contact, directory] }
     CalendarEvent:
       type: object
-      required: [id, title, start, end, seriesStart, allDay, location, description, repeat]
+      required: [id, title, start, end, seriesStart, allDay, location, description, repeat, attendees]
       properties:
         id: { type: string }
         title: { type: string }
@@ -1370,6 +1416,8 @@ components:
         location: { type: string }
         description: { type: string }
         repeat: { type: string, enum: ["", daily, weekly, monthly, yearly, custom] }
+        organizer: { type: string, description: Present when the event has attendees }
+        attendees: { type: array, items: { $ref: "#/components/schemas/Attendee" } }
     CalendarEventInput:
       type: object
       required: [title, start, end]
@@ -1381,6 +1429,11 @@ components:
         location: { type: string }
         description: { type: string }
         repeat: { type: string, enum: ["", daily, weekly, monthly, yearly] }
+        attendees:
+          type: array
+          maxItems: 100
+          items: { type: string, format: email }
+          description: Saving sends invitations to these addresses from your own mailbox; removed attendees get a cancellation
     MailRule:
       type: object
       required: [name, enabled, match, conditions, actions]

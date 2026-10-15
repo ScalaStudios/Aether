@@ -1,4 +1,4 @@
-import type { Address } from "@/lib/types"
+import type { Address, AttendeeStatus } from "@/lib/types"
 
 export function formatAddress(a: Address) {
   return a.name ? `${a.name} <${a.address}>` : a.address
@@ -14,6 +14,13 @@ export function formatBytes(bytes: number) {
     unit++
   }
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}
+
+export const attendeeStatusLabels: Record<AttendeeStatus, string> = {
+  "needs-action": "No response yet",
+  accepted: "Going",
+  tentative: "Maybe",
+  declined: "Not going",
 }
 
 export function plural(count: number, noun: string) {

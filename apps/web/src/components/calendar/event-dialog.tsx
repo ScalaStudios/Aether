@@ -11,14 +11,17 @@ import { z } from "zod"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
+import { RecipientInput } from "@/components/recipient-input"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
 import { DialogClose } from "@/components/ui/dialog"
 import { Input, Textarea } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
+import { attendeeStatusLabels } from "@/lib/format"
 import { addDays, dateValue, eventRange, fromValues, timeValue, toRFC3339 } from "@/lib/calendar"
-import type { CalendarEvent, CalendarEventInput } from "@/lib/types"
+import type { Attendee, CalendarEvent, CalendarEventInput } from "@/lib/types"
 
 export interface EventSelection {
   key: number
@@ -46,6 +49,7 @@ const schema = z
     repeat: z.enum(["none", "daily", "weekly", "monthly", "yearly", "custom"]),
     location: z.string().trim().max(500, "Use 500 characters or fewer."),
     description: z.string().max(10000, "Use 10,000 characters or fewer."),
+    attendees: z.array(z.object({ name: z.string().optional(), address: z.string() })).max(100, "Invite 100 people or fewer."),
   })
   .refine((v) => v.allDay || (v.startTime && v.endTime), { message: "Choose a start and end time.", path: ["endDate"] })
   .refine((v) => v.allDay || !v.startTime || !v.endTime || range(v).end > range(v).start, { message: "The event must end after it starts.", path: ["endDate"] })
@@ -64,6 +68,7 @@ function toValues({ event, start, end, allDay }: EventSelection): Values {
     repeat: event?.repeat || "none",
     location: event?.location ?? "",
     description: event?.description ?? "",
+    attendees: event?.attendees.map(({ name, address }) => ({ name, address })) ?? [],
   }
 }
 
@@ -83,6 +88,8 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
   const qc = useQueryClient()
   const { event } = target
   const readOnly = event?.repeat === "custom"
+  const session = useSession()
+  const invited = !!event?.organizer && event.organizer !== session.data?.user.email.toLowerCase()
   const [deleting, setDeleting] = useState(false)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(target) })
   const allDay = useWatch({ control: form.control, name: "allDay" })
@@ -93,13 +100,13 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
       const repeat = v.repeat === "none" || v.repeat === "custom" ? "" : v.repeat
       const picked = range(v)
       const { start, end } = repeat ? seriesShift(target, picked.start, picked.end, v.allDay) : picked
-      const body: CalendarEventInput = { title: v.title, start: toRFC3339(start), end: toRFC3339(end), allDay: v.allDay, location: v.location, description: v.description, repeat }
+      const body: CalendarEventInput = { title: v.title, start: toRFC3339(start), end: toRFC3339(end), allDay: v.allDay, location: v.location, description: v.description, repeat, attendees: v.attendees.map((a) => a.address) }
       return event
         ? api<CalendarEvent>(`/calendar/events/${encodeURIComponent(event.id)}`, { method: "PUT", body })
         : api<CalendarEvent>("/calendar/events", { method: "POST", body })
     },
-    onSuccess: () => {
-      toast.success(event ? "Event saved" : "Event added")
+    onSuccess: (_, v) => {
+      toast.success(event ? "Event saved" : "Event added", { description: !invited && v.attendees.length > 0 ? "Invitations were sent to the attendees." : undefined })
       onOpenChange(false)
       qc.invalidateQueries({ queryKey: ["calendar-events"] })
     },
@@ -188,6 +195,22 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
               </Field>
             )}
           />
+          {invited ? (
+            <Field id="event-attendees" label="Attendees">
+              <AttendeeList organizer={event.organizer} attendees={event.attendees} />
+            </Field>
+          ) : (
+            <Controller
+              control={form.control}
+              name="attendees"
+              render={({ field }) => (
+                <Field id="event-attendees" label="Attendees" error={errors.attendees?.message}>
+                  <RecipientInput id="event-attendees" value={field.value} onChange={field.onChange} invalid={!!errors.attendees} placeholder="Add people by email" suggest />
+                  {event && event.attendees.length > 0 && <AttendeeList attendees={event.attendees} />}
+                </Field>
+              )}
+            />
+          )}
           <Field id="event-location" label="Location" error={errors.location?.message}>
             <Input id="event-location" autoComplete="off" aria-invalid={!!errors.location} {...form.register("location")} />
           </Field>
@@ -201,15 +224,35 @@ export function EventDialog({ target, open, onOpenChange }: { target: EventSelec
         open={deleting}
         onOpenChange={setDeleting}
         title={`Delete “${event?.title ?? ""}”?`}
-        description={
+        description={[
           event?.repeat
             ? "This deletes every occurrence of this repeating event, here and in calendar apps synced to Aether."
-            : "The event is also removed from calendar apps synced to Aether. This cannot be undone."
-        }
+            : "The event is also removed from calendar apps synced to Aether. This cannot be undone.",
+          invited ? "The organizer is told you’re not going." : event?.attendees.length ? "Attendees are told the event is cancelled." : "",
+        ].join(" ")}
         confirmLabel="Delete event"
         pending={remove.isPending}
         onConfirm={() => remove.mutate()}
       />
     </>
+  )
+}
+
+function AttendeeList({ organizer, attendees }: { organizer?: string; attendees: Attendee[] }) {
+  return (
+    <ul className="flex flex-col gap-1 text-sm">
+      {organizer && (
+        <li className="flex justify-between gap-4">
+          <span className="truncate">{organizer}</span>
+          <span className="shrink-0 text-fg-tertiary">Organizer</span>
+        </li>
+      )}
+      {attendees.map((a) => (
+        <li key={a.address} className="flex justify-between gap-4">
+          <span className="truncate">{a.name || a.address}</span>
+          <span className="shrink-0 text-fg-tertiary">{attendeeStatusLabels[a.status]}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

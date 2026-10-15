@@ -329,6 +329,7 @@ type Message struct {
 	Text        string       `json:"text"`
 	HTML        string       `json:"html"`
 	Attachments []Attachment `json:"attachments"`
+	Calendar    string       `json:"-"`
 }
 
 func partString(path []int) string {
@@ -375,13 +376,16 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 				out.References = parseMessageIDs(e.Header.Get("References"))
 			}
 		}
-		var textPart, htmlPart *imap.BodyStructureSinglePart
-		var textPath, htmlPath []int
+		var textPart, htmlPart, calendarPart *imap.BodyStructureSinglePart
+		var textPath, htmlPath, calendarPath []int
 		if m.BodyStructure != nil {
 			m.BodyStructure.Walk(func(path []int, part imap.BodyStructure) bool {
 				single, ok := part.(*imap.BodyStructureSinglePart)
 				if !ok {
 					return true
+				}
+				if single.MediaType() == "text/calendar" && calendarPart == nil {
+					calendarPart, calendarPath = single, slices.Clone(path)
 				}
 				switch {
 				case isAttachment(single):
@@ -398,7 +402,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			part *imap.BodyStructureSinglePart
 			path []int
 			dst  *string
-		}{{textPart, textPath, &out.Text}, {htmlPart, htmlPath, &out.HTML}} {
+		}{{textPart, textPath, &out.Text}, {htmlPart, htmlPath, &out.HTML}, {calendarPart, calendarPath, &out.Calendar}} {
 			if p.part == nil || p.part.Size > maxInlineBody {
 				continue
 			}

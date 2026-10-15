@@ -110,7 +110,16 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, p *principal
 		s.mailError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, msg)
+	var inv *invitation
+	if msg.Calendar != "" && len(msg.From) > 0 {
+		if ctx, err := s.pimContext(r, p); err == nil {
+			inv = s.describeInvitation(ctx, p.User, m, strings.ToLower(msg.From[0].Address), msg.Calendar)
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		*mailpkg.Message
+		Invitation *invitation `json:"invitation,omitempty"`
+	}{msg, inv})
 }
 
 func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, p *principal) {

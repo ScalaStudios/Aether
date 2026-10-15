@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -30,6 +31,12 @@ type Outgoing struct {
 	Attachments []OutgoingAttachment
 	IncludeBcc  bool
 	Date        time.Time
+	Calendar    *CalendarPart
+}
+
+type CalendarPart struct {
+	Method string
+	Data   string
 }
 
 func mailAddresses(in []Address) []*mail.Address {
@@ -82,7 +89,7 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	}
 	h.Set("User-Agent", "Aether")
 	var buf bytes.Buffer
-	if len(o.Attachments) == 0 && o.HTML == "" {
+	if len(o.Attachments) == 0 && o.HTML == "" && o.Calendar == nil {
 		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 		w, err := mail.CreateSingleInlineWriter(&buf, h)
 		if err != nil {
@@ -141,13 +148,22 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 }
 
 func (o *Outgoing) writeBody(w *mail.InlineWriter) error {
-	parts := []struct{ typ, body string }{{"text/plain", o.Text}}
+	type bodyPart struct {
+		typ, body string
+		params    map[string]string
+	}
+	parts := []bodyPart{{"text/plain", o.Text, nil}}
 	if o.HTML != "" {
-		parts = append(parts, struct{ typ, body string }{"text/html", o.HTML})
+		parts = append(parts, bodyPart{"text/html", o.HTML, nil})
+	}
+	if o.Calendar != nil {
+		parts = append(parts, bodyPart{"text/calendar", o.Calendar.Data, map[string]string{"method": o.Calendar.Method}})
 	}
 	for _, part := range parts {
+		params := map[string]string{"charset": "utf-8"}
+		maps.Copy(params, part.params)
 		var ph mail.InlineHeader
-		ph.SetContentType(part.typ, map[string]string{"charset": "utf-8"})
+		ph.SetContentType(part.typ, params)
 		pw, err := w.CreatePart(ph)
 		if err != nil {
 			return err

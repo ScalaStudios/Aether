@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/emersion/go-webdav"
 	"github.com/jackc/pgx/v5"
 
+	mailpkg "github.com/scalastudios/aether/internal/mail"
 	"github.com/scalastudios/aether/internal/secrets"
 )
 
@@ -311,22 +313,24 @@ func (s *Server) suggestRecipients(w http.ResponseWriter, r *http.Request, p *pr
 }
 
 type calendarEvent struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Start       time.Time `json:"start"`
-	End         time.Time `json:"end"`
-	SeriesStart time.Time `json:"seriesStart"`
-	AllDay      bool      `json:"allDay"`
-	Location    string    `json:"location"`
-	Description string    `json:"description"`
-	Repeat      string    `json:"repeat"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Start       time.Time       `json:"start"`
+	End         time.Time       `json:"end"`
+	SeriesStart time.Time       `json:"seriesStart"`
+	AllDay      bool            `json:"allDay"`
+	Location    string          `json:"location"`
+	Description string          `json:"description"`
+	Repeat      string          `json:"repeat"`
+	Organizer   string          `json:"organizer,omitempty"`
+	Attendees   []eventAttendee `json:"attendees"`
 }
 
 var repeatRules = map[string]string{"daily": "FREQ=DAILY", "weekly": "FREQ=WEEKLY", "monthly": "FREQ=MONTHLY", "yearly": "FREQ=YEARLY"}
 
 func eventFromComponent(id string, comp *ical.Component) (calendarEvent, *ical.Event, error) {
 	ev := &ical.Event{Component: comp}
-	out := calendarEvent{ID: id}
+	out := calendarEvent{ID: id, Organizer: eventOrganizer(comp).Address, Attendees: eventAttendees(comp)}
 	out.Title, _ = comp.Props.Text(ical.PropSummary)
 	out.Location, _ = comp.Props.Text(ical.PropLocation)
 	out.Description, _ = comp.Props.Text(ical.PropDescription)
@@ -448,6 +452,7 @@ type eventInput struct {
 	Location    string    `json:"location"`
 	Description string    `json:"description"`
 	Repeat      string    `json:"repeat"`
+	Attendees   []string  `json:"attendees"`
 }
 
 func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -482,6 +487,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	}
 	name := r.PathValue("id")
 	uid := secrets.Token(16)
+	var prev *ical.Component
 	var ifMatch webdav.ConditionalMatch
 	status := http.StatusCreated
 	if name == "" {
@@ -491,10 +497,10 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			notFound(w)
 			return
 		}
-		var etag string
+		var etag, data string
 		err := s.db.QueryRow(ctx, `
-			SELECT c.id, o.uid, o.etag FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
-			WHERE c.user_id = $1 AND c.kind = 'calendar' AND o.name = $2`, p.User.ID, name).Scan(&calendar.ID, &uid, &etag)
+			SELECT c.id, o.uid, o.etag, o.data FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
+			WHERE c.user_id = $1 AND c.kind = 'calendar' AND o.name = $2`, p.User.ID, name).Scan(&calendar.ID, &uid, &etag, &data)
 		if errors.Is(err, pgx.ErrNoRows) {
 			notFound(w)
 			return
@@ -504,6 +510,27 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			return
 		}
 		ifMatch, status = webdav.ConditionalMatch(`"`+etag+`"`), http.StatusOK
+		if cal, err := ical.NewDecoder(strings.NewReader(data)).Decode(); err == nil {
+			prev = masterEvent(cal)
+		}
+	}
+	organizer, err := s.organizerMailbox(ctx, p.User)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	var attendees, removed []mailpkg.Address
+	invited := prev != nil && eventOrganizer(prev).Address != "" && (organizer == nil || eventOrganizer(prev).Address != strings.ToLower(organizer.Address))
+	if !invited && (len(in.Attendees) > 0 || prev != nil && len(eventAttendees(prev)) > 0) {
+		if organizer == nil {
+			writeError(w, http.StatusUnprocessableEntity, "no_mailbox", "You need a mailbox of your own to send invitations.")
+			return
+		}
+		var ok bool
+		if attendees, ok = parseAttendees(in.Attendees, strings.ToLower(organizer.Address)); !ok {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_event", "Give attendees as valid email addresses, at most 100.")
+			return
+		}
 	}
 	event := ical.NewEvent()
 	event.Props.SetText(ical.PropUID, uid)
@@ -525,6 +552,37 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	if in.Repeat != "" {
 		event.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: repeatRules[in.Repeat]})
 	}
+	sequence := 0
+	if prev != nil {
+		sequence = eventSequence(prev) + 1
+		event.Props.SetText(ical.PropSequence, strconv.Itoa(sequence))
+	}
+	if invited {
+		event.Props.Set(prev.Props.Get(ical.PropOrganizer))
+		event.Props[ical.PropAttendee] = prev.Props[ical.PropAttendee]
+	} else if organizer != nil && (len(attendees) > 0 || prev != nil && len(eventAttendees(prev)) > 0) {
+		previous := map[string]string{}
+		if prev != nil {
+			for _, a := range eventAttendees(prev) {
+				previous[a.Address] = strings.ToUpper(a.Status)
+			}
+		}
+		if len(attendees) > 0 {
+			event.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
+		}
+		for _, a := range attendees {
+			status := previous[a.Address]
+			if status == "" {
+				status = "NEEDS-ACTION"
+			}
+			delete(previous, a.Address)
+			prop := attendeeProp(a, status, status == "NEEDS-ACTION")
+			event.Props.Add(&prop)
+		}
+		for address := range previous {
+			removed = append(removed, mailpkg.Address{Address: address})
+		}
+	}
 	doc := ical.NewCalendar()
 	doc.Props.SetText(ical.PropVersion, "2.0")
 	doc.Props.SetText(ical.PropProductID, "-//Scala Studios//Aether//EN")
@@ -543,6 +601,23 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		s.davError(w, r, err)
 		return
 	}
+	verb := "Invitation"
+	if prev != nil {
+		verb = "Updated invitation"
+	}
+	if len(removed) > 0 {
+		cancel := cancelledCopy(event.Component, removed, sequence)
+		cancel.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
+		err = s.sendITIP(organizer, removed, "Cancelled: "+in.Title, "CANCEL", cancel)
+	}
+	if err == nil {
+		err = s.sendITIP(organizer, attendees, verb+": "+in.Title, "REQUEST", event.Component)
+	}
+	if err != nil {
+		s.log.Warn("invitation rejected", "user", p.User.ID, "err", err)
+		writeError(w, http.StatusBadGateway, "send_failed", "The event was saved, but the invitations could not be sent: "+err.Error())
+		return
+	}
 	out, _, _ := eventFromComponent(name, event.Component)
 	writeJSON(w, status, out)
 }
@@ -553,13 +628,19 @@ func (s *Server) deleteEvent(w http.ResponseWriter, r *http.Request, p *principa
 		notFound(w)
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `DELETE FROM dav_objects o USING dav_collections c WHERE c.id = o.collection_id AND c.user_id = $1 AND c.kind = 'calendar' AND o.name = $2`, p.User.ID, name)
+	var data string
+	err := s.db.QueryRow(r.Context(), `DELETE FROM dav_objects o USING dav_collections c WHERE c.id = o.collection_id AND c.user_id = $1 AND c.kind = 'calendar' AND o.name = $2 RETURNING o.data`, p.User.ID, name).Scan(&data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFound(w)
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		notFound(w)
+	if err := s.notifyDeletedEvent(r.Context(), p.User, data); err != nil {
+		s.log.Warn("cancellation rejected", "user", p.User.ID, "err", err)
+		writeError(w, http.StatusBadGateway, "send_failed", "The event was deleted, but the other attendees could not be told: "+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

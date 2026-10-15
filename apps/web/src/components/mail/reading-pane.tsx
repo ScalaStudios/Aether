@@ -6,6 +6,7 @@ import { cn } from "cn"
 import { useState } from "react"
 
 import { IconButton } from "@/components/icon-button"
+import { InvitationCard } from "@/components/mail/invitation-card"
 import { LaterMenu } from "@/components/mail/later-menu"
 import { EmptyState, ErrorState } from "@/components/states"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -231,6 +232,7 @@ export function ReadingPane({
                 <AddressLine label="Cc" addresses={m.cc} />
               </dl>
             </header>
+            {m.invitation && <InvitationCard key={`${m.uid}-${m.invitation.method}`} message={m} mailboxId={mailboxId} folder={folder} />}
             <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
             {earlier.length > 0 && (
               <section aria-label="Earlier in this conversation" className="flex flex-col gap-2 border-t border-border pt-4">
