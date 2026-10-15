@@ -29,6 +29,7 @@ type Config struct {
 	AllowHTTPIssuers      bool
 	MTASTSMode            string
 	WebhookAllowPrivate   bool
+	ReportListen          string
 }
 
 func Load() (*Config, error) {
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 		AllowHTTPIssuers:      os.Getenv("AETHER_OIDC_ALLOW_HTTP") == "true",
 		MTASTSMode:            env("AETHER_MTA_STS_MODE", "testing"),
 		WebhookAllowPrivate:   os.Getenv("AETHER_WEBHOOK_ALLOW_PRIVATE") == "true",
+		ReportListen:          env("AETHER_REPORT_LISTEN", ":2424"),
 	}
 	var errs []error
 	if c.DatabaseURL == "" {

@@ -348,6 +348,36 @@ paths:
       responses:
         "204": { description: Saved }
         "422": { $ref: "#/components/responses/Error" }
+  /domains/{domainId}/dmarc:
+    get:
+      tags: [domains]
+      summary: DMARC aggregate reports received for the domain, grouped by sending IP address
+      parameters:
+        - { $ref: "#/components/parameters/domainId" }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 366, default: 30 } }
+      responses:
+        "200":
+          description: Summary of reports whose period ended within the last `days` days
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days: { type: integer }
+                  reports: { type: integer }
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sourceIp: { type: string }
+                        messages: { type: integer }
+                        dkimAligned: { type: integer }
+                        spfAligned: { type: integer }
+                        quarantined: { type: integer }
+                        rejected: { type: integer }
+                        reporters: { type: array, items: { type: string } }
+                        headerFroms: { type: array, items: { type: string } }
   /organizations/{orgId}/api-keys:
     get:
       tags: [integrations]

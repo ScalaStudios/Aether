@@ -9,6 +9,7 @@ DB_NAME="${AETHER_DB_NAME:-aether}"
 sed -i \
   -e "s|__HOSTNAME__|${AETHER_MAIL_HOSTNAME}|" \
   -e "s|__RELAYHOST__|${AETHER_RELAYHOST:-}|" \
+  -e "s|__REPORTS__|${AETHER_REPORT_LMTP:-api:2424}|" \
   /etc/postfix/main.cf
 
 install -d -m 0750 -o root -g postfix /etc/postfix/pgsql

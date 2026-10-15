@@ -202,7 +202,7 @@ func (s *Server) expectedRecords(d *domain) []dnsRecord {
 		{Type: "MX", Name: d.Name, Value: "10 " + s.cfg.MailHostname + ".", Purpose: "mx"},
 		{Type: "TXT", Name: d.Name, Value: "v=spf1 mx -all", Purpose: "spf"},
 		{Type: "TXT", Name: d.DKIMSelector + "._domainkey." + d.Name, Value: d.DKIMRecord, Purpose: "dkim"},
-		{Type: "TXT", Name: "_dmarc." + d.Name, Value: "v=DMARC1; p=quarantine; adkim=s; aspf=s", Purpose: "dmarc"},
+		{Type: "TXT", Name: "_dmarc." + d.Name, Value: "v=DMARC1; p=quarantine; adkim=s; aspf=s; rua=mailto:dmarc-reports@" + d.Name, Purpose: "dmarc"},
 		{Type: "CNAME", Name: "mta-sts." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "mta-sts-host"},
 		{Type: "TXT", Name: "_mta-sts." + d.Name, Value: "v=STSv1; id=" + s.mtaSTSPolicyID(), Purpose: "mta-sts"},
 		{Type: "TXT", Name: "_smtp._tls." + d.Name, Value: "v=TLSRPTv1; rua=mailto:postmaster@" + d.Name, Purpose: "tls-rpt"},

@@ -83,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/domains/{domainId}", s.deleteDomain)
 	authed("GET /api/v1/domains/{domainId}/dns", s.domainDNS)
 	authed("POST /api/v1/domains/{domainId}/verify", s.verifyDomain)
+	authed("GET /api/v1/domains/{domainId}/dmarc", s.domainDMARC)
 
 	authed("GET /api/v1/organizations/{orgId}/mailboxes", s.listMailboxes)
 	authed("POST /api/v1/organizations/{orgId}/mailboxes", s.createMailbox)

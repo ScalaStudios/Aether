@@ -8,6 +8,7 @@ spec:
   ports:
     - { name: http, port: 8080, targetPort: 8080 }
     - { name: metrics, port: 9090, targetPort: 9090 }
+    - { name: reports, port: 2424, targetPort: 2424 }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -51,6 +52,7 @@ spec:
           ports:
             - { name: http, containerPort: 8080 }
             - { name: metrics, containerPort: 9090 }
+            - { name: reports, containerPort: 2424 }
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 10

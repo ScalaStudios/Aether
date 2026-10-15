@@ -129,6 +129,12 @@ func serve(log *slog.Logger) error {
 		}()
 		defer metrics.Close()
 	}
+	reports := srv.ReportServer(cfg.ReportListen)
+	go func() {
+		log.Info("report receiver listening", "addr", cfg.ReportListen)
+		errCh <- reports.ListenAndServe()
+	}()
+	defer reports.Close()
 	go func() {
 		log.Info("aether api listening", "addr", cfg.Listen, "public_url", cfg.PublicURL.String())
 		errCh <- httpServer.ListenAndServe()

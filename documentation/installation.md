@@ -101,6 +101,10 @@ To turn MTA-STS on for a domain, publish the three records from the domain page:
 
 The policy starts in `testing` mode: senders report failures but still deliver. Once the mail certificate is trusted and the TLS reports show no failures, set `AETHER_MTA_STS_MODE=enforce` in `.env`, restart the API, and update the `_mta-sts` record with the new id.
 
+### DMARC reports
+
+The DMARC record that Aether suggests asks receivers such as Google and Microsoft to send daily aggregate reports to `dmarc-reports@<domain>`. Every verified domain accepts mail at that address without a mailbox. Postfix hands the reports to the API, which unpacks the gzip, zip, or XML attachment and stores the results. The domain page then shows, for each sending IP address, how many messages passed DKIM and SPF alignment and how many receivers quarantined or rejected. Use this to find services that send as your domain but are not covered by SPF or DKIM before you tighten the policy.
+
 DANE (TLSA records) is not published, because it needs DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 
 ## Outbound relay

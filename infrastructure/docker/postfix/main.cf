@@ -21,6 +21,8 @@ virtual_mailbox_maps = pgsql:/etc/postfix/pgsql/mailboxes.cf
 virtual_alias_domains = $myhostname
 virtual_alias_maps = pgsql:/etc/postfix/pgsql/aliases.cf, tcp:127.0.0.1:10002
 virtual_transport = lmtp:inet:dovecot:24
+relay_domains = aether-reports.internal
+transport_maps = inline:{ aether-reports.internal=lmtp:inet:__REPORTS__ }
 smtpd_sender_login_maps = pgsql:/etc/postfix/pgsql/senders.cf
 sender_canonical_maps = pgsql:/etc/postfix/pgsql/hosted-senders.cf, tcp:127.0.0.1:10001
 sender_canonical_classes = envelope_sender

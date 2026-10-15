@@ -1,13 +1,18 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +154,45 @@ func TestWebhookSignatureMatchesVerifier(t *testing.T) {
 	secret, body, now := []byte("whsec_x"), []byte(`{"type":"webhook.test"}`), time.Now()
 	if !verifySignature(signWebhook(secret, body, now), body, secret, now) {
 		t.Fatal("webhook signature does not verify")
+	}
+}
+
+const sampleDMARC = `<?xml version="1.0" encoding="UTF-8" ?>
+<feedback>
+  <report_metadata><org_name>google.com</org_name><report_id>123456789</report_id>
+    <date_range><begin>1792022400</begin><end>1792108799</end></date_range></report_metadata>
+  <policy_published><domain>example.com</domain><p>quarantine</p></policy_published>
+  <record><row><source_ip>31.77.212.35</source_ip><count>12</count>
+    <policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated></row>
+    <identifiers><header_from>example.com</header_from></identifiers></record>
+  <record><row><source_ip>203.0.113.9</source_ip><count>3</count>
+    <policy_evaluated><disposition>quarantine</disposition><dkim>fail</dkim><spf>fail</spf></policy_evaluated></row>
+    <identifiers><header_from>example.com</header_from></identifiers></record>
+</feedback>`
+
+func TestParseDMARCReportAttachments(t *testing.T) {
+	var gz, zipped bytes.Buffer
+	gw := gzip.NewWriter(&gz)
+	gw.Write([]byte(sampleDMARC))
+	gw.Close()
+	zw := zip.NewWriter(&zipped)
+	f, _ := zw.Create("google.com!example.com!1792022400!1792108799.xml")
+	f.Write([]byte(sampleDMARC))
+	zw.Close()
+	for name, attachment := range map[string][]byte{"gzip": gz.Bytes(), "zip": zipped.Bytes(), "plain": []byte(sampleDMARC)} {
+		msg := "From: noreply-dmarc-support@google.com\r\nTo: dmarc-reports@example.com\r\nSubject: Report domain: example.com\r\nMIME-Version: 1.0\r\n" +
+			"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nThis is a report.\r\n" +
+			"--b\r\nContent-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(attachment) + "\r\n--b--\r\n"
+		reports, err := parseDMARCMessage(strings.NewReader(msg))
+		if err != nil || len(reports) != 1 {
+			t.Fatalf("%s: %v %d", name, err, len(reports))
+		}
+		fb := reports[0]
+		if fb.Metadata.OrgName != "google.com" || fb.Policy.Domain != "example.com" || len(fb.Records) != 2 || fb.Records[1].Row.Count != 3 || fb.Records[0].Row.Evaluated.DKIM != "pass" {
+			t.Fatalf("%s: unexpected report %+v", name, fb)
+		}
+	}
+	if _, err := parseDMARCMessage(strings.NewReader("From: a@b.c\r\nSubject: hi\r\n\r\nhello\r\n")); err == nil {
+		t.Fatal("a plain message was accepted as a report")
 	}
 }
