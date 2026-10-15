@@ -27,6 +27,7 @@ var apiKeyRoutes = map[string]string{
 	"DELETE /api/v1/domains/{domainId}":            "domains",
 	"GET /api/v1/domains/{domainId}/dns":           "domains",
 	"POST /api/v1/domains/{domainId}/verify":       "domains",
+	"GET /api/v1/domains/{domainId}/dmarc":         "domains",
 	"GET /api/v1/organizations/{orgId}/mailboxes":  "mailboxes",
 	"POST /api/v1/organizations/{orgId}/mailboxes": "mailboxes",
 	"PATCH /api/v1/mailboxes/{mailboxId}":          "mailboxes",
