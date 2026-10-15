@@ -7,6 +7,7 @@ import { cn } from "cn"
 
 import { EventDialog, type EventSelection } from "@/components/calendar/event-dialog"
 import { IconButton } from "@/components/icon-button"
+import { SegmentedControl } from "@/components/segmented-control"
 import { Spinner } from "@/components/spinner"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
@@ -122,20 +123,15 @@ function Calendar({ now }: { now: Date }) {
           {view === "week" ? rangeFormat.formatRange(start, addDays(start, 6)) : monthFormat.format(day)}
         </h1>
         {events.isFetching && <Spinner />}
-        <div role="group" aria-label="View" className="flex gap-1 rounded-lg border border-strong p-1">
-          {(["week", "month"] as const).map((v) => (
-            <Button
-              key={v}
-              variant="quiet"
-              size="sm"
-              aria-pressed={view === v}
-              className={cn("max-md:min-h-11", view === v && "bg-muted text-foreground")}
-              onClick={() => setView(v)}
-            >
-              {v === "week" ? "Week" : "Month"}
-            </Button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="View"
+          options={[
+            { value: "week", label: "Week" },
+            { value: "month", label: "Month" },
+          ]}
+          value={view}
+          onChange={setView}
+        />
         <Button onClick={newEvent}>
           <Plus aria-hidden />
           New event

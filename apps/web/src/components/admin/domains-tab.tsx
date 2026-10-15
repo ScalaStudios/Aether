@@ -1,8 +1,8 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronRight, Globe, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ChartColumn, ChevronRight, Globe, Inbox, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -13,6 +13,7 @@ import { CopyButton } from "@/components/copy-button"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { SectionHeader } from "@/components/page-header"
+import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -20,9 +21,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
-import { formatDate } from "@/lib/format"
+import { formatDate, formatPercent } from "@/lib/format"
 import { domainsQuery } from "@/lib/queries"
-import type { DNSRecord, DNSStatus, Domain } from "@/lib/types"
+import type { DMARCSource, DMARCSummary, DNSRecord, DNSStatus, Domain } from "@/lib/types"
 
 const schema = z.object({
   name: z
@@ -50,6 +51,23 @@ const purposes: Record<DNSRecord["purpose"], string> = {
   "mta-sts-host": "MTA-STS policy host",
   "mta-sts": "MTA-STS",
   "tls-rpt": "TLS reporting",
+}
+
+const periods = [7, 30, 90].map((days) => ({ value: days, label: `${days} days` }))
+
+function plural(count: number, noun: string) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`
+}
+
+function aligned(s: DMARCSource) {
+  return Math.max(s.dkimAligned, s.spfAligned)
+}
+
+function SourceStatusBadge({ source }: { source: DMARCSource }) {
+  const passed = aligned(source)
+  if (passed >= source.messages) return <StatusBadge tone="success">Passing</StatusBadge>
+  if (passed === 0) return <StatusBadge tone="danger">Failing</StatusBadge>
+  return <StatusBadge tone="warning">Partly failing</StatusBadge>
 }
 
 function DomainVerifiedBadge({ domain }: { domain: Domain }) {
@@ -145,6 +163,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
   const domain = useQuery({ queryKey: ["domain", domainId], queryFn: () => api<Domain>(`/domains/${domainId}`) })
   const dns = useQuery({ queryKey: ["dns", domainId], queryFn: () => api<{ records: DNSRecord[] }>(`/domains/${domainId}/dns`) })
   const [deleting, setDeleting] = useState(false)
+  const [reporting, setReporting] = useState(false)
 
   const verify = useMutation({
     mutationFn: () => api<Domain>(`/domains/${domainId}/verify`, { method: "POST" }),
@@ -221,6 +240,10 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
             Delete domain
           </Button>
           <div className="flex flex-col-reverse gap-3 sm:flex-row">
+            <Button variant="secondary" onClick={() => setReporting(true)} disabled={!d}>
+              <ChartColumn aria-hidden />
+              DMARC reports
+            </Button>
             <Button variant="secondary" onClick={() => dns.refetch()} loading={dns.isRefetching}>
               <RefreshCw aria-hidden />
               Check DNS again
@@ -232,6 +255,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
             )}
           </div>
         </DialogFooter>
+        {d && reporting && <DmarcDialog domainId={domainId} domainName={d.name} onClose={() => setReporting(false)} />}
         {d && (
           <ConfirmDialog
             open={deleting}
@@ -244,6 +268,81 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
             onConfirm={() => remove.mutate()}
           />
         )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DmarcDialog({ domainId, domainName, onClose }: { domainId: string; domainName: string; onClose: () => void }) {
+  const [days, setDays] = useState(30)
+  const dmarc = useQuery({
+    queryKey: ["dmarc", domainId, days],
+    queryFn: () => api<DMARCSummary>(`/domains/${domainId}/dmarc?days=${days}`),
+    placeholderData: keepPreviousData,
+  })
+  const sources = dmarc.data?.sources ?? []
+  const messages = sources.reduce((n, s) => n + s.messages, 0)
+  const passed = sources.reduce((n, s) => n + aligned(s), 0)
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="grid-cols-1 sm:max-w-[960px]">
+        <DialogHeader>
+          <DialogTitle>DMARC reports</DialogTitle>
+          <DialogDescription>
+            Aggregate reports receivers sent about mail from <span className="font-mono">{domainName}</span>, grouped by sending IP.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-fg-secondary tabular-nums">
+            {dmarc.data && sources.length > 0 && `${plural(dmarc.data.reports, "report")} · ${plural(messages, "message")} · about ${formatPercent(passed, messages)} passed DMARC`}
+          </p>
+          <SegmentedControl label="Period" options={periods} value={days} onChange={setDays} />
+        </div>
+        <QueryView
+          query={dmarc}
+          isEmpty={(data) => data.sources.length === 0}
+          empty={
+            <EmptyState
+              icon={Inbox}
+              title="No reports yet"
+              description={`Receivers usually send them once a day after the DMARC record includes rua=mailto:dmarc-reports@${domainName}.`}
+            />
+          }
+        >
+          {(data) => (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Source IP</TableHead>
+                  <TableHead className="text-right">Messages</TableHead>
+                  <TableHead className="text-right">DKIM aligned</TableHead>
+                  <TableHead className="text-right">SPF aligned</TableHead>
+                  <TableHead className="text-right">Quarantined / rejected</TableHead>
+                  <TableHead>Reporters</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.sources.map((s) => (
+                  <TableRow key={s.sourceIp}>
+                    <TableCell className="font-mono text-sm">{s.sourceIp}</TableCell>
+                    <TableCell className="text-right tabular-nums">{s.messages}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPercent(s.dkimAligned, s.messages)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPercent(s.spfAligned, s.messages)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {s.quarantined} / {s.rejected}
+                    </TableCell>
+                    <TableCell className="text-sm text-fg-secondary">{s.reporters.join(", ")}</TableCell>
+                    <TableCell>
+                      <SourceStatusBadge source={s} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </QueryView>
       </DialogContent>
     </Dialog>
   )

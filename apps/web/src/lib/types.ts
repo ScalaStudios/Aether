@@ -59,6 +59,23 @@ export interface DNSRecord {
   found: string[]
 }
 
+export interface DMARCSource {
+  sourceIp: string
+  messages: number
+  dkimAligned: number
+  spfAligned: number
+  quarantined: number
+  rejected: number
+  reporters: string[]
+  headerFroms: string[]
+}
+
+export interface DMARCSummary {
+  days: number
+  reports: number
+  sources: DMARCSource[]
+}
+
 export interface Mailbox {
   id: string
   orgId: string

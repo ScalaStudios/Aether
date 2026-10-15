@@ -7,7 +7,6 @@ import { useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
-import { cn } from "cn"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { CopyField } from "@/components/copy-button"
@@ -15,6 +14,7 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
+import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
@@ -212,21 +212,12 @@ function APIKeys({ orgId }: { orgId: string }) {
                   {resources.map((r) => (
                     <div key={r.value} className="flex items-center justify-between gap-4">
                       <span>{r.label}</span>
-                      <div role="group" aria-label={`${r.label} access`} className="flex gap-1 rounded-lg border border-strong p-1">
-                        {r.levels.map((level) => (
-                          <Button
-                            key={level}
-                            type="button"
-                            variant="quiet"
-                            size="sm"
-                            aria-pressed={field.value[r.value] === level}
-                            className={cn("max-md:min-h-11", field.value[r.value] === level && "bg-muted text-foreground")}
-                            onClick={() => field.onChange({ ...field.value, [r.value]: level })}
-                          >
-                            {levelLabels[level]}
-                          </Button>
-                        ))}
-                      </div>
+                      <SegmentedControl
+                        label={`${r.label} access`}
+                        options={r.levels.map((level) => ({ value: level, label: levelLabels[level] }))}
+                        value={field.value[r.value]}
+                        onChange={(level) => field.onChange({ ...field.value, [r.value]: level })}
+                      />
                     </div>
                   ))}
                   {fieldState.error && (

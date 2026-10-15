@@ -16,6 +16,10 @@ export function formatBytes(bytes: number) {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
+export function formatPercent(part: number, total: number) {
+  return `${total ? Math.round((part / total) * 100) : 0}%`
+}
+
 export function formatDateTime(iso: string) {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso))
 }
