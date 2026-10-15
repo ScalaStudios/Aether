@@ -36,3 +36,15 @@ export function formatListDate(iso: string) {
     year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
   }).format(date)
 }
+
+export function formatShortDateTime(date: Date) {
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date)
+}
+
+export function formatWhen(date: Date) {
+  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date)
+  const days = Math.round((new Date(date).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000)
+  if (days === 0) return `Today, ${time}`
+  if (days === 1) return `Tomorrow, ${time}`
+  return formatShortDateTime(date)
+}

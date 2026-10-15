@@ -1,7 +1,7 @@
 "use client"
 
 import type { UseQueryResult } from "@tanstack/react-query"
-import { PenSquare } from "lucide-react"
+import { CalendarClock, PenSquare, type LucideIcon } from "lucide-react"
 import { cn } from "cn"
 
 import { ErrorState, RowsSkeleton } from "@/components/states"
@@ -9,6 +9,29 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { folderIcons, folderLabel } from "@/lib/mail"
 import type { Folder, Mailbox } from "@/lib/types"
+
+function FolderButton({ icon: Icon, label, count, countLabel, active, onClick }: { icon: LucideIcon; label: string; count: number; countLabel: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+      className={cn(
+        "flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-[15px] font-medium text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground max-md:min-h-11",
+        active && "bg-muted text-foreground"
+      )}
+    >
+      <Icon aria-hidden className={cn("size-4 shrink-0 text-fg-tertiary", active && "text-ember")} />
+      <span className="flex-1 truncate">{label}</span>
+      {count > 0 && (
+        <span className="text-xs font-semibold tabular-nums text-foreground">
+          {count}
+          <span className="sr-only"> {countLabel}</span>
+        </span>
+      )}
+    </button>
+  )
+}
 
 export function FolderPane({
   className,
@@ -18,6 +41,9 @@ export function FolderPane({
   folders,
   folder,
   onFolderChange,
+  scheduled = 0,
+  scheduledActive = false,
+  onScheduled,
   onCompose,
 }: {
   className?: string
@@ -27,6 +53,9 @@ export function FolderPane({
   folders: UseQueryResult<Folder[]>
   folder: string
   onFolderChange: (name: string) => void
+  scheduled?: number
+  scheduledActive?: boolean
+  onScheduled?: () => void
   onCompose: () => void
 }) {
   return (
@@ -57,31 +86,22 @@ export function FolderPane({
         ) : folders.isError ? (
           <ErrorState error={folders.error} onRetry={() => folders.refetch()} className="py-6" />
         ) : (
-          folders.data.map((f) => {
-            const Icon = folderIcons[f.specialUse]
-            const active = f.name === folder
-            return (
-              <button
+          <>
+            {folders.data.map((f) => (
+              <FolderButton
                 key={f.name}
-                type="button"
-                aria-current={active ? "page" : undefined}
+                icon={folderIcons[f.specialUse]}
+                label={folderLabel(f)}
+                count={f.unread}
+                countLabel="unread"
+                active={!scheduledActive && f.name === folder}
                 onClick={() => onFolderChange(f.name)}
-                className={cn(
-                  "flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-[15px] font-medium text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground max-md:min-h-11",
-                  active && "bg-muted text-foreground"
-                )}
-              >
-                <Icon aria-hidden className={cn("size-4 shrink-0 text-fg-tertiary", active && "text-ember")} />
-                <span className="flex-1 truncate">{folderLabel(f)}</span>
-                {f.unread > 0 && (
-                  <span className="text-xs font-semibold tabular-nums text-foreground">
-                    {f.unread}
-                    <span className="sr-only"> unread</span>
-                  </span>
-                )}
-              </button>
-            )
-          })
+              />
+            ))}
+            {scheduled > 0 && onScheduled && (
+              <FolderButton icon={CalendarClock} label="Scheduled" count={scheduled} countLabel="scheduled" active={scheduledActive} onClick={onScheduled} />
+            )}
+          </>
         )}
       </nav>
     </aside>

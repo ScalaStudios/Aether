@@ -1,14 +1,14 @@
 "use client"
 
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
-import { Flag, FolderOpen, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
+import { AlarmClock, Flag, FolderOpen, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { cn } from "cn"
 
 import { IconButton } from "@/components/icon-button"
 import { SearchInput } from "@/components/search-input"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
-import { formatListDate } from "@/lib/format"
+import { formatListDate, formatWhen } from "@/lib/format"
 import { folderIcons, folderLabel, senderLabel } from "@/lib/mail"
 import type { Folder, MessagePage, MessageSummary } from "@/lib/types"
 
@@ -26,6 +26,7 @@ export function MessageList({
   onShowFolders,
   onCompose,
   onHelp,
+  wakeTimes,
 }: {
   className?: string
   folder: Pick<Folder, "name" | "specialUse">
@@ -40,6 +41,7 @@ export function MessageList({
   onShowFolders: () => void
   onCompose: () => void
   onHelp: () => void
+  wakeTimes?: Map<number, string>
 }) {
   const sentinel = useRef<HTMLDivElement>(null)
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
@@ -73,7 +75,7 @@ export function MessageList({
           </IconButton>
           <h1 className="flex-1 truncate text-h3">{folderLabel(folder)}</h1>
           {total !== undefined && (
-            <span className="text-xs text-fg-tertiary tabular-nums">{total} messages</span>
+            <span className="text-xs text-fg-tertiary tabular-nums">{total} {total === 1 ? "message" : "messages"}</span>
           )}
           <IconButton label="New message" size="icon-sm" className="lg:hidden" onClick={onCompose}>
             <PenSquare />
@@ -131,6 +133,12 @@ export function MessageList({
                     {m.hasAttachments && <Paperclip aria-label="Has attachments" className="size-3.5 shrink-0 text-fg-tertiary" />}
                     {m.flagged && <Flag aria-label="Flagged" className="size-3.5 shrink-0 fill-current text-ember" />}
                   </span>
+                  {wakeTimes?.has(m.uid) && (
+                    <span className="flex items-center gap-1 text-xs text-fg-tertiary">
+                      <AlarmClock aria-hidden className="size-3.5" />
+                      Wakes {formatWhen(new Date(wakeTimes.get(m.uid) ?? ""))}
+                    </span>
+                  )}
                 </button>
               </li>
             ))}

@@ -1,11 +1,12 @@
 "use client"
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query"
-import { ArrowLeft, ChevronDown, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
+import { AlarmClock, AlarmClockOff, ArrowLeft, ChevronDown, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
 import { cn } from "cn"
 import { useState } from "react"
 
 import { IconButton } from "@/components/icon-button"
+import { LaterMenu } from "@/components/mail/later-menu"
 import { EmptyState, ErrorState } from "@/components/states"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -112,6 +113,8 @@ export function ReadingPane({
   onFlags,
   onMove,
   onDelete,
+  onSnooze,
+  onUnsnooze,
   deleting,
 }: {
   className?: string
@@ -126,6 +129,8 @@ export function ReadingPane({
   onFlags: (flags: { seen?: boolean; flagged?: boolean }) => void
   onMove: (to: string) => void
   onDelete: () => void
+  onSnooze: (until: Date) => void
+  onUnsnooze?: () => void
   deleting: boolean
 }) {
   if (!selected) {
@@ -186,6 +191,17 @@ export function ReadingPane({
               })}
           </DropdownMenuContent>
         </DropdownMenu>
+        {onUnsnooze ? (
+          <IconButton label="Unsnooze" disabled={!m || deleting} onClick={onUnsnooze}>
+            <AlarmClockOff />
+          </IconButton>
+        ) : (
+          <LaterMenu label="Snooze" submitLabel="Snooze" laterToday disabled={!m || deleting} onPick={onSnooze}>
+            <Button variant="quiet" size="icon" aria-label="Snooze">
+              <AlarmClock />
+            </Button>
+          </LaterMenu>
+        )}
         <IconButton label="Delete" disabled={!m || deleting} onClick={onDelete}>
           <Trash2 />
         </IconButton>

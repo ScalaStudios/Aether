@@ -175,6 +175,7 @@ export interface OutgoingMessage {
   attachments?: { filename: string; contentType: string; data: string }[]
   forwardFrom?: { folder: string; uid: number; parts?: string[] }
   draftUid?: number
+  sendAt?: string
 }
 
 export interface SavedDraft {
@@ -284,3 +285,17 @@ export interface CalendarEvent {
 }
 
 export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart"> & { repeat: Exclude<Repeat, "custom"> }
+
+export interface ScheduledMessage {
+  id: string
+  sendAt: string
+  subject: string
+  to: Address[]
+  error: string | null
+}
+
+export interface SnoozedMessage {
+  uid: number
+  until: string
+  returnFolder: string
+}

@@ -11,15 +11,19 @@ import { Composer } from "@/components/mail/composer"
 import { FolderPane } from "@/components/mail/folder-pane"
 import { MessageList } from "@/components/mail/message-list"
 import { ReadingPane } from "@/components/mail/reading-pane"
+import { ScheduledList } from "@/components/mail/scheduled-list"
 import { ShortcutsDialog } from "@/components/mail/shortcuts-dialog"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api"
+import { toRFC3339 } from "@/lib/calendar"
+import { formatShortDateTime } from "@/lib/format"
 import { buildDraft, type ComposeMode, type Draft } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { Message, MessagePage, MessageSummary } from "@/lib/types"
+import type { Message, MessagePage, MessageSummary, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
+const SNOOZED = "Snoozed"
 
 type Flags = { seen?: boolean; flagged?: boolean }
 
@@ -46,6 +50,22 @@ export function MailView() {
   })
   const [folderName, setFolderName] = useState<string | null>(null)
   const folder = folderName ?? folders.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX"
+
+  const scheduled = useQuery({
+    queryKey: ["scheduled", mbx],
+    queryFn: () => api<ScheduledMessage[]>(`/mailboxes/${mbx}/scheduled`),
+    enabled: !!mailbox,
+    refetchInterval: POLL,
+  })
+  const [scheduledView, setScheduledView] = useState(false)
+  const showScheduled = scheduledView && !!scheduled.data?.length
+
+  const snoozed = useQuery({
+    queryKey: ["snoozed", mbx],
+    queryFn: () => api<SnoozedMessage[]>(`/mailboxes/${mbx}/snoozed`),
+    enabled: !!mailbox && folder === SNOOZED,
+  })
+  const wakeTimes = new Map(snoozed.data?.map((s) => [s.uid, s.until]))
 
   const [search, setSearch] = useState("")
   const q = useDebouncedValue(search.trim(), 300)
@@ -113,30 +133,55 @@ export function MailView() {
   })
 
   const remove = useMutation({
-    mutationFn: ({ uid, to }: { uid: number; to?: string }) =>
-      to
-        ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder }, body: { to } })
-        : api(`/mailboxes/${mbx}/messages/${uid}`, { method: "DELETE", query: { folder } }),
-    onSuccess: (_d, { uid, to }) => {
+    mutationFn: ({ uid, to, until, unsnooze }: { uid: number; to?: string; until?: Date; unsnooze?: boolean }) =>
+      unsnooze
+        ? api(`/mailboxes/${mbx}/snoozed/${uid}`, { method: "DELETE" })
+        : until
+          ? api(`/mailboxes/${mbx}/messages/${uid}/snooze`, { method: "POST", query: { folder }, body: { until: toRFC3339(until) } })
+          : to
+            ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder }, body: { to } })
+            : api(`/mailboxes/${mbx}/messages/${uid}`, { method: "DELETE", query: { folder } }),
+    onSuccess: (_d, { uid, to, until, unsnooze }) => {
       const index = summaries.findIndex((m) => m.uid === uid)
       const next = summaries[index + 1] ?? summaries[index - 1]
       patchCaches(uid, null)
       if (selectedUid === uid) setSelectedUid(next?.uid ?? null)
-      toast.success(to ? `Moved to ${to}` : "Message deleted")
+      toast.success(
+        unsnooze
+          ? `Moved back to ${snoozed.data?.find((s) => s.uid === uid)?.returnFolder ?? "its folder"}`
+          : until
+            ? `Snoozed until ${formatShortDateTime(until)}`
+            : to
+              ? `Moved to ${to}`
+              : "Message deleted"
+      )
       qc.invalidateQueries({ queryKey: ["folders", mbx] })
       qc.invalidateQueries({ queryKey: ["messages", mbx] })
+      qc.invalidateQueries({ queryKey: ["snoozed", mbx] })
+    },
+  })
+
+  async function openDraft(uid: number, draftFolder: string) {
+    if (!mailbox) return
+    const saved = await qc.fetchQuery({
+      queryKey: ["message", mbx, draftFolder, uid],
+      queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${uid}`, { query: { folder: draftFolder } }),
+    })
+    setCompose({ key: Date.now(), draft: buildDraft("draft", saved, mailbox.address, draftFolder) })
+  }
+
+  const cancelScheduled = useMutation({
+    mutationFn: (id: string) => api<Omit<SavedDraft, "attachments">>(`/mailboxes/${mbx}/scheduled/${id}`, { method: "DELETE" }),
+    onSuccess: async (draft) => {
+      qc.invalidateQueries({ queryKey: ["scheduled", mbx] })
+      qc.invalidateQueries({ queryKey: ["folders", mbx] })
+      qc.invalidateQueries({ queryKey: ["messages", mbx] })
+      await openDraft(draft.uid, draft.folder)
     },
   })
 
   async function open(summary: MessageSummary) {
-    if (mailbox && isDrafts) {
-      const saved = await qc.fetchQuery({
-        queryKey: ["message", mbx, folder, summary.uid],
-        queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${summary.uid}`, { query: { folder } }),
-      })
-      setCompose({ key: Date.now(), draft: buildDraft("draft", saved, mailbox.address, folder) })
-      return
-    }
+    if (isDrafts) return openDraft(summary.uid, folder)
     setSelectedUid(summary.uid)
     if (!summary.seen) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
   }
@@ -156,12 +201,14 @@ export function MailView() {
 
   function selectFolder(name: string) {
     setFolderName(name)
+    setScheduledView(false)
     setSelectedUid(null)
     setShowFolders(false)
   }
 
   function selectMailbox(id: string) {
     setMailboxId(id)
+    setScheduledView(false)
     setFolderName(null)
     setSelectedUid(null)
   }
@@ -228,23 +275,41 @@ export function MailView() {
         folders={folders}
         folder={folder}
         onFolderChange={selectFolder}
+        scheduled={scheduled.data?.length}
+        scheduledActive={showScheduled}
+        onScheduled={() => {
+          setScheduledView(true)
+          setSelectedUid(null)
+          setShowFolders(false)
+        }}
         onCompose={() => startCompose("new")}
       />
-      <MessageList
-        className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders || reading ? "hidden" : "flex")}
-        folder={folders.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }}
-        search={search}
-        onSearchChange={setSearch}
-        searchRef={searchRef}
-        q={q}
-        query={messages}
-        summaries={summaries}
-        selectedUid={selectedUid}
-        onOpen={open}
-        onShowFolders={() => setShowFolders(true)}
-        onCompose={() => startCompose("new")}
-        onHelp={() => setHelpOpen(true)}
-      />
+      {showScheduled ? (
+        <ScheduledList
+          className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders ? "hidden" : "flex")}
+          messages={scheduled.data ?? []}
+          cancelling={cancelScheduled.isPending ? cancelScheduled.variables : undefined}
+          onCancel={(id) => cancelScheduled.mutate(id)}
+          onShowFolders={() => setShowFolders(true)}
+        />
+      ) : (
+        <MessageList
+          className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders || reading ? "hidden" : "flex")}
+          folder={folders.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }}
+          search={search}
+          onSearchChange={setSearch}
+          searchRef={searchRef}
+          q={q}
+          query={messages}
+          summaries={summaries}
+          selectedUid={selectedUid}
+          onOpen={open}
+          onShowFolders={() => setShowFolders(true)}
+          onCompose={() => startCompose("new")}
+          onHelp={() => setHelpOpen(true)}
+          wakeTimes={folder === SNOOZED ? wakeTimes : undefined}
+        />
+      )}
       <ReadingPane
         className={cn("min-w-0 flex-1 md:flex", reading ? "flex" : "hidden")}
         mailboxId={mbx}
@@ -258,6 +323,8 @@ export function MailView() {
         onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}
         onMove={(to) => selectedUid !== null && remove.mutate({ uid: selectedUid, to })}
         onDelete={() => selectedUid !== null && remove.mutate({ uid: selectedUid })}
+        onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
+        onUnsnooze={folder === SNOOZED ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
         deleting={remove.isPending}
       />
       {compose && <Composer key={compose.key} mailbox={mailbox} draft={compose.draft} onClose={() => setCompose(null)} />}

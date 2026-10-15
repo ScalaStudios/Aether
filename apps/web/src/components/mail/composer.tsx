@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
-import { Bold, Italic, Link2, List, ListOrdered, Paperclip, Send, X } from "lucide-react"
+import { Bold, ChevronDown, Italic, Link2, List, ListOrdered, Paperclip, Send, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -12,12 +12,14 @@ import { z } from "zod"
 
 import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"
+import { LaterMenu } from "@/components/mail/later-menu"
 import { RecipientInput } from "@/components/recipient-input"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { api } from "@/lib/api"
-import { formatAddress, formatBytes, formatListDate } from "@/lib/format"
+import { toRFC3339 } from "@/lib/calendar"
+import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
 import type { Draft } from "@/lib/mail"
 import type { Attachment, Mailbox, OutgoingMessage, SavedDraft } from "@/lib/types"
 
@@ -198,12 +200,13 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
   }, [changes, save])
 
   const send = useMutation({
-    mutationFn: async (values: Values) => {
+    mutationFn: async ({ values, sendAt }: { values: Values; sendAt?: Date }) => {
       await pendingSave.current
-      return api(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: await payload(values, files) })
+      return api(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...(await payload(values, files)), sendAt: sendAt && toRFC3339(sendAt) } })
     },
-    onSuccess: () => {
-      toast.success("Message sent")
+    onSuccess: (_d, { sendAt }) => {
+      toast.success(sendAt ? `Scheduled for ${formatShortDateTime(sendAt)}` : "Message sent")
+      qc.invalidateQueries({ queryKey: ["scheduled", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
       onClose()
@@ -230,10 +233,11 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
     onClose()
   }
 
-  const submit = form.handleSubmit((values) => {
-    if (!editor) return
-    send.mutate(values)
-  })
+  const submit = (sendAt?: Date) =>
+    form.handleSubmit((values) => {
+      if (!editor) return
+      send.mutate({ values, sendAt })
+    })
 
   const recipientField = (name: "to" | "cc" | "bcc", label: string) => (
     <Controller
@@ -255,7 +259,7 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
           <SheetDescription>From {formatAddress({ name: mailbox.displayName, address: mailbox.address })}</SheetDescription>
         </SheetHeader>
         <form
-          onSubmit={submit}
+          onSubmit={submit()}
           noValidate
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes("Files")) return
@@ -325,10 +329,17 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
             <Button type="button" variant="secondary" loading={discard.isPending} onClick={() => discard.mutate()}>
               Discard
             </Button>
-            <Button type="submit" loading={send.isPending}>
-              <Send aria-hidden />
-              Send
-            </Button>
+            <div className="flex">
+              <Button type="submit" loading={send.isPending} className="rounded-r-none">
+                <Send aria-hidden />
+                Send
+              </Button>
+              <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending} onPick={(at) => submit(at)()}>
+                <Button type="button" size="icon" aria-label="Schedule send" className="rounded-l-none border-l-ink/20">
+                  <ChevronDown />
+                </Button>
+              </LaterMenu>
+            </div>
           </div>
         </form>
       </SheetContent>
