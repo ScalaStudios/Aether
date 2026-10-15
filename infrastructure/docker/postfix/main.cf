@@ -18,9 +18,12 @@ mailbox_size_limit = 0
 
 virtual_mailbox_domains = pgsql:/etc/postfix/pgsql/domains.cf
 virtual_mailbox_maps = pgsql:/etc/postfix/pgsql/mailboxes.cf
-virtual_alias_maps = pgsql:/etc/postfix/pgsql/aliases.cf
+virtual_alias_domains = $myhostname
+virtual_alias_maps = pgsql:/etc/postfix/pgsql/aliases.cf, tcp:127.0.0.1:10002
 virtual_transport = lmtp:inet:dovecot:24
 smtpd_sender_login_maps = pgsql:/etc/postfix/pgsql/senders.cf
+sender_canonical_maps = pgsql:/etc/postfix/pgsql/hosted-senders.cf, tcp:127.0.0.1:10001
+sender_canonical_classes = envelope_sender
 
 smtpd_tls_chain_files = /tls/privkey.pem, /tls/fullchain.pem
 smtpd_tls_security_level = may

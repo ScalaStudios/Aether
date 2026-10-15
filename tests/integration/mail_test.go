@@ -106,6 +106,9 @@ func TestMailMilestone(t *testing.T) {
 		if bytes.Contains(raw, []byte("with ESMTPSA")) {
 			t.Fatalf("authenticated submission hop leaked into headers:\n%s", raw)
 		}
+		if !bytes.Contains(raw, []byte("Return-Path: <"+alice+">")) {
+			t.Fatalf("sender from a hosted domain was rewritten:\n%s", raw)
+		}
 	})
 
 	t.Run("inbound SMTP from an external sender reaches IMAP", func(t *testing.T) {
@@ -118,7 +121,21 @@ func TestMailMilestone(t *testing.T) {
 			t.Fatalf("alice imap login: %v", err)
 		}
 		defer ic.Close()
-		waitFor(t, "alice to see the inbound message over IMAP", func() bool { return imapFindSubject(t, ic, "INBOX", subject) != nil })
+		var raw []byte
+		waitFor(t, "alice to see the inbound message over IMAP", func() bool {
+			raw = imapFindSubject(t, ic, "INBOX", subject)
+			return raw != nil
+		})
+		if !bytes.Contains(raw, []byte("Return-Path: <SRS0=")) || !bytes.Contains(raw, []byte("=external.example=sender@")) {
+			t.Fatalf("external envelope sender was not rewritten with SRS:\n%s", raw)
+		}
+	})
+
+	t.Run("forged SRS bounce addresses are refused", func(t *testing.T) {
+		mailHost := env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test")
+		if err := submit(t, smtpAddr, "", "", "", []string{"SRS0=abcd=AB=elsewhere.example=victim@" + mailHost}, rfc822("mailer-daemon@external.example", "victim@elsewhere.example", "bounce", "x"), false); err == nil {
+			t.Fatal("a forged SRS address was accepted for relay")
+		}
 	})
 
 	t.Run("webmail send, read, reply, and flags", func(t *testing.T) {

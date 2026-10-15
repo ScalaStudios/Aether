@@ -12,7 +12,7 @@ The project is at **milestone 1**: an administrator can configure a domain, crea
 
 | Area | What exists |
 | --- | --- |
-| Mail transport | **Postfix 3.7**:<br>• Inbound SMTP on port 25.<br>• Submission on 587 (STARTTLS) and 465 (implicit TLS), with SASL authentication through Dovecot.<br>• Recipient validation, aliases, and catch-all, all driven by PostgreSQL.<br>• Sender-login enforcement: a mailbox can only send as itself and as aliases that point to it, in both the envelope and the From header. |
+| Mail transport | **Postfix 3.7**:<br>• Inbound SMTP on port 25.<br>• Submission on 587 (STARTTLS) and 465 (implicit TLS), with SASL authentication through Dovecot.<br>• Recipient validation, aliases, and catch-all, all driven by PostgreSQL.<br>• Sender-login enforcement: a mailbox can only send as itself and as aliases that point to it, in both the envelope and the From header.<br>• SRS for mail that aliases forward to external addresses, so the forwarded copy passes SPF. |
 | Mailbox access | **Dovecot 2.3**:<br>• IMAP on 143 (STARTTLS) and 993 (implicit TLS).<br>• Maildir storage, special-use folders, quotas, and LMTP delivery.<br>• A Sieve rule that files spam into Junk. |
 | Filtering and signing | **Rspamd**:<br>• A milter that scores and filters spam, with DNS blocklists queried through a bundled Unbound resolver.<br>• DKIM signing with per-domain RSA-2048 keys that Aether generates.<br>• ARC signing and outbound rate limiting. |
 | Control plane | **Go API** (`cmd/aether`):<br>• Organizations, domains, mailboxes, aliases, members, and the audit log.<br>• DNS record guidance and a live DNS check, including MTA-STS policies and TLS reporting.<br>• Domain ownership verification. |

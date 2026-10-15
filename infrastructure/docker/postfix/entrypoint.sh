@@ -27,6 +27,11 @@ write_map domains "SELECT 1 FROM mail_domains WHERE name = '%s'"
 write_map mailboxes "SELECT 1 FROM mail_users WHERE address = '%s'"
 write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s'"
 write_map senders "SELECT login FROM mail_senders WHERE sender = '%s'"
+write_map hosted-senders "SELECT '%s' FROM mail_domains WHERE name = '%d'"
+
+srs_secret=/var/spool/postfix/srs.secret
+[ -s "$srs_secret" ] || (umask 077 && head -c 32 /dev/urandom | base64 > "$srs_secret")
+postsrsd -s"$srs_secret" -d"$AETHER_MAIL_HOSTNAME" -l127.0.0.1 -4 -upostsrsd -D
 
 if [ -n "${AETHER_RELAYHOST:-}" ] && [ -n "${AETHER_RELAY_USER:-}" ]; then
   : "${AETHER_RELAY_PASSWORD:?required when AETHER_RELAY_USER is set}"

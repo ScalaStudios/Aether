@@ -129,3 +129,11 @@ There is no benchmark harness yet; it is part of Phase 4. In development, the in
 - The API opens one IMAP connection per request, with no pooling. This is adequate for small installations and will be replaced with a pooled connection per user.
 - Login, OIDC, and webmail send rate limits are fixed one-minute windows counted in Valkey, so they hold across API replicas. If Valkey is unreachable, the API allows the request and logs an error.
 - Forwarding aliases to external addresses do not rewrite the sender (no SRS), so strict SPF at the receiver may reject forwarded mail.
+
+## Sender Rewriting Scheme
+
+An alias can forward to an address at another provider. Postfix relays the forwarded copy with the original envelope sender, so the receiving server would see an SPF failure. To prevent this, Postfix rewrites envelope senders outside the hosted domains to SRS addresses at the mail hostname, using postsrsd. For example, `someone@gmail.com` becomes `SRS0=hash=tt=gmail.com=someone@mail.example.com`. Bounces sent to that address are checked against the hash and routed back to the original sender. Addresses with a forged or expired hash are refused.
+
+Senders from hosted domains are never rewritten, so DMARC alignment of normal outgoing mail is unaffected. Postfix rewrites at the moment it accepts a message, before it knows where the message goes. Mail delivered to local mailboxes therefore also shows an SRS `Return-Path` for external senders. Spam and SPF checks run before the rewrite and see the original sender.
+
+The SRS secret is generated on first start and kept in the Postfix spool volume.
