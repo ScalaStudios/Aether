@@ -9,7 +9,7 @@ import { toast } from "sonner"
 import { z } from "zod"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
-import { CopyButton } from "@/components/copy-button"
+import { CopyButton, CopyField } from "@/components/copy-button"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
@@ -232,12 +232,7 @@ function ClientSettings({ password, username, host }: { password: string; userna
 
   return (
     <div className="flex flex-col gap-4">
-      <Field id="ap-secret" label="Password">
-        <div className="flex items-center gap-2">
-          <Input id="ap-secret" readOnly value={password} className="font-mono" onFocus={(e) => e.currentTarget.select()} />
-          <CopyButton value={password} label="Copy password" />
-        </div>
-      </Field>
+      <CopyField id="ap-secret" label="Password" value={password} copyLabel="Copy password" />
       <dl className="flex flex-col rounded-xl border border-border">
         {rows.map(([label, value]) => (
           <div key={label} className="flex flex-col gap-1 border-b border-border p-4 last:border-b-0 sm:flex-row sm:gap-4">

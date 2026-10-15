@@ -12,6 +12,7 @@ import { AliasesTab } from "@/components/admin/aliases-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
+import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
 import { MembersTab } from "@/components/admin/members-tab"
 import { Field } from "@/components/field"
@@ -41,6 +42,7 @@ const orgTabs = [
   { value: "aliases", label: "Aliases", Component: AliasesTab },
   { value: "members", label: "Members", Component: MembersTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
+  { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]
 
 export function AdminView() {

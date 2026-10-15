@@ -100,6 +100,35 @@ export interface AuditEvent {
   ip?: string
 }
 
+export interface APIKey {
+  id: string
+  name: string
+  prefix: string
+  scopes: string[]
+  createdAt: string
+  lastUsedAt: string | null
+  expiresAt: string | null
+}
+
+export interface Webhook {
+  id: string
+  url: string
+  events: string[]
+  active: boolean
+  createdAt: string
+}
+
+export interface WebhookDelivery {
+  id: string
+  event: string
+  status: "pending" | "delivered" | "failed"
+  attempts: number
+  responseCode: number | null
+  lastError: string | null
+  createdAt: string
+  deliveredAt: string | null
+}
+
 export interface AppPassword {
   id: string
   name: string
