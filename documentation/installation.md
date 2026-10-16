@@ -187,10 +187,16 @@ Rspamd then sends every attachment to ClamAV and rejects infected mail during th
 
 ## Upgrades
 
+Each release is a tag, such as `v0.1.0`, with notes in [CHANGELOG.md](../CHANGELOG.md). Back up first, then check out the new tag and rebuild:
+
 ```sh
-git pull
+./scripts/backup.sh /var/backups/aether
+git fetch --tags
+git checkout v0.2.0
 docker compose up -d --build
 ```
+
+To follow development instead, stay on `main` and run `git pull` before rebuilding.
 
 Database migrations run automatically when the API starts. They are transactional and serialized with an advisory lock.
 

@@ -1,6 +1,6 @@
 <h1><img src=".github/assets/banner.png" alt="Aether: open-source, self-hosted email platform" width="100%"></h1>
 
-[![Status: pre-release](https://img.shields.io/badge/status-pre--release-fa7e26?style=flat&labelColor=2a2724)](#known-limitations)
+[![Release](https://img.shields.io/github/v/tag/ScalaStudios/Aether?sort=semver&style=flat&label=release&labelColor=2a2724&color=fa7e26)](CHANGELOG.md)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-57534d?style=flat&labelColor=2a2724)](LICENSE)
 [![Docker Compose](https://img.shields.io/badge/docker%20compose-v2-57534d?style=flat&labelColor=2a2724)](#requirements)
 
@@ -17,7 +17,7 @@ In mail server terms, Aether is Postfix for SMTP, Dovecot for IMAP and Rspamd fo
 </p>
 
 > [!NOTE]
-> Aether runs Scala Studios' own mail at scala.gg, but it has no release yet: there are no version tags, and you install it by cloning this repository. The API and configuration may change before 1.0. [Known limitations](#known-limitations) lists what is not built.
+> Aether is pre-1.0 and runs Scala Studios' own mail at scala.gg. The current release is 0.1.0, and [CHANGELOG.md](CHANGELOG.md) lists what is in it. The API and configuration may change before 1.0. [Known limitations](#known-limitations) lists what is not built.
 
 ![Aether Mail with the inbox of a demo organization and a message open in the reading pane](.github/assets/webmail.png)
 
@@ -119,7 +119,7 @@ The development stack uses a self-signed certificate for `mail.aether.test` and 
 Point an `A` record such as `mail.example.com` at the server and set its PTR record to the same name. Then:
 
 ```bash
-git clone https://github.com/ScalaStudios/Aether.git && cd Aether
+git clone --branch v0.1.0 https://github.com/ScalaStudios/Aether.git && cd Aether
 ./scripts/setup.sh
 ```
 
@@ -234,11 +234,10 @@ The Go API is the only component that writes application data. It keeps organiza
 - **Expect to work on deliverability.** Correct SPF, DKIM, DMARC and reverse DNS are necessary but do not guarantee the inbox. Gmail and Outlook also judge the sending address's history and volume. Start with a clean address and low volume, and read the DMARC report summaries before tightening the policy to `p=reject`.
 - **Use a trusted mail certificate.** Without one, the stack generates a self-signed certificate, mail apps warn about it, and MTA-STS cannot move to `enforce`. Behind your own reverse proxy, `scripts/sync-tls-cert.sh` copies its certificate to Postfix and Dovecot.
 - **Keep metrics private.** The metrics ports are only reachable inside the Compose network, and Grafana listens on `127.0.0.1:3300`. Reach it through an SSH tunnel or your VPN.
-- **Upgrade** with `git pull && docker compose up -d --build`. Database migrations run when the API starts, inside a transaction and behind an advisory lock.
+- **Upgrade** by checking out the new release, such as `git fetch --tags && git checkout v0.2.0`, then `docker compose up -d --build`. Read its section in [CHANGELOG.md](CHANGELOG.md) first. Database migrations run when the API starts, inside a transaction and behind an advisory lock.
 
 ## Known limitations
 
-- Aether has no release tags or published release notes yet. Container images are published to GitHub Container Registry from `main`.
 - Everything runs on one host. There is no clustering, and the Helm chart has not run on a real cluster.
 - Exchange ActiveSync, EWS and MAPI are not implemented, so Outlook cannot connect as an Exchange or Microsoft 365 account.
 - IMAP and SMTP accept app passwords only. Signing in to them with an OIDC access token through OAUTHBEARER or XOAUTH2 is planned.
