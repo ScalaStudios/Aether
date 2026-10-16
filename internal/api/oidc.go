@@ -47,6 +47,7 @@ type groupMapping struct {
 type discovered struct {
 	EndSession           string   `json:"end_session_endpoint"`
 	Userinfo             string   `json:"userinfo_endpoint"`
+	Introspection        string   `json:"introspection_endpoint"`
 	CodeChallengeMethods []string `json:"code_challenge_methods_supported"`
 	ScopesSupported      []string `json:"scopes_supported"`
 	ClaimsSupported      []string `json:"claims_supported"`

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- IMAP and SMTP submission accept OpenID Connect access tokens through `OAUTHBEARER` and `XOAUTH2`. The API checks each token with the provider's introspection endpoint, requires that it was issued to Aether, and checks mailbox access on every login. Dovecot's image now includes `curl`, and `AETHER_API_INTERNAL_URL` (default `http://api:8080`) tells Dovecot where the API is.
 - Import mail from another provider: **Settings → Import mail** signs in to any IMAP account and copies its folders into a mailbox in the background, keeping flags and dates, mapping Sent, Drafts, Junk, Trash and Archive to their Aether folders, and skipping messages already present. Imports from servers on private addresses are blocked unless `AETHER_WEBHOOK_ALLOW_PRIVATE` is `true`.
 
 ## 0.1.0 - 2026-10-16

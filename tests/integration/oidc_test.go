@@ -35,6 +35,7 @@ type fakeIssuer struct {
 	email    string
 	groups   []string
 	picture  []byte
+	tokens   map[string][2]string
 }
 
 func startFakeIssuer(t *testing.T) *fakeIssuer {
@@ -44,13 +45,13 @@ func startFakeIssuer(t *testing.T) *fakeIssuer {
 		t.Fatal(err)
 	}
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
-	f := &fakeIssuer{t: t, key: key, clientID: "aether-it", secret: "s3cret-" + randomSuffix(), codes: map[string]url.Values{}}
+	f := &fakeIssuer{t: t, key: key, clientID: "aether-it", secret: "s3cret-" + randomSuffix(), codes: map[string]url.Values{}, tokens: map[string][2]string{}}
 	f.issuer = "http://" + host + ":" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"issuer": f.issuer, "authorization_endpoint": f.issuer + "/authorize", "token_endpoint": f.issuer + "/token",
-			"jwks_uri": f.issuer + "/keys", "end_session_endpoint": f.issuer + "/logout", "response_types_supported": []string{"code"},
+			"jwks_uri": f.issuer + "/keys", "end_session_endpoint": f.issuer + "/logout", "introspection_endpoint": f.issuer + "/introspect", "response_types_supported": []string{"code"},
 			"subject_types_supported": []string{"public"}, "id_token_signing_alg_values_supported": []string{"RS256"},
 			"code_challenge_methods_supported": []string{"S256"}, "scopes_supported": []string{"openid", "profile", "email", "groups"},
 			"claims_supported": []string{"sub", "email", "email_verified", "name", "groups"},
@@ -60,6 +61,7 @@ func startFakeIssuer(t *testing.T) *fakeIssuer {
 		json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})
 	})
 	mux.HandleFunc("/token", f.token)
+	mux.HandleFunc("/introspect", f.introspect)
 	mux.HandleFunc("/picture", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		w.Write(f.picture)
@@ -106,7 +108,33 @@ func (f *fakeIssuer) token(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	idToken, _ := jwt.Signed(signer).Claims(jwt.Claims{Issuer: f.issuer, Subject: f.subject, Audience: jwt.Audience{f.clientID}, IssuedAt: jwt.NewNumericDate(now), Expiry: jwt.NewNumericDate(now.Add(5 * time.Minute))}).
 		Claims(map[string]any{"nonce": q.Get("nonce"), "email": f.email, "email_verified": true, "name": "Halo User", "groups": f.groups, "picture": f.issuer + "/picture"}).Serialize()
-	json.NewEncoder(w).Encode(map[string]any{"access_token": "at-" + randomSuffix(), "token_type": "Bearer", "expires_in": 300, "id_token": idToken})
+	json.NewEncoder(w).Encode(map[string]any{"access_token": f.mint(f.subject, f.clientID), "token_type": "Bearer", "expires_in": 300, "id_token": idToken})
+}
+
+func (f *fakeIssuer) mint(subject, clientID string) string {
+	token := "at-" + randomSuffix()
+	f.mu.Lock()
+	f.tokens[token] = [2]string{subject, clientID}
+	f.mu.Unlock()
+	return token
+}
+
+func (f *fakeIssuer) introspect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	user, pass, ok := r.BasicAuth()
+	if !ok || user != f.clientID || pass != f.secret {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	r.ParseForm()
+	f.mu.Lock()
+	info, found := f.tokens[r.PostForm.Get("token")]
+	f.mu.Unlock()
+	if !found {
+		json.NewEncoder(w).Encode(map[string]any{"active": false})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"active": true, "sub": info[0], "client_id": info[1], "exp": time.Now().Add(5 * time.Minute).Unix()})
 }
 
 func oidcAuthorize(t *testing.T, f *fakeIssuer, slug string) (*apiClient, string, url.Values) {

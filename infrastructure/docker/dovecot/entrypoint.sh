@@ -20,6 +20,8 @@ user_query = SELECT '/var/vmail/' || id AS home, 'vmail' AS uid, 'vmail' AS gid,
 iterate_query = SELECT address AS user FROM mail_users
 SQL
 
+printf '%s' "${AETHER_API_INTERNAL_URL:-http://api:8080}" > /run/dovecot-secrets/api-url
+
 printf '%s:%s::::::allow_nets=%s\n' "$MASTER_USER" "$(doveadm pw -s SHA512-CRYPT -p "$AETHER_DOVECOT_MASTER_PASSWORD")" "$MASTER_NETS" > /run/dovecot-secrets/master-users
 printf 'aether-sieve-relay:%s::::::allow_nets=%s\n' "$(doveadm pw -s SHA512-CRYPT -p "$AETHER_SIEVE_RELAY_PASSWORD")" "$MASTER_NETS" > /run/dovecot-secrets/relay-users
 

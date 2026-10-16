@@ -57,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/.well-known/carddav", s.serveDAV)
 	mux.HandleFunc("GET /.well-known/mta-sts.txt", s.mtaSTSPolicyFile)
 	mux.HandleFunc("GET /internal/tls-ask", s.tlsAsk)
+	mux.HandleFunc("POST /internal/mail-token", s.verifyMailToken)
 	mux.HandleFunc("GET /mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("GET /.well-known/autoconfig/mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("/autodiscover/autodiscover.xml", s.mailAutodiscover)

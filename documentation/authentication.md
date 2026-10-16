@@ -5,7 +5,7 @@ Aether has two kinds of credentials, and they are deliberately kept separate:
 1. **Web sign-in** for Aether Mail and the administration console. This is a local password or an OpenID Connect provider.
 2. **Protocol credentials** for IMAP and SMTP clients. These are mailbox-scoped app passwords.
 
-Signing in to the browser through OIDC does not let a desktop mail client in. Aether never accepts an ID token, or a user's web password, as an IMAP or SMTP credential.
+Signing in to the browser through OIDC does not let a desktop mail client in. Aether never accepts an ID token, or a user's web password, as an IMAP or SMTP credential. It does accept an OIDC access token issued to Aether, as [Access tokens instead of app passwords](#access-tokens-instead-of-app-passwords) describes.
 
 ## Halo
 
@@ -105,7 +105,18 @@ The app passwords and the mail authentication path are covered by automated test
 
 Outlook "Exchange" or "Microsoft 365" account types are not supported.
 
-Login through OAUTHBEARER or XOAUTH2 with Halo access tokens is not implemented. Halo issues JWT access tokens with an `aud` for registered API resources and offers token introspection, so a Dovecot `oauth2` passdb can be added later.
+### Access tokens instead of app passwords
+
+IMAP and SMTP submission also accept an OpenID Connect access token through the `OAUTHBEARER` and `XOAUTH2` mechanisms, with the mailbox address as the username. Aether accepts a token when all of these hold:
+
+- An enabled identity provider in Aether publishes an `introspection_endpoint` (RFC 7662) in its discovery document, and reports the token as active when Aether asks with its client ID and secret. Halo does.
+- The token was issued to Aether's client ID, or its `aud` contains Aether's client ID or `AETHER_PUBLIC_URL`. A token issued to another application at the same provider is refused.
+- The token's subject is linked to an Aether account, which means the person has signed in to Aether through that provider at least once.
+- That account is active and owns the mailbox, or has full access to it as a delegate.
+
+Dovecot hands these logins to the API, which caches a positive introspection result for up to 5 minutes, or until the token expires if that is sooner. Suspending an account or removing access takes effect at once, because the mailbox check is not cached.
+
+Most desktop and phone mail apps only offer OAuth for a fixed list of large providers, so this is mainly for scripts and tools that already hold a token, such as one obtained from Halo with the device flow. App passwords remain the way to connect ordinary mail apps.
 
 ## Calendar and contacts apps
 

@@ -48,7 +48,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 | **Operations** | Health checks, Prometheus metrics for the API, Postfix, Dovecot and Rspamd with a Grafana dashboard, OpenTelemetry tracing, and backup and restore scripts with encrypted off-site copies through restic. |
 | **Developers** | A REST API described by an OpenAPI 3.1 document, organization API keys with scopes, and signed webhooks for every audit event. |
 
-Not built yet: Exchange ActiveSync, token-based IMAP login and SCIM provisioning. See [Known limitations](#known-limitations).
+Not built yet: Exchange ActiveSync and SCIM provisioning. See [Known limitations](#known-limitations).
 
 ## Supported protocols
 
@@ -65,7 +65,7 @@ Not built yet: Exchange ActiveSync, token-based IMAP login and SCIM provisioning
 | CalDAV (RFC 4791) and CardDAV (RFC 6352) | Implemented | Built into the Go API at `/dav/`, with discovery at `/.well-known` |
 | OpenID Connect and PKCE (RFC 7636) | Implemented | Web sign-in with the authorization code flow, `S256`, nonce checking and state bound to the browser |
 | Exchange ActiveSync, EWS and MAPI | Not implemented | Outlook connects as an IMAP account instead |
-| OAUTHBEARER and XOAUTH2 | Not implemented | Planned. App passwords are the IMAP and SMTP credential today |
+| OAUTHBEARER (RFC 7628) and XOAUTH2 | Implemented | IMAP and SMTP submission accept OpenID Connect access tokens, checked through the provider's token introspection endpoint |
 
 "Implemented" means the feature works on the current `main` branch and is covered by the integration tests. Aether has not been through an independent security audit.
 
@@ -241,7 +241,6 @@ The Go API is the only component that writes application data. It keeps organiza
 
 - Everything runs on one host. There is no clustering, and the Helm chart has not run on a real cluster.
 - Exchange ActiveSync, EWS and MAPI are not implemented, so Outlook cannot connect as an Exchange or Microsoft 365 account.
-- IMAP and SMTP accept app passwords only. Signing in to them with an OIDC access token through OAUTHBEARER or XOAUTH2 is planned.
 - Halo cannot provision users into Aether over SCIM yet; accounts are created on first sign-in instead.
 - Aether does not publish TLSA records for its own mail host. They need DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 - Only iOS Mail, Calendar and Contacts have been tested against a production installation.
