@@ -1,10 +1,12 @@
 "use client"
 
+import Image from "@tiptap/extension-image"
 import SubscriptMark from "@tiptap/extension-subscript"
 import SuperscriptMark from "@tiptap/extension-superscript"
+import { TableKit } from "@tiptap/extension-table"
 import TextAlign from "@tiptap/extension-text-align"
 import { TextStyleKit } from "@tiptap/extension-text-style"
-import { useEditorState, type Editor } from "@tiptap/react"
+import { Extension, useEditorState, type Editor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import {
   AlignCenter,
@@ -44,6 +46,17 @@ export const mailEditorExtensions = [
   TextAlign.configure({ types: ["paragraph"] }),
   SubscriptMark,
   SuperscriptMark,
+  Image.configure({ allowBase64: true }),
+  TableKit.configure({ table: { resizable: false } }),
+  Extension.create({
+    name: "keepStyle",
+    addGlobalAttributes: () => [
+      {
+        types: ["table", "tableCell", "image"],
+        attributes: { style: { default: null, parseHTML: (el) => el.getAttribute("style"), renderHTML: (attrs) => (attrs.style ? { style: attrs.style } : {}) } },
+      },
+    ],
+  }),
 ]
 
 const fonts = [

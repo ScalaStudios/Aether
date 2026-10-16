@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { EditorContent, useEditor } from "@tiptap/react"
-import { Pencil, Plus, Signature as SignatureIcon, Trash2 } from "lucide-react"
+import { LayoutTemplate, Pencil, Plus, Signature as SignatureIcon, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -17,10 +17,11 @@ import { EmptyState } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useSession } from "@/hooks/use-session"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
 import { myMailboxesQuery, signaturesQuery } from "@/lib/queries"
-import type { Signature, SignatureSettings } from "@/lib/types"
+import type { Mailbox, Signature, SignatureSettings } from "@/lib/types"
 
 export function Signatures() {
   const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read") })
@@ -121,7 +122,7 @@ function SignatureList({ mailboxId, editing, setEditing }: { mailboxId: string; 
           </ul>
         </div>
       )}
-      {editing && <SignatureDialog key={editing.id || "new"} signature={editing} pending={save.isPending} onSave={upsert} onClose={() => setEditing(null)} />}
+      {editing && <SignatureDialog key={editing.id || "new"} mailboxId={mailboxId} signature={editing} pending={save.isPending} onSave={upsert} onClose={() => setEditing(null)} />}
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
@@ -156,9 +157,30 @@ function DefaultPicker({ id, label, value, signatures, onChange }: { id: string;
   )
 }
 
-function SignatureDialog({ signature, pending, onSave, onClose }: { signature: Signature; pending: boolean; onSave: (s: Signature) => void; onClose: () => void }) {
+async function templateHTML(mailbox: Mailbox, org: string) {
+  const logo = await fetch("/brand/scala-signature.png")
+    .then((r) => r.blob())
+    .then((blob) => new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsDataURL(blob)
+    }))
+  const domain = mailbox.address.split("@")[1]
+  const muted = "color: #6b7280"
+  return `<table style="border-collapse: collapse"><tbody><tr>
+<td style="vertical-align: top; padding: 0 16px 0 0"><img src="${logo}" width="61" alt="${org}"></td>
+<td style="vertical-align: top; padding: 0 0 0 16px; border-left: 1px solid #d1d5db">
+<p><strong><span style="font-size: 16px">${mailbox.displayName || mailbox.localPart}</span></strong><br><span style="${muted}">Your title</span><br><strong>${org}</strong></p>
+<p><a href="mailto:${mailbox.address}">${mailbox.address}</a><br><a href="https://${domain}">${domain}</a></p>
+<p><span style="font-size: 12px; ${muted}">LinkedIn · GitHub · X</span></p>
+</td></tr></tbody></table>`
+}
+
+function SignatureDialog({ mailboxId, signature, pending, onSave, onClose }: { mailboxId: string; signature: Signature; pending: boolean; onSave: (s: Signature) => void; onClose: () => void }) {
   const [name, setName] = useState(signature.name)
   const [error, setError] = useState("")
+  const mailbox = useQuery({ ...myMailboxesQuery, select: (list) => list.find((m) => m.id === mailboxId) }).data
+  const org = useSession().data?.memberships.find((m) => m.orgId === mailbox?.orgId)?.orgName ?? ""
   const editor = useEditor({
     extensions: mailEditorExtensions,
     content: signature.html,
@@ -183,6 +205,21 @@ function SignatureDialog({ signature, pending, onSave, onClose }: { signature: S
       <Field id="sig-name" label="Name" error={error}>
         <Input id="sig-name" value={name} autoComplete="off" aria-invalid={!!error} onChange={(e) => setName(e.target.value)} />
       </Field>
+      {mailbox && editor && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="self-start"
+          onClick={async () => {
+            editor.commands.setContent(await templateHTML(mailbox, org))
+            if (!name.trim()) setName(org || "Default")
+          }}
+        >
+          <LayoutTemplate aria-hidden />
+          Use {org || "company"} template
+        </Button>
+      )}
       <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">
         {editor && <FormatToolbar editor={editor} />}
         <EditorContent editor={editor} />

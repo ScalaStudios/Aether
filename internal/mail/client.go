@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -378,6 +379,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 		}
 		var textPart, htmlPart, calendarPart *imap.BodyStructureSinglePart
 		var textPath, htmlPath, calendarPath []int
+		var inline []inlinePart
 		if m.BodyStructure != nil {
 			m.BodyStructure.Walk(func(path []int, part imap.BodyStructure) bool {
 				single, ok := part.(*imap.BodyStructureSinglePart)
@@ -388,6 +390,8 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 					calendarPart, calendarPath = single, slices.Clone(path)
 				}
 				switch {
+				case single.ID != "" && strings.HasPrefix(single.MediaType(), "image/") && (single.Disposition() == nil || !strings.EqualFold(single.Disposition().Value, "attachment")):
+					inline = append(inline, inlinePart{single, slices.Clone(path)})
 				case isAttachment(single):
 					out.Attachments = append(out.Attachments, Attachment{Part: partString(path), Filename: firstNonEmpty(single.Filename(), "attachment-"+partString(path)), ContentType: single.MediaType(), Size: int64(single.Size)})
 				case single.MediaType() == "text/plain" && textPart == nil:
@@ -412,12 +416,31 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			}
 			*p.dst = decodeCharset(body, p.part.Params["charset"])
 		}
+		for _, p := range inline {
+			cid := "cid:" + strings.Trim(p.part.ID, "<>")
+			if !strings.Contains(out.HTML, cid) || p.part.Size > maxInlineImage {
+				out.Attachments = append(out.Attachments, Attachment{Part: partString(p.path), Filename: firstNonEmpty(p.part.Filename(), "image-"+partString(p.path)), ContentType: p.part.MediaType(), Size: int64(p.part.Size)})
+				continue
+			}
+			body, err := fetchPart(ic, uidSet, p.path)
+			if err != nil {
+				return err
+			}
+			out.HTML = strings.ReplaceAll(out.HTML, cid, "data:"+p.part.MediaType()+";base64,"+base64.StdEncoding.EncodeToString(body))
+		}
 		if out.HTML != "" {
 			out.HTML = SanitizeHTML(out.HTML)
 		}
 		return nil
 	})
 	return out, err
+}
+
+const maxInlineImage = 2 << 20
+
+type inlinePart struct {
+	part *imap.BodyStructureSinglePart
+	path []int
 }
 
 type Related struct {

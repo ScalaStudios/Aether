@@ -55,6 +55,43 @@ func TestBuildWithAttachmentRoundTrips(t *testing.T) {
 	}
 }
 
+func TestBuildMovesDataImagesIntoRelatedParts(t *testing.T) {
+	for _, attachments := range [][]OutgoingAttachment{nil, {{Filename: "f.txt", ContentType: "text/plain", Data: []byte("x")}}} {
+		o := Outgoing{
+			From: Address{Address: "a@example.test"}, To: []Address{{Address: "b@example.test"}}, Subject: "logo",
+			Text: "signed", HTML: `<p>signed</p><img src="data:image/png;base64,aGVsbG8=" width="80">`, Attachments: attachments,
+		}
+		raw, _, err := o.Build("mail.example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte("data:image")) || !bytes.Contains(raw, []byte("multipart/related")) {
+			t.Fatalf("data image not moved to a related part:\n%s", raw)
+		}
+		r, err := mail.CreateReader(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var html, cid, image string
+		for {
+			p, err := r.NextPart()
+			if err != nil {
+				break
+			}
+			body, _ := io.ReadAll(p.Body)
+			switch typ := p.Header.Get("Content-Type"); {
+			case strings.HasPrefix(typ, "text/html"):
+				html = string(body)
+			case typ == "image/png":
+				cid, image = strings.Trim(p.Header.Get("Content-ID"), "<>"), string(body)
+			}
+		}
+		if image != "hello" || cid == "" || !strings.Contains(html, `src="cid:`+cid+`"`) {
+			t.Fatalf("inline image broken: cid=%q image=%q html=%q", cid, image, html)
+		}
+	}
+}
+
 func TestBuildKeepsBodiesAndReferences(t *testing.T) {
 	for _, o := range []Outgoing{
 		{Text: "plain only body", InReplyTo: "<a@x>", References: []string{"<a@x>"}},
