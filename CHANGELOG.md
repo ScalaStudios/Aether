@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Added
+
+- Import mail from another provider: **Settings → Import mail** signs in to any IMAP account and copies its folders into a mailbox in the background, keeping flags and dates, mapping Sent, Drafts, Junk, Trash and Archive to their Aether folders, and skipping messages already present. Imports from servers on private addresses are blocked unless `AETHER_WEBHOOK_ALLOW_PRIVATE` is `true`.
+
 ## 0.1.0 - 2026-10-16
 
 The first release. Container images are published to GitHub Container Registry as `ghcr.io/scalastudios/aether-<component>:0.1.0` for `api`, `web`, `postfix`, `dovecot`, `rspamd` and `unbound`.

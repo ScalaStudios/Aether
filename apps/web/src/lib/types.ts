@@ -416,3 +416,14 @@ export interface SnoozedMessage {
   until: string
   returnFolder: string
 }
+
+export type MailImport = {
+  id: string
+  host: string
+  username: string
+  status: "running" | "done" | "failed" | "cancelled" | "interrupted"
+  progress: { folder?: string; foldersDone?: number; foldersTotal?: number; copied?: number; skipped?: number }
+  error: string
+  createdAt: string
+  finishedAt: string | null
+}

@@ -40,6 +40,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
 | **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
 | **Webmail** | Aether Mail: folders, conversations, server-side search, rich-text compose with signatures and inline images, attachments, drafts, scheduled send, snooze, keyboard shortcuts, and HTML mail rendered with remote content blocked. |
+| **Importing** | Copy every folder from Gmail, iCloud, Yahoo, Fastmail or any other IMAP account into a mailbox, in the background, keeping flags and dates and skipping messages that are already there. |
 | **Rules and sharing** | Mail rules and automatic replies compiled to Sieve, so they run on the server for every client. Shared mailboxes with full or read-only access for members of the organization. |
 | **Calendar and contacts** | CalDAV and CardDAV at `/dav/`, calendars with repeating events and ICS import and export, meeting invitations that work with Gmail, Outlook and Apple Calendar, shared and organization calendars, free/busy while you schedule, a personal address book and the organization directory. |
 | **Sign-in** | Local accounts with Argon2id password hashes, or any OpenID Connect provider with PKCE. Halo gets a setup wizard, group-to-role mapping and suspension webhooks. Profile pictures are uploaded or imported from the identity provider. Mail and calendar apps use app passwords scoped to one mailbox. |
@@ -242,7 +243,6 @@ The Go API is the only component that writes application data. It keeps organiza
 - Exchange ActiveSync, EWS and MAPI are not implemented, so Outlook cannot connect as an Exchange or Microsoft 365 account.
 - IMAP and SMTP accept app passwords only. Signing in to them with an OIDC access token through OAUTHBEARER or XOAUTH2 is planned.
 - Halo cannot provision users into Aether over SCIM yet; accounts are created on first sign-in instead.
-- There is no importer from other providers. Use an IMAP sync tool such as imapsync to move existing mail.
 - Aether does not publish TLSA records for its own mail host. They need DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 - Only iOS Mail, Calendar and Contacts have been tested against a production installation.
 

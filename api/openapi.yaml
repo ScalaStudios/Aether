@@ -613,6 +613,51 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "204": { description: Revoked }
+  /mailboxes/{mailboxId}/imports:
+    get:
+      tags: [mail]
+      summary: The 20 most recent imports into this mailbox
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MailImport" } }
+    post:
+      tags: [mail]
+      summary: Sign in to another IMAP account and copy its folders into this mailbox in the background. Messages whose Message-ID is already in the target folder are skipped. The password is used only for this import and is not stored.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, security, username, password]
+              properties:
+                host: { type: string }
+                port: { type: integer, default: 993 }
+                security: { type: string, enum: [tls, starttls] }
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "202":
+          description: Started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailImport" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/imports/{id}/cancel:
+    post:
+      tags: [mail]
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Cancelled }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/folders:
     get:
       tags: [mail]
@@ -1683,6 +1728,24 @@ components:
         uid: { type: integer }
         until: { type: string, format: date-time }
         returnFolder: { type: string }
+    MailImport:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        host: { type: string }
+        username: { type: string }
+        status: { type: string, enum: [running, done, failed, cancelled, interrupted] }
+        progress:
+          type: object
+          properties:
+            folder: { type: string }
+            foldersDone: { type: integer }
+            foldersTotal: { type: integer }
+            copied: { type: integer }
+            skipped: { type: integer }
+        error: { type: string }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
     OutgoingMessage:
       type: object
       required: [to, subject]

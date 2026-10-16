@@ -15,6 +15,7 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { PageContainer } from "@/components/page-container"
+import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
 import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
@@ -72,6 +73,7 @@ export function SettingsView() {
       )}
       <Signatures />
       <MailRules />
+      <ImportMail />
       <AppPasswords />
       <CalendarApps />
     </PageContainer>

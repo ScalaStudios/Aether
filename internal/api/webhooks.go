@@ -58,8 +58,8 @@ func publicAddress(addr netip.Addr) bool {
 
 var errBlockedAddress = errors.New("webhook destination resolves to a private or reserved address")
 
-func newWebhookClient(allowPrivate bool) *http.Client {
-	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: func(network, address string, _ syscall.RawConn) error {
+func publicDialer(allowPrivate bool) *net.Dialer {
+	return &net.Dialer{Timeout: 5 * time.Second, Control: func(network, address string, _ syscall.RawConn) error {
 		if allowPrivate {
 			return nil
 		}
@@ -69,6 +69,10 @@ func newWebhookClient(allowPrivate bool) *http.Client {
 		}
 		return nil
 	}}
+}
+
+func newWebhookClient(allowPrivate bool) *http.Client {
+	dialer := publicDialer(allowPrivate)
 	return &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,7 @@ type Server struct {
 	oidc          *oidcCache
 	resolve       resolver
 	webhookClient *http.Client
+	imports       sync.Map
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
@@ -106,6 +108,9 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/me/app-passwords", s.createAppPassword)
 	authed("DELETE /api/v1/me/app-passwords/{id}", s.revokeAppPassword)
 	authed("POST /api/v1/me/apple-profile", s.appleProfile)
+	authed("GET /api/v1/mailboxes/{mailboxId}/imports", s.listImports)
+	authed("POST /api/v1/mailboxes/{mailboxId}/imports", s.startImport)
+	authed("POST /api/v1/mailboxes/{mailboxId}/imports/{id}/cancel", s.cancelImport)
 	authed("PUT /api/v1/me/avatar", s.putAvatar)
 	authed("DELETE /api/v1/me/avatar", s.deleteAvatar)
 	authed("GET /api/v1/avatars/{address}", s.getAvatar)
