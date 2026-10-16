@@ -50,7 +50,7 @@ We evaluated two options: an integrated server such as Stalwart, and the Postfix
 - **No feature gating.** Some integrated servers keep features behind a separate enterprise licence. Every feature Aether needs from this stack is in the free edition.
 - **Separation of concerns.** Mail transport, mailbox storage, and filtering are separate processes. Each can be upgraded, scaled, or replaced on its own.
 
-The trade-off is that we must maintain glue: SQL lookups, the master-user bridge, and DKIM key publication. Calendar and contacts (CalDAV and CardDAV) are not part of this stack. Phase 3 will add them as a separate component.
+The trade-off is that we must maintain glue: SQL lookups, the master-user bridge, and DKIM key publication. Calendar and contacts (CalDAV and CardDAV) are not part of this stack. The Go API serves them, and stores their data in PostgreSQL.
 
 Rspamd queries DNS blocklists through a bundled Unbound recursive resolver. Spamhaus and URIBL refuse queries that arrive through large public resolvers, so using Docker's resolver would silently disable those checks.
 
