@@ -73,6 +73,25 @@ Aether checks each event's `Halo-Signature` header (HMAC-SHA256 with a timestamp
 
 Halo must be able to reach Aether over the network for this to work. A local development stack on `localhost` cannot receive these events.
 
+### SCIM provisioning
+
+Halo, or any provider that speaks SCIM 2.0, can create, update and deactivate Aether accounts instead of waiting for people to sign in:
+
+1. In Aether, open **Administration → Identity providers**, choose the people icon on the provider, then **Turn on SCIM**. Copy the base URL, `https://<aether-host>/api/v1/scim/<slug>`, and the bearer token. Aether shows the token once and stores only its hash.
+2. In Halo, open the Aether application's provisioning settings, paste the base URL and the token, and choose **Test**. Halo then provisions the people assigned to the application every 2 minutes.
+
+What each request does:
+
+| Request | Effect in Aether |
+| --- | --- |
+| `POST /Users` | Creates the account with the email address in `userName` (or the primary email). If the address is on a verified domain and no mailbox exists, creates the mailbox and adds the person to that domain's organization. `externalId` is linked as the person's subject at this provider, so they can sign in at once. An existing account with the same address returns `409`, and Halo then finds it with a filter and updates it. |
+| `GET /Users?filter=userName eq "…"` | Finds an account by address. Only `userName eq` filters are supported. |
+| `PUT /Users/{id}` | Updates the display name, links `externalId`, and applies `active`. The email address cannot change over SCIM. |
+| `PATCH /Users/{id}` | Applies `replace` operations on `active` and `displayName`. |
+| `DELETE /Users/{id}` | Marks the account deprovisioned. Its mail is kept. |
+
+`active: false` suspends the account like a Halo suspension webhook: web sessions end and app passwords stop working, while mail keeps arriving. `active: true` restores the account only if this provider suspended it, so a suspension made by an Aether administrator stays in place. Groups are not provisioned; group mappings still apply when people sign in.
+
 ## Generic OIDC providers
 
 Any provider works if it meets all of these:

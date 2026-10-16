@@ -43,12 +43,12 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 | **Importing** | Copy every folder from Gmail, iCloud, Yahoo, Fastmail or any other IMAP account into a mailbox, in the background, keeping flags and dates and skipping messages that are already there. |
 | **Rules and sharing** | Mail rules and automatic replies compiled to Sieve, so they run on the server for every client. Shared mailboxes with full or read-only access for members of the organization. |
 | **Calendar and contacts** | CalDAV and CardDAV at `/dav/`, calendars with repeating events and ICS import and export, meeting invitations that work with Gmail, Outlook and Apple Calendar, shared and organization calendars, free/busy while you schedule, a personal address book and the organization directory. |
-| **Sign-in** | Local accounts with Argon2id password hashes, or any OpenID Connect provider with PKCE. Halo gets a setup wizard, group-to-role mapping and suspension webhooks. Profile pictures are uploaded or imported from the identity provider. Mail and calendar apps use app passwords scoped to one mailbox. |
+| **Sign-in** | Local accounts with Argon2id password hashes, or any OpenID Connect provider with PKCE. Halo gets a setup wizard, group-to-role mapping, suspension webhooks and SCIM provisioning. Profile pictures are uploaded or imported from the identity provider. Mail and calendar apps use app passwords scoped to one mailbox, or an OIDC access token. |
 | **Administration** | An admin console with organizations, domains and their DNS status, mailboxes, aliases, members, identity providers, DMARC reports, API keys, signed webhooks and an audit log. |
 | **Operations** | Health checks, Prometheus metrics for the API, Postfix, Dovecot and Rspamd with a Grafana dashboard, OpenTelemetry tracing, and backup and restore scripts with encrypted off-site copies through restic. |
 | **Developers** | A REST API described by an OpenAPI 3.1 document, organization API keys with scopes, and signed webhooks for every audit event. |
 
-Not built yet: Exchange ActiveSync and SCIM provisioning. See [Known limitations](#known-limitations).
+Not built yet: Exchange ActiveSync. See [Known limitations](#known-limitations).
 
 ## Supported protocols
 
@@ -63,6 +63,7 @@ Not built yet: Exchange ActiveSync and SCIM provisioning. See [Known limitations
 | SRS | Implemented | Mail forwarded by an alias to an outside address gets a rewritten envelope sender, so it passes SPF |
 | Sieve (RFC 5228) and ManageSieve (RFC 5804) | Implemented | Spam filing, mail rules, forwarding and automatic replies |
 | CalDAV (RFC 4791) and CardDAV (RFC 6352) | Implemented | Built into the Go API at `/dav/`, with discovery at `/.well-known` |
+| SCIM 2.0 (RFC 7643 and RFC 7644) | Partial | A server for users under `/api/v1/scim/<provider>`, so Halo can create, update and deactivate accounts. No groups, bulk operations or filters other than `userName eq` |
 | OpenID Connect and PKCE (RFC 7636) | Implemented | Web sign-in with the authorization code flow, `S256`, nonce checking and state bound to the browser |
 | Exchange ActiveSync, EWS and MAPI | Not implemented | Outlook connects as an IMAP account instead |
 | OAUTHBEARER (RFC 7628) and XOAUTH2 | Implemented | IMAP and SMTP submission accept OpenID Connect access tokens, checked through the provider's token introspection endpoint |
@@ -241,7 +242,6 @@ The Go API is the only component that writes application data. It keeps organiza
 
 - Everything runs on one host. There is no clustering, and the Helm chart has not run on a real cluster.
 - Exchange ActiveSync, EWS and MAPI are not implemented, so Outlook cannot connect as an Exchange or Microsoft 365 account.
-- Halo cannot provision users into Aether over SCIM yet; accounts are created on first sign-in instead.
 - Aether does not publish TLSA records for its own mail host. They need DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 - Only iOS Mail, Calendar and Contacts have been tested against a production installation.
 

@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
+import { KeyRound, Pencil, Plus, Trash2, UsersRound } from "lucide-react"
 import { useState } from "react"
 import { Controller, useFieldArray, useForm, useWatch, type UseFormReturn } from "react-hook-form"
 import { toast } from "sonner"
@@ -56,6 +56,7 @@ export function IdentityProvidersTab({ organizations }: { organizations: Organiz
   const providers = useQuery({ queryKey: ["identity-providers"], queryFn: () => api<IdentityProvider[]>("/admin/identity-providers") })
   const [editing, setEditing] = useState<Editing | null>(null)
   const [deleting, setDeleting] = useState<IdentityProvider | null>(null)
+  const [scim, setSCIM] = useState<IdentityProvider | null>(null)
 
   const remove = useMutation({
     mutationFn: (id: string) => api(`/admin/identity-providers/${id}`, { method: "DELETE" }),
@@ -115,6 +116,9 @@ export function IdentityProvidersTab({ organizations }: { organizations: Organiz
                   <TableCell>
                     <div className="flex justify-end gap-1">
                       <CopyButton value={p.redirectUri} label="Copy redirect URI" />
+                      <IconButton label={`SCIM provisioning for ${p.name}`} size="icon-sm" onClick={() => setSCIM(p)}>
+                        <UsersRound />
+                      </IconButton>
                       <IconButton label={`Edit ${p.name}`} size="icon-sm" onClick={() => setEditing({ mode: "edit", provider: p })}>
                         <Pencil />
                       </IconButton>
@@ -138,6 +142,8 @@ export function IdentityProvidersTab({ organizations }: { organizations: Organiz
           onClose={() => setEditing(null)}
         />
       )}
+
+      {scim && <SCIMDialog provider={scim} onClose={() => setSCIM(null)} />}
 
       <ConfirmDialog
         open={!!deleting}
@@ -353,6 +359,70 @@ function ProviderDialog({ editing, organizations, onClose }: { editing: Editing;
       )}
       {step === 1 && credentials}
       {step === 2 && <Provisioning form={form} organizations={organizations} />}
+    </FormDialog>
+  )
+}
+
+function SCIMDialog({ provider, onClose }: { provider: IdentityProvider; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [token, setToken] = useState<string | null>(null)
+  const create = useMutation({
+    mutationFn: () => api<{ url: string; token: string }>(`/admin/identity-providers/${provider.id}/scim-token`, { method: "POST" }),
+    onSuccess: (data) => {
+      setToken(data.token)
+      qc.invalidateQueries({ queryKey: ["identity-providers"] })
+    },
+  })
+  const disable = useMutation({
+    mutationFn: () => api(`/admin/identity-providers/${provider.id}/scim-token`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("SCIM provisioning turned off")
+      qc.invalidateQueries({ queryKey: ["identity-providers"] })
+      onClose()
+    },
+  })
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={`SCIM provisioning for ${provider.name}`}
+      description="Let the provider create, update and deactivate Aether accounts. Accounts it creates get a mailbox when their address is on a verified domain, and they can sign in through the provider straight away."
+      submitLabel={provider.scimEnabled ? "Create a new token" : "Turn on SCIM"}
+      pending={create.isPending}
+      onSubmit={(e) => {
+        e.preventDefault()
+        create.mutate()
+      }}
+      leading={
+        provider.scimEnabled &&
+        !token && (
+          <Button type="button" variant="secondary" loading={disable.isPending} onClick={() => disable.mutate()}>
+            Turn off
+          </Button>
+        )
+      }
+      footer={
+        token && (
+          <Button type="button" onClick={onClose}>
+            Done
+          </Button>
+        )
+      }
+    >
+      <CopyField label="SCIM base URL" value={provider.scimUrl} />
+      {token ? (
+        <>
+          <CopyField label="Bearer token" value={token} />
+          <p className="text-sm text-fg-tertiary">Copy the token now. Aether shows it only once. In Halo, paste both into the application&apos;s provisioning settings.</p>
+        </>
+      ) : (
+        <p className="text-sm text-fg-tertiary">
+          {provider.scimEnabled
+            ? "SCIM is on. Creating a new token replaces the current one, so update it in the provider at the same time."
+            : "Turning SCIM on creates a bearer token for the provider."}
+        </p>
+      )}
     </FormDialog>
   )
 }

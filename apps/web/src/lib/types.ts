@@ -258,6 +258,8 @@ export interface IdentityProvider {
   clientId: string
   hasClientSecret: boolean
   hasWebhookSecret: boolean
+  scimEnabled: boolean
+  scimUrl: string
   webhookUrl: string
   scopes: string[]
   autoProvision: boolean

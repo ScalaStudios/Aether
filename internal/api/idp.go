@@ -34,6 +34,8 @@ type identityProvider struct {
 	RedirectURI     string         `json:"redirectUri"`
 	HasWebhook      bool           `json:"hasWebhookSecret"`
 	WebhookURL      string         `json:"webhookUrl"`
+	SCIMEnabled     bool           `json:"scimEnabled"`
+	SCIMURL         string         `json:"scimUrl"`
 }
 
 type identityProviderInput struct {
@@ -57,6 +59,7 @@ func (s *Server) toIdentityProvider(p *providerRow) identityProvider {
 		HasClientSecret: len(p.ClientSecret) > 0, Scopes: p.Scopes, AutoProvision: p.AutoProvision,
 		AdminGroup: p.AdminGroup, GroupMappings: nonNil(p.GroupMappings), Enabled: p.Enabled, RedirectURI: s.redirectURI(p.Slug),
 		HasWebhook: len(p.WebhookSecret) > 0, WebhookURL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/api/v1/hooks/identity-providers/" + p.Slug,
+		SCIMEnabled: p.SCIMTokenHash != "", SCIMURL: strings.TrimRight(s.cfg.PublicURL.String(), "/") + "/api/v1/scim/" + p.Slug,
 	}
 }
 

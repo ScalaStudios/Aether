@@ -36,6 +36,7 @@ type providerRow struct {
 	GroupMappings []groupMapping
 	Enabled       bool
 	UpdatedAt     time.Time
+	SCIMTokenHash string
 }
 
 type groupMapping struct {
@@ -70,12 +71,12 @@ func newOIDCCache() *oidcCache {
 	return &oidcCache{clients: map[string]*oidcClient{}}
 }
 
-const providerColumns = `id, slug, name, kind, issuer, client_id, client_secret, webhook_secret, scopes, auto_provision, admin_group, group_mappings, enabled, updated_at`
+const providerColumns = `id, slug, name, kind, issuer, client_id, client_secret, webhook_secret, scopes, auto_provision, admin_group, group_mappings, enabled, updated_at, scim_token_hash`
 
 func scanProvider(row pgx.Row) (*providerRow, error) {
 	p := &providerRow{}
 	var mappings []byte
-	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Kind, &p.Issuer, &p.ClientID, &p.ClientSecret, &p.WebhookSecret, &p.Scopes, &p.AutoProvision, &p.AdminGroup, &mappings, &p.Enabled, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Kind, &p.Issuer, &p.ClientID, &p.ClientSecret, &p.WebhookSecret, &p.Scopes, &p.AutoProvision, &p.AdminGroup, &mappings, &p.Enabled, &p.UpdatedAt, &p.SCIMTokenHash)
 	if err != nil {
 		return nil, err
 	}

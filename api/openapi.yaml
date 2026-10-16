@@ -1229,6 +1229,75 @@ paths:
         - { name: shareId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: No longer shared }
+  /admin/identity-providers/{id}/scim-token:
+    post:
+      tags: [identity-providers]
+      summary: Turn on SCIM provisioning for the provider, or replace its token. The token is returned once.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+                  token: { type: string }
+    delete:
+      tags: [identity-providers]
+      summary: Turn off SCIM provisioning for the provider
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Turned off }
+  /scim/{slug}/Users:
+    get:
+      tags: [scim]
+      summary: SCIM 2.0 user list. Authenticated with the provider's SCIM bearer token. Supports only filter=userName eq "address".
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: filter, in: query, schema: { type: string } }
+      responses:
+        "200": { description: SCIM ListResponse }
+    post:
+      tags: [scim]
+      summary: Create an account, link externalId as the provider subject, and create the mailbox on a verified domain
+      parameters: [{ name: slug, in: path, required: true, schema: { type: string } }]
+      responses:
+        "201": { description: SCIM User }
+        "409": { description: An account with this userName exists }
+  /scim/{slug}/Users/{id}:
+    get:
+      tags: [scim]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: SCIM User }
+    put:
+      tags: [scim]
+      summary: Update the display name and active state
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: SCIM User }
+    patch:
+      tags: [scim]
+      summary: Apply replace operations on active and displayName
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: SCIM User }
+    delete:
+      tags: [scim]
+      summary: Mark the account deprovisioned. Mail is kept.
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deprovisioned }
   /admin/identity-providers:
     get:
       tags: [identity-providers]
