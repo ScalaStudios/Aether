@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a feature or a change to how Aether works.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and why Aether does not let you do it today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How you would like it to work. Name the standard or RFC, or the product you know it from, if there is one.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: What you do today instead.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - I would like to build this myself, in a fork, and open a pull request
+        - I can help test it
+        - I am only suggesting it
+    validations:
+      required: true
+  - type: dropdown
+    id: ai
+    attributes:
+      label: AI assistance
+      description: Did an AI tool write any part of this request?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true

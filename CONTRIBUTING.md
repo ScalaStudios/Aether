@@ -1,5 +1,15 @@
 # Contributing to Aether
 
+Bug reports, fixes, documentation and features are welcome. Open an issue before starting anything large, such as a new feature, a new dependency or a schema change, so the approach is agreed before the code is written. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Forks and pull requests
+
+1. Fork the repository and create a branch from `main`.
+2. Make the change, with tests, and run the checks below.
+3. Open a pull request against `main` and fill in the template. Turn on **Allow edits by maintainers** so small fixes can be pushed to your branch.
+
+Aether is licensed under AGPL-3.0-or-later, so you are free to run a fork. If you let people use a modified Aether over a network, the license requires you to offer them its source code.
+
 ## Development setup
 
 ```sh
@@ -30,5 +40,9 @@ Run these checks:
   - Archivo, Inter, and JetBrains Mono
   - Ember as the single accent colour
   - Ink labels on Ember buttons
+
+## AI-assisted contributions
+
+You may use AI tools, but you are responsible for every line you submit. Say in the pull request which tool you used and which parts it wrote. Read and understand the code before you open the pull request, and run the checks yourself rather than relying on a tool's report that they pass. Pull requests that look generated and unchecked, such as changes that do not build, invented APIs or descriptions that do not match the diff, are closed.
 
 By contributing, you agree that your contribution is licensed under AGPL-3.0-or-later.

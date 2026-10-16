@@ -254,7 +254,7 @@ The Go API is the only component that writes application data. It keeps organiza
 
 ## Contributing
 
-Bug reports, fixes, documentation and features are welcome. Report bugs and propose features in [GitHub issues](https://github.com/ScalaStudios/Aether/issues), and open an issue before starting anything large, such as a new feature, a new dependency or a schema change. [CONTRIBUTING.md](CONTRIBUTING.md) covers the development setup, the checks a pull request must pass and the code style. The integration tests run against the real Postfix, Dovecot, Rspamd and PostgreSQL containers:
+Bug reports, fixes, documentation and features are welcome. Report bugs and propose features in [GitHub issues](https://github.com/ScalaStudios/Aether/issues), and open an issue before starting anything large, such as a new feature, a new dependency or a schema change. [CONTRIBUTING.md](CONTRIBUTING.md) covers the development setup, the checks a pull request must pass and the code style. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). The integration tests run against the real Postfix, Dovecot, Rspamd and PostgreSQL containers:
 
 ```bash
 AETHER_TEST_ADMIN_EMAIL=admin@aether.test AETHER_TEST_ADMIN_PASSWORD=choose-a-long-password \

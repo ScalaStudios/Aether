@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in Aether does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Report security vulnerabilities privately, as [SECURITY.md](https://github.com/ScalaStudios/Aether/blob/main/SECURITY.md) describes, and not in an issue. For mail that is not delivered, check the [troubleshooting page](https://github.com/ScalaStudios/Aether/wiki/Troubleshooting) first.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Aether Mail (webmail)
+        - Calendar or contacts, including CalDAV and CardDAV
+        - Administration console
+        - Sending or receiving mail (Postfix, Dovecot or Rspamd)
+        - Sign-in, OpenID Connect or Halo
+        - Mail or calendar apps and app passwords
+        - API, API keys or webhooks
+        - Installation, upgrades, backups or restore
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Aether did instead. Include the exact error message, or the SMTP reply code for mail problems, such as `550 5.7.1`.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Choose …
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The commit you run, from `git rev-parse --short HEAD` in your Aether checkout.
+    validations:
+      required: true
+  - type: dropdown
+    id: fork
+    attributes:
+      label: Fork or changes
+      description: Bugs are fixed against this repository. If you run a fork or changed files, say what you changed below.
+      options:
+        - An unmodified checkout of this repository
+        - A checkout with local changes
+        - A fork
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How you run Aether
+      options:
+        - Docker Compose with the bundled Caddy
+        - Docker Compose behind my own reverse proxy (compose.external-proxy.yml)
+        - The development stack from ./scripts/setup.sh dev
+        - The Helm chart
+        - Something else, described below
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: The host operating system and Docker version. For interface problems, the browser. For mail app problems, the app and its version. Any changes from the default `.env`, without secrets.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from `docker compose logs api postfix dovecot rspamd`. Remove passwords, tokens, cookies, message contents and other people's email addresses first.
+      render: text
+  - type: dropdown
+    id: ai
+    attributes:
+      label: AI assistance
+      description: Did an AI tool write or investigate any part of this report? It is fine either way, but tell us, so we know which parts a person has confirmed.
+      options:
+        - "No"
+        - Yes, and I checked everything it wrote against my own installation
+        - Yes, and I have not checked all of it
+    validations:
+      required: true
