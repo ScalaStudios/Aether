@@ -380,6 +380,11 @@ func (s *Server) listAppPasswords(w http.ResponseWriter, r *http.Request, p *pri
 	writeJSON(w, http.StatusOK, nonNil(out))
 }
 
+type createdAppPassword struct {
+	appPassword
+	Password string `json:"password"`
+}
+
 func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, p *principal) {
 	var in struct {
 		Name      string `json:"name"`
@@ -393,28 +398,31 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, p *pr
 		writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Name the app password after the device or app that will use it.")
 		return
 	}
-	var out struct {
-		appPassword
-		Password string `json:"password"`
+	if out, ok := s.issueAppPassword(w, r, p, in.MailboxID, in.Name); ok {
+		writeJSON(w, http.StatusCreated, out)
 	}
+}
+
+func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *principal, mailboxID, name string) (*createdAppPassword, bool) {
+	var out createdAppPassword
 	var orgID string
 	out.Password = secrets.Token(20)
 	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO app_passwords (user_id, mailbox_id, name, token_hash)
 		SELECT $1, m.id, $3, $4 FROM mailboxes m WHERE m.id = $2 AND m.active AND `+fullMailboxAccess("$1")+`
 		RETURNING id, name, mailbox_id, created_at, (SELECT address FROM mailboxes WHERE id = $2), (SELECT org_id FROM mailboxes WHERE id = $2)`,
-		p.User.ID, in.MailboxID, in.Name, secrets.SHA256Hex(out.Password)).
+		p.User.ID, mailboxID, name, secrets.SHA256Hex(out.Password)).
 		Scan(&out.ID, &out.Name, &out.MailboxID, &out.CreatedAt, &out.MailboxAddress, &orgID)
-	if errors.Is(err, pgx.ErrNoRows) || (err != nil && !uuidPattern.MatchString(in.MailboxID)) {
+	if errors.Is(err, pgx.ErrNoRows) || (err != nil && !uuidPattern.MatchString(mailboxID)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose one of your own active mailboxes.")
-		return
+		return nil, false
 	}
 	if err != nil {
 		s.internalError(w, r, err)
-		return
+		return nil, false
 	}
 	s.audit(r.Context(), r, p, &orgID, "app_password.create", "app_password", out.ID, map[string]any{"mailbox": out.MailboxAddress})
-	writeJSON(w, http.StatusCreated, out)
+	return &out, true
 }
 
 func (s *Server) revokeAppPassword(w http.ResponseWriter, r *http.Request, p *principal) {

@@ -55,6 +55,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/.well-known/carddav", s.serveDAV)
 	mux.HandleFunc("GET /.well-known/mta-sts.txt", s.mtaSTSPolicyFile)
 	mux.HandleFunc("GET /internal/tls-ask", s.tlsAsk)
+	mux.HandleFunc("GET /mail/config-v1.1.xml", s.mailAutoconfig)
+	mux.HandleFunc("GET /.well-known/autoconfig/mail/config-v1.1.xml", s.mailAutoconfig)
+	mux.HandleFunc("/autodiscover/autodiscover.xml", s.mailAutodiscover)
+	mux.HandleFunc("/Autodiscover/Autodiscover.xml", s.mailAutodiscover)
 
 	authed := func(pattern string, h func(http.ResponseWriter, *http.Request, *principal)) {
 		mux.HandleFunc(pattern, s.withPrincipal(h))
@@ -101,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/me/app-passwords", s.listAppPasswords)
 	authed("POST /api/v1/me/app-passwords", s.createAppPassword)
 	authed("DELETE /api/v1/me/app-passwords/{id}", s.revokeAppPassword)
+	authed("POST /api/v1/me/apple-profile", s.appleProfile)
 	authed("PUT /api/v1/me/avatar", s.putAvatar)
 	authed("DELETE /api/v1/me/avatar", s.deleteAvatar)
 	authed("GET /api/v1/avatars/{address}", s.getAvatar)

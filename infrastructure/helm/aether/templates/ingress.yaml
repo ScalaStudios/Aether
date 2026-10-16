@@ -19,13 +19,15 @@ spec:
         - {{ $host | quote }}
         {{- range .Values.mtaSts.domains }}
         - {{ printf "mta-sts.%s" . | quote }}
+        - {{ printf "autoconfig.%s" . | quote }}
+        - {{ printf "autodiscover.%s" . | quote }}
         {{- end }}
       secretName: {{ .Values.ingress.tlsSecretName }}
   rules:
     - host: {{ $host | quote }}
       http:
         paths:
-          {{- range list "/api" "/dav" "/.well-known/caldav" "/.well-known/carddav" }}
+          {{- range list "/api" "/dav" "/.well-known/caldav" "/.well-known/carddav" "/.well-known/autoconfig" "/autodiscover" "/Autodiscover" }}
           - path: {{ . }}
             pathType: Prefix
             backend:
@@ -43,5 +45,21 @@ spec:
             pathType: Exact
             backend:
               service: { name: api, port: { name: http } }
+    - host: {{ printf "autoconfig.%s" . | quote }}
+      http:
+        paths:
+          - path: /mail/config-v1.1.xml
+            pathType: Exact
+            backend:
+              service: { name: api, port: { name: http } }
+    - host: {{ printf "autodiscover.%s" . | quote }}
+      http:
+        paths:
+          {{- range list "/autodiscover" "/Autodiscover" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { name: http } }
+          {{- end }}
     {{- end }}
 {{- end }}

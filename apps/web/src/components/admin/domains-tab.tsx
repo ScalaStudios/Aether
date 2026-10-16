@@ -51,6 +51,10 @@ const purposes: Record<DNSRecord["purpose"], string> = {
   "mta-sts-host": "MTA-STS policy host",
   "mta-sts": "MTA-STS",
   "tls-rpt": "TLS reporting",
+  autoconfig: "Thunderbird autoconfig",
+  autodiscover: "Outlook autodiscover",
+  "srv-imaps": "IMAP service",
+  "srv-submissions": "Submission service",
 }
 
 const periods = [7, 30, 90].map((days) => ({ value: days, label: `${days} days` }))

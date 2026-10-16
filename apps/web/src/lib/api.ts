@@ -27,7 +27,7 @@ export function apiUrl(path: string, query?: Query) {
 
 export async function api<T = void>(
   path: string,
-  { method = "GET", body, query }: { method?: string; body?: unknown; query?: Query } = {}
+  { method = "GET", body, query, blob }: { method?: string; body?: unknown; query?: Query; blob?: boolean } = {}
 ): Promise<T> {
   const raw = body instanceof Blob
   const headers: Record<string, string> = { Accept: "application/json" }
@@ -59,6 +59,7 @@ export async function api<T = void>(
     )
   }
 
+  if (blob) return (await res.blob()) as T
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
 }

@@ -588,6 +588,25 @@ paths:
                     required: [password]
                     properties:
                       password: { type: string }
+  /me/apple-profile:
+    post:
+      tags: [app-passwords]
+      summary: Create an app password for a mailbox and return it inside an Apple configuration profile with mail, CalDAV and CardDAV accounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mailboxId]
+              properties:
+                mailboxId: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The configuration profile
+          content:
+            application/x-apple-aspen-config:
+              schema: { type: string, format: binary }
   /me/app-passwords/{id}:
     delete:
       tags: [app-passwords]
@@ -1353,10 +1372,10 @@ components:
       type: object
       required: [type, name, value, purpose, status, found]
       properties:
-        type: { type: string, enum: [MX, TXT, CNAME, PTR] }
+        type: { type: string, enum: [MX, TXT, CNAME, SRV, PTR] }
         name: { type: string }
         value: { type: string }
-        purpose: { type: string, enum: [verification, mx, spf, dkim, dmarc] }
+        purpose: { type: string, enum: [verification, mx, spf, dkim, dmarc, mta-sts-host, mta-sts, tls-rpt, autoconfig, autodiscover, srv-imaps, srv-submissions] }
         status: { type: string, enum: [ok, missing, mismatch, error] }
         found: { type: array, items: { type: string } }
     Mailbox:

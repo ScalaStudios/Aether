@@ -44,6 +44,7 @@ func TestRecordMatches(t *testing.T) {
 	dmarc := &dnsRecord{Purpose: "dmarc"}
 	sts := &dnsRecord{Purpose: "mta-sts", Value: "v=STSv1; id=abc123"}
 	tlsrpt := &dnsRecord{Purpose: "tls-rpt"}
+	imaps := &dnsRecord{Purpose: "srv-imaps", Value: "0 1 993 mail.example.com."}
 	checks := []struct {
 		rec   *dnsRecord
 		found string
@@ -60,6 +61,10 @@ func TestRecordMatches(t *testing.T) {
 		{sts, "v=STSv1; id=stale", false},
 		{tlsrpt, "v=TLSRPTv1; rua=mailto:tls@example.com", true},
 		{tlsrpt, "v=DMARC1; p=none", false},
+		{imaps, "0 1 993 mail.example.com.", true},
+		{imaps, "10 5 993 mail.example.com", true},
+		{imaps, "0 1 143 mail.example.com.", false},
+		{imaps, "0 1 993 other.example.com.", false},
 	}
 	for _, c := range checks {
 		if got := recordMatches(c.rec, c.found, "mail.example.com"); got != c.want {
@@ -194,5 +199,32 @@ func TestParseDMARCReportAttachments(t *testing.T) {
 	}
 	if _, err := parseDMARCMessage(strings.NewReader("From: a@b.c\r\nSubject: hi\r\n\r\nhello\r\n")); err == nil {
 		t.Fatal("a plain message was accepted as a report")
+	}
+}
+
+func TestAutoconfigHostAndAddressDomains(t *testing.T) {
+	if d, ok := hostDomain("Autoconfig.Example.com:443", "mta-sts.", "autoconfig."); !ok || d != "example.com" {
+		t.Errorf("hostDomain = %q, %v", d, ok)
+	}
+	if _, ok := hostDomain("mail.example.com", "autoconfig."); ok {
+		t.Error("hostDomain accepted a host without the prefix")
+	}
+	if d, ok := addressDomain("Sam <Sam@Example.COM>"); !ok || d != "example.com" {
+		t.Errorf("addressDomain = %q, %v", d, ok)
+	}
+	if _, ok := addressDomain("not an address"); ok {
+		t.Error("addressDomain accepted an invalid address")
+	}
+}
+
+func TestPlistEscapesValues(t *testing.T) {
+	var d plist
+	d.key("Name", `a<b & "c"`)
+	d.key("Port", 993)
+	d.key("SSL", true)
+	got := d.dict()
+	want := `<dict><key>Name</key><string>a&lt;b &amp; &#34;c&#34;</string><key>Port</key><integer>993</integer><key>SSL</key><true/></dict>`
+	if got != want {
+		t.Errorf("dict = %s", got)
 	}
 }

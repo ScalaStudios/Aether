@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"regexp"
@@ -34,6 +35,7 @@ type resolver interface {
 	LookupTXT(ctx context.Context, name string) ([]string, error)
 	LookupMX(ctx context.Context, name string) ([]*net.MX, error)
 	LookupHost(ctx context.Context, name string) ([]string, error)
+	LookupSRV(ctx context.Context, service, proto, name string) (string, []*net.SRV, error)
 }
 
 type domain struct {
@@ -206,6 +208,10 @@ func (s *Server) expectedRecords(d *domain) []dnsRecord {
 		{Type: "CNAME", Name: "mta-sts." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "mta-sts-host"},
 		{Type: "TXT", Name: "_mta-sts." + d.Name, Value: "v=STSv1; id=" + s.mtaSTSPolicyID(), Purpose: "mta-sts"},
 		{Type: "TXT", Name: "_smtp._tls." + d.Name, Value: "v=TLSRPTv1; rua=mailto:postmaster@" + d.Name, Purpose: "tls-rpt"},
+		{Type: "CNAME", Name: "autoconfig." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "autoconfig"},
+		{Type: "CNAME", Name: "autodiscover." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "autodiscover"},
+		{Type: "SRV", Name: "_imaps._tcp." + d.Name, Value: "0 1 993 " + s.cfg.MailHostname + ".", Purpose: "srv-imaps"},
+		{Type: "SRV", Name: "_submissions._tcp." + d.Name, Value: "0 1 465 " + s.cfg.MailHostname + ".", Purpose: "srv-submissions"},
 	}
 }
 
@@ -223,16 +229,8 @@ func (s *Server) mtaSTSPolicyID() string {
 }
 
 func (s *Server) servesMTASTS(ctx context.Context, host string) bool {
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	name, ok := strings.CutPrefix(strings.ToLower(host), "mta-sts.")
-	if !ok {
-		return false
-	}
-	var found bool
-	err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM domains WHERE name = $1 AND verified_at IS NOT NULL AND active)`, name).Scan(&found)
-	return err == nil && found
+	name, ok := hostDomain(host, "mta-sts.")
+	return ok && s.verifiedDomain(ctx, name)
 }
 
 func (s *Server) mtaSTSPolicyFile(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +244,8 @@ func (s *Server) mtaSTSPolicyFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) tlsAsk(w http.ResponseWriter, r *http.Request) {
-	if !s.servesMTASTS(r.Context(), r.URL.Query().Get("domain")) {
+	name, ok := hostDomain(r.URL.Query().Get("domain"), "mta-sts.", "autoconfig.", "autodiscover.")
+	if !ok || !s.verifiedDomain(r.Context(), name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -260,7 +259,14 @@ func (s *Server) checkRecord(ctx context.Context, rec *dnsRecord) {
 		s.checkHost(ctx, rec)
 		return
 	}
-	if rec.Type == "MX" {
+	if rec.Type == "SRV" {
+		parts := strings.SplitN(rec.Name, ".", 3)
+		var srvs []*net.SRV
+		_, srvs, err = s.resolve.LookupSRV(ctx, strings.TrimPrefix(parts[0], "_"), strings.TrimPrefix(parts[1], "_"), parts[2])
+		for _, srv := range srvs {
+			rec.Found = append(rec.Found, fmt.Sprintf("%d %d %d %s", srv.Priority, srv.Weight, srv.Port, strings.ToLower(srv.Target)))
+		}
+	} else if rec.Type == "MX" {
 		var mxs []*net.MX
 		mxs, err = s.resolve.LookupMX(ctx, rec.Name)
 		for _, mx := range mxs {
@@ -337,6 +343,9 @@ func recordMatches(rec *dnsRecord, found, mailHost string) bool {
 		return strings.HasPrefix(normalized, "v=dmarc1;")
 	case "mta-sts":
 		return normalized == strings.ToLower(strings.Join(strings.Fields(rec.Value), ""))
+	case "srv-imaps", "srv-submissions":
+		f, want := strings.Fields(found), strings.Fields(rec.Value)
+		return len(f) == 4 && f[2] == want[2] && strings.TrimSuffix(f[3], ".") == mailHost
 	case "tls-rpt":
 		return strings.HasPrefix(normalized, "v=tlsrptv1;")
 	case "dkim":

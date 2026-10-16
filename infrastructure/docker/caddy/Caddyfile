@@ -15,7 +15,7 @@
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
-	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav
+	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
 	handle @api {
 		reverse_proxy api:8080
 	}
@@ -28,7 +28,8 @@ https:// {
 	tls {
 		on_demand
 	}
-	handle /.well-known/mta-sts.txt {
+	@served path /.well-known/mta-sts.txt /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
+	handle @served {
 		reverse_proxy api:8080
 	}
 	handle {

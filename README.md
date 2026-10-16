@@ -38,6 +38,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 | **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself and as aliases that point to it, checked on both the envelope and the From header. |
 | **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, spam filed into Junk, DKIM signing with a 2048-bit RSA key per domain, ARC signing, outbound rate limits and optional ClamAV virus scanning. |
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
+| **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
 | **Webmail** | Aether Mail: folders, conversations, server-side search, rich-text compose with signatures and inline images, attachments, drafts, scheduled send, snooze, keyboard shortcuts, and HTML mail rendered with remote content blocked. |
 | **Rules and sharing** | Mail rules and automatic replies compiled to Sieve, so they run on the server for every client. Shared mailboxes with full or read-only access for members of the organization. |
 | **Calendar and contacts** | CalDAV and CardDAV at `/dav/`, calendars with repeating events and ICS import and export, meeting invitations that work with Gmail, Outlook and Apple Calendar, shared and organization calendars, free/busy while you schedule, a personal address book and the organization directory. |
@@ -158,8 +159,12 @@ For `example.com` with the mail host `mail.example.com`, the records are:
 | CNAME | `mta-sts.example.com` | `mail.example.com.` | Recommended: serves the MTA-STS policy |
 | TXT | `_mta-sts.example.com` | `v=STSv1; id=<id>` | Recommended: announces the MTA-STS policy |
 | TXT | `_smtp._tls.example.com` | `v=TLSRPTv1; rua=mailto:postmaster@example.com` | Recommended: asks for TLS reports |
+| CNAME | `autoconfig.example.com` | `mail.example.com.` | Recommended: Thunderbird finds the settings |
+| CNAME | `autodiscover.example.com` | `mail.example.com.` | Recommended: Autodiscover clients find the settings |
+| SRV | `_imaps._tcp.example.com` | `0 1 993 mail.example.com.` | Recommended: IMAP service lookup |
+| SRV | `_submissions._tcp.example.com` | `0 1 465 mail.example.com.` | Recommended: SMTP submission lookup |
 
-To connect a mail or calendar app, create an app password in **Settings → App passwords**. Each one works for one mailbox and is shown once.
+To connect a mail or calendar app, create an app password in **Settings → App passwords**. Each one works for one mailbox and is shown once. With the recommended records in place, Thunderbird fills in the servers from the address alone, and **Set up an Apple device** downloads a profile that adds mail, calendar and contacts to an iPhone, iPad or Mac in one step.
 
 | Setting | Value |
 | --- | --- |
@@ -239,7 +244,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - IMAP and SMTP accept app passwords only. Signing in to them with an OIDC access token through OAUTHBEARER or XOAUTH2 is planned.
 - Halo cannot provision users into Aether over SCIM yet; accounts are created on first sign-in instead.
 - There is no importer from other providers. Use an IMAP sync tool such as imapsync to move existing mail.
-- Aether does not publish autoconfig, autodiscover or TLSA records for its domains, so mail apps are set up by hand.
+- Aether does not publish TLSA records for its own mail host. They need DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 - Only iOS Mail, Calendar and Contacts have been tested against a production installation.
 
 ## Documentation

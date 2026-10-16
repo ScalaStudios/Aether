@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { KeyRound, Plus, Trash2 } from "lucide-react"
+import { KeyRound, Plus, Smartphone, Trash2 } from "lucide-react"
 import { useRef, useState, useSyncExternalStore } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
-import { api, apiUrl } from "@/lib/api"
+import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { myMailboxesQuery } from "@/lib/queries"
 import type { AppPassword, CreatedAppPassword } from "@/lib/types"
@@ -160,13 +160,31 @@ function AppPasswords() {
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedAppPassword | null>(null)
   const [revoking, setRevoking] = useState<AppPassword | null>(null)
+  const [profiling, setProfiling] = useState(false)
+  const [profileMailbox, setProfileMailbox] = useState("")
   const form = useForm<CreateValues>({ resolver: zodResolver(createSchema), defaultValues: { name: "", mailboxId: "" } })
+  const writable = mailboxes.data?.filter((m) => m.access !== "read") ?? []
 
   const create = useMutation({
     mutationFn: (values: CreateValues) => api<CreatedAppPassword>("/me/app-passwords", { method: "POST", body: values }),
     onSuccess: (data) => {
       setCreated(data)
       form.reset()
+      qc.invalidateQueries({ queryKey: ["app-passwords"] })
+    },
+  })
+  const profile = useMutation({
+    mutationFn: (mailboxId: string) => api<Blob>("/me/apple-profile", { method: "POST", body: { mailboxId }, blob: true }),
+    onSuccess: (data) => {
+      const address = writable.find((m) => m.id === profileMailbox)?.address ?? "aether"
+      const url = URL.createObjectURL(data)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `${address}.mobileconfig`
+      link.click()
+      URL.revokeObjectURL(url)
+      toast.success("Profile downloaded", { description: "Open it on your iPhone, iPad or Mac to install it." })
+      setProfiling(false)
       qc.invalidateQueries({ queryKey: ["app-passwords"] })
     },
   })
@@ -195,10 +213,22 @@ function AppPasswords() {
         title="App passwords"
         description="Use an app password instead of your sign-in password in IMAP and SMTP mail clients. Each one works for a single mailbox."
         actions={
-          <Button variant="secondary" onClick={() => setCreating(true)}>
-            <Plus aria-hidden />
-            Create app password
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setProfileMailbox(writable.length === 1 ? writable[0].id : "")
+                setProfiling(true)
+              }}
+            >
+              <Smartphone aria-hidden />
+              Set up an Apple device
+            </Button>
+            <Button variant="secondary" onClick={() => setCreating(true)}>
+              <Plus aria-hidden />
+              Create app password
+            </Button>
+          </>
         }
       />
       <QueryView
@@ -268,7 +298,7 @@ function AppPasswords() {
                       <SelectValue placeholder={mailboxes.isPending ? "Loading mailboxes…" : "Choose a mailbox"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {mailboxes.data?.filter((m) => m.access !== "read").map((m) => (
+                      {writable.map((m) => (
                         <SelectItem key={m.id} value={m.id}>
                           {m.address}
                         </SelectItem>
@@ -280,6 +310,37 @@ function AppPasswords() {
             />
           </>
         )}
+      </FormDialog>
+
+      <FormDialog
+        open={profiling}
+        onOpenChange={(open) => {
+          setProfiling(open)
+          if (!open) profile.reset()
+        }}
+        title="Set up an Apple device"
+        description="Download a configuration profile that adds mail, calendar and contacts to an iPhone, iPad or Mac. It contains a new app password, which you can revoke here."
+        submitLabel="Download profile"
+        pending={profile.isPending}
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (profileMailbox) profile.mutate(profileMailbox)
+        }}
+      >
+        <Field id="profile-mailbox" label="Mailbox" error={profile.error ? errorMessage(profile.error) : undefined}>
+          <Select value={profileMailbox} onValueChange={setProfileMailbox}>
+            <SelectTrigger id="profile-mailbox" className="w-full">
+              <SelectValue placeholder={mailboxes.isPending ? "Loading mailboxes…" : "Choose a mailbox"} />
+            </SelectTrigger>
+            <SelectContent>
+              {writable.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.address}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
       </FormDialog>
 
       <ConfirmDialog

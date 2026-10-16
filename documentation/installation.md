@@ -54,14 +54,14 @@
 If ports 80 and 443 already belong to another web server on the host, skip the bundled Caddy:
 
 1. Add `COMPOSE_FILE=compose.yml:compose.external-proxy.yml` to `.env`. The API then listens on `127.0.0.1:20100` and the web app on `127.0.0.1:20101`. Change them with `AETHER_API_LOCAL_PORT` and `AETHER_WEB_LOCAL_PORT`.
-2. In your proxy, send `/api/*`, `/dav/*`, `/.well-known/caldav`, and `/.well-known/carddav` to the API port, and everything else to the web port. With Caddy:
+2. In your proxy, send `/api/*`, `/dav/*`, `/.well-known/caldav`, `/.well-known/carddav`, `/.well-known/autoconfig/*`, `/autodiscover/*` and `/Autodiscover/*` to the API port, and everything else to the web port. With Caddy:
 
    ```caddyfile
    mail.example.com {
    	request_body {
    		max_size 32MB
    	}
-   	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav
+   	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /autodiscover/* /Autodiscover/*
    	handle @api {
    		reverse_proxy 127.0.0.1:20100
    	}
@@ -71,11 +71,12 @@ If ports 80 and 443 already belong to another web server on the host, skip the b
    }
    ```
 
-3. For each mail domain, also serve `mta-sts.<domain>` and send `/.well-known/mta-sts.txt` to the API port:
+3. For each mail domain, also serve `mta-sts.<domain>`, `autoconfig.<domain>` and `autodiscover.<domain>`, and send their policy and configuration paths to the API port:
 
    ```caddyfile
-   mta-sts.example.com {
-   	reverse_proxy /.well-known/mta-sts.txt 127.0.0.1:20100
+   mta-sts.example.com, autoconfig.example.com, autodiscover.example.com {
+   	@served path /.well-known/mta-sts.txt /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
+   	reverse_proxy @served 127.0.0.1:20100
    }
    ```
 
@@ -86,6 +87,20 @@ If ports 80 and 443 already belong to another web server on the host, skip the b
    ```
 
    The script copies the files only when they have changed, then reloads Postfix and Dovecot. Run it from a timer so that renewals are picked up.
+
+## Mail app setup
+
+Aether answers the lookups that mail apps make when someone types only their address and password:
+
+| Record | What uses it |
+| --- | --- |
+| `autoconfig.<domain>` CNAME to the web host | Thunderbird, which fetches `https://autoconfig.<domain>/mail/config-v1.1.xml` |
+| `autodiscover.<domain>` CNAME to the web host | Clients that use the Autodiscover XML format, which post to `https://autodiscover.<domain>/autodiscover/autodiscover.xml` |
+| `_imaps._tcp.<domain>` and `_submissions._tcp.<domain>` SRV | Clients that look up services as RFC 6186 and RFC 8314 describe |
+
+The domain page lists these records with your values. Both files describe IMAP on port 993 and SMTP on port 465 with implicit TLS, and the full address as the username; the Thunderbird file also lists the STARTTLS ports. The bundled Caddy obtains certificates for the `autoconfig` and `autodiscover` hosts on demand, but only for verified domains.
+
+For iPhone, iPad and Mac, **Settings → App passwords → Set up an Apple device** downloads a configuration profile with mail, calendar and contacts accounts. It contains a new app password for the chosen mailbox, which can be revoked like any other.
 
 ## MTA-STS and TLS reporting
 
