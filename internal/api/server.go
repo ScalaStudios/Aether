@@ -417,8 +417,8 @@ func (s *Server) allow(ctx context.Context, key string, perMinute int64) bool {
 	count := pipe.Incr(ctx, k)
 	pipe.Expire(ctx, k, 2*time.Minute)
 	if _, err := pipe.Exec(ctx); err != nil {
-		s.log.Error("rate limit check failed; allowing request", "err", err)
-		return true
+		s.log.Error("rate limit check failed; denying request", "err", err)
+		return false
 	}
 	return count.Val() <= perMinute
 }

@@ -4,11 +4,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -17,9 +20,25 @@ import (
 	"time"
 
 	"github.com/emersion/go-webdav"
+	"github.com/redis/go-redis/v9"
 
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
+
+func TestRateLimitFailsClosedWhenStoreUnavailable(t *testing.T) {
+	kv := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   -1,
+	})
+	t.Cleanup(func() { kv.Close() })
+	s := &Server{kv: kv, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if s.allow(context.Background(), "test", 1) {
+		t.Fatal("rate limit allowed a request when the store was unavailable")
+	}
+}
 
 func TestSafeReturnToRejectsOffsiteTargets(t *testing.T) {
 	cases := map[string]string{
