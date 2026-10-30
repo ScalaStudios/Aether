@@ -21,7 +21,7 @@ import { useSession } from "@/hooks/use-session"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
 import { myMailboxesQuery, signaturesQuery } from "@/lib/queries"
-import type { Mailbox, Signature, SignatureSettings } from "@/lib/types"
+import type { Signature, SignatureSettings } from "@/lib/types"
 
 export function Signatures() {
   const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read") })
@@ -157,25 +157,6 @@ function DefaultPicker({ id, label, value, signatures, onChange }: { id: string;
   )
 }
 
-async function templateHTML(mailbox: Mailbox, org: string) {
-  const logo = await fetch("/brand/scala-signature.png")
-    .then((r) => r.blob())
-    .then((blob) => new Promise<string>((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.readAsDataURL(blob)
-    }))
-  const domain = mailbox.address.split("@")[1]
-  const muted = "color: #6b7280"
-  return `<table style="border-collapse: collapse"><tbody><tr>
-<td style="vertical-align: top; padding: 0 16px 0 0"><img src="${logo}" width="61" alt="${org}"></td>
-<td style="vertical-align: top; padding: 0 0 0 16px; border-left: 1px solid #d1d5db">
-<p><strong><span style="font-size: 16px">${mailbox.displayName || mailbox.localPart}</span></strong><br><span style="${muted}">Your title</span><br><strong>${org}</strong></p>
-<p><a href="mailto:${mailbox.address}">${mailbox.address}</a><br><a href="https://${domain}">${domain}</a></p>
-<p><span style="font-size: 12px; ${muted}">LinkedIn · GitHub · X</span></p>
-</td></tr></tbody></table>`
-}
-
 function SignatureDialog({ mailboxId, signature, pending, onSave, onClose }: { mailboxId: string; signature: Signature; pending: boolean; onSave: (s: Signature) => void; onClose: () => void }) {
   const [name, setName] = useState(signature.name)
   const [error, setError] = useState("")
@@ -186,6 +167,13 @@ function SignatureDialog({ mailboxId, signature, pending, onSave, onClose }: { m
     content: signature.html,
     immediatelyRender: false,
     editorProps: { attributes: { class: "prose-editor min-h-[160px] px-4 py-3 text-base outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Signature", "data-focus-ring": "off" } },
+  })
+  const template = useMutation({
+    mutationFn: () => api<{ html: string }>(`/mailboxes/${mailboxId}/signature-template`),
+    onSuccess: ({ html }) => {
+      editor?.commands.setContent(html)
+      if (!name.trim()) setName(org || "Default")
+    },
   })
 
   return (
@@ -205,17 +193,8 @@ function SignatureDialog({ mailboxId, signature, pending, onSave, onClose }: { m
       <Field id="sig-name" label="Name" error={error}>
         <Input id="sig-name" value={name} autoComplete="off" aria-invalid={!!error} onChange={(e) => setName(e.target.value)} />
       </Field>
-      {mailbox && editor && (
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="self-start"
-          onClick={async () => {
-            editor.commands.setContent(await templateHTML(mailbox, org))
-            if (!name.trim()) setName(org || "Default")
-          }}
-        >
+      {editor && (
+        <Button type="button" variant="secondary" size="sm" className="self-start" loading={template.isPending} onClick={() => template.mutate()}>
           <LayoutTemplate aria-hidden />
           Use {org || "company"} template
         </Button>

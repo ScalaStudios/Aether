@@ -13,9 +13,42 @@ export const folderIcons: Record<SpecialUse, LucideIcon> = {
   "": FolderIcon,
 }
 
+export const snoozedFolder = "Snoozed"
+
 export function folderLabel(folder: Pick<Folder, "name" | "specialUse">) {
   return folder.specialUse === "inbox" ? "Inbox" : folder.name
 }
+
+export function folderParent(name: string) {
+  return name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : ""
+}
+
+export function folderTree(folders: Folder[]) {
+  const names = new Set(folders.map((f) => f.name))
+  const parent = (f: Folder) => (names.has(folderParent(f.name)) ? folderParent(f.name) : "")
+  const out: { folder: Folder; depth: number; label: string }[] = []
+  const visit = (name: string, depth: number) => {
+    for (const f of folders.filter((f) => parent(f) === name)) {
+      out.push({ folder: f, depth, label: name ? f.name.slice(name.length + 1) : folderLabel(f) })
+      visit(f.name, depth + 1)
+    }
+  }
+  visit("", 0)
+  return out
+}
+
+export type MessageSort = "date" | "from" | "to" | "subject" | "size"
+export type QuickFilter = "unread" | "flagged" | "hasAttachments"
+
+export interface ListView {
+  sort: MessageSort
+  order: "asc" | "desc"
+  filters: QuickFilter[]
+}
+
+export const defaultListView: ListView = { sort: "date", order: "desc", filters: [] }
+
+export const dragTypes = { message: "application/x-aether-message", folder: "application/x-aether-folder" }
 
 export function senderLabel(addresses: Address[], empty = "Unknown sender") {
   const first = addresses[0]

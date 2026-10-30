@@ -1,7 +1,7 @@
 "use client"
 
-import { useQueries, type UseQueryResult } from "@tanstack/react-query"
-import { AlarmClock, AlarmClockOff, ArrowLeft, ChevronDown, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
+import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query"
+import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
 import { cn } from "cn"
 import { useState } from "react"
 
@@ -9,15 +9,27 @@ import { Avatar } from "@/components/avatar"
 import { IconButton } from "@/components/icon-button"
 import { InvitationCard } from "@/components/mail/invitation-card"
 import { LaterMenu } from "@/components/mail/later-menu"
+import { Spinner } from "@/components/spinner"
 import { EmptyState, ErrorState } from "@/components/states"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { api, apiUrl } from "@/lib/api"
 import { formatAddress, formatBytes, formatDateTime } from "@/lib/format"
 import { folderIcons, folderLabel, messageDocument, type ComposeMode } from "@/lib/mail"
-import type { Address, Folder, Message } from "@/lib/types"
+import { foldersQuery } from "@/lib/queries"
+import type { Address, Folder, Mailbox, Message } from "@/lib/types"
 
 function AddressLine({ label, addresses }: { label: string; addresses: Address[] }) {
   if (!addresses.length) return null
@@ -123,11 +135,91 @@ function EarlierMessage({ query, mailboxId, folder, showFolder }: { query: UseQu
   )
 }
 
+function MailboxFolders({ mailboxId, exclude, onPick }: { mailboxId: string; exclude?: string; onPick: (folder: Folder) => void }) {
+  const folders = useQuery(foldersQuery(mailboxId))
+  if (folders.isPending) {
+    return (
+      <DropdownMenuItem disabled>
+        <Spinner />
+        Loading folders…
+      </DropdownMenuItem>
+    )
+  }
+  if (folders.isError) return <DropdownMenuItem disabled>The folders could not be loaded.</DropdownMenuItem>
+  return folders.data
+    .filter((f) => f.name !== exclude)
+    .map((f) => {
+      const Icon = folderIcons[f.specialUse]
+      return (
+        <DropdownMenuItem key={f.name} onSelect={() => onPick(f)}>
+          <Icon aria-hidden className="text-fg-tertiary" />
+          {folderLabel(f)}
+        </DropdownMenuItem>
+      )
+    })
+}
+
+function FolderPicker({
+  label,
+  title,
+  children,
+  mailboxId,
+  folder,
+  mailboxes,
+  disabled,
+  onPick,
+}: {
+  label: string
+  title: string
+  children: React.ReactNode
+  mailboxId: string
+  folder: string
+  mailboxes: Mailbox[]
+  disabled: boolean
+  onPick: (folder: Folder, mailbox?: Mailbox) => void
+}) {
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="quiet" size="icon" aria-label={label} disabled={disabled}>
+              {children}
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">{title}</DropdownMenuLabel>
+        <MailboxFolders mailboxId={mailboxId} exclude={folder} onPick={(f) => onPick(f)} />
+        {mailboxes.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Other mailboxes</DropdownMenuLabel>
+            {mailboxes.map((m) => (
+              <DropdownMenuSub key={m.id}>
+                <DropdownMenuSubTrigger>
+                  <AtSign aria-hidden className="text-fg-tertiary" />
+                  <span className="truncate">{m.address}</span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="max-h-(--radix-dropdown-menu-content-available-height) w-56 overflow-y-auto">
+                  <MailboxFolders mailboxId={m.id} onPick={(f) => onPick(f, m)} />
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            ))}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function ReadingPane({
   className,
   mailboxId,
   folder,
-  folders,
+  mailboxes,
   query,
   selected,
   earlier,
@@ -135,6 +227,7 @@ export function ReadingPane({
   onReply,
   onFlags,
   onMove,
+  onCopy,
   onDelete,
   onSnooze,
   onUnsnooze,
@@ -144,14 +237,15 @@ export function ReadingPane({
   className?: string
   mailboxId: string
   folder: string
-  folders: Folder[]
+  mailboxes: Mailbox[]
   query: UseQueryResult<Message>
   selected: boolean
   earlier: number[]
   onBack: () => void
   onReply: (mode: ComposeMode) => void
   onFlags: (flags: { seen?: boolean; flagged?: boolean }) => void
-  onMove: (to: string) => void
+  onMove: (folder: Folder, mailbox?: Mailbox) => void
+  onCopy: (folder: Folder, mailbox?: Mailbox) => void
   onDelete: () => void
   onSnooze: (until: Date) => void
   onUnsnooze?: () => void
@@ -192,32 +286,12 @@ export function ReadingPane({
             <IconButton label={m?.flagged ? "Remove flag" : "Flag"} aria-pressed={m?.flagged ?? false} disabled={!m} onClick={() => m && onFlags({ flagged: !m.flagged })}>
               <Flag className={cn(m?.flagged && "fill-current text-ember")} />
             </IconButton>
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="quiet" size="icon" aria-label="Move to folder" disabled={!m}>
-                      <FolderInput />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent>Move to folder</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Move to</DropdownMenuLabel>
-                {folders
-                  .filter((f) => f.name !== folder)
-                  .map((f) => {
-                    const Icon = folderIcons[f.specialUse]
-                    return (
-                      <DropdownMenuItem key={f.name} onSelect={() => onMove(f.name)}>
-                        <Icon aria-hidden className="text-fg-tertiary" />
-                        {folderLabel(f)}
-                      </DropdownMenuItem>
-                    )
-                  })}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <FolderPicker label="Move to folder" title="Move to" mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onMove}>
+              <FolderInput />
+            </FolderPicker>
+            <FolderPicker label="Copy to folder" title="Copy to" mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onCopy}>
+              <Copy />
+            </FolderPicker>
             {onUnsnooze ? (
               <IconButton label="Unsnooze" disabled={!m || deleting} onClick={onUnsnooze}>
                 <AlarmClockOff />

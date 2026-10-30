@@ -30,6 +30,8 @@ type Config struct {
 	MTASTSMode            string
 	WebhookAllowPrivate   bool
 	ReportListen          string
+	PolicyListen          string
+	CustomCSS             bool
 }
 
 func Load() (*Config, error) {
@@ -52,6 +54,8 @@ func Load() (*Config, error) {
 		MTASTSMode:            env("AETHER_MTA_STS_MODE", "testing"),
 		WebhookAllowPrivate:   os.Getenv("AETHER_WEBHOOK_ALLOW_PRIVATE") == "true",
 		ReportListen:          env("AETHER_REPORT_LISTEN", ":2424"),
+		PolicyListen:          env("AETHER_POLICY_LISTEN", ":10040"),
+		CustomCSS:             env("AETHER_CUSTOM_CSS", "true") == "true",
 	}
 	var errs []error
 	if c.DatabaseURL == "" {

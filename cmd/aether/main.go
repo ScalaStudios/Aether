@@ -135,6 +135,15 @@ func serve(log *slog.Logger) error {
 		errCh <- reports.ListenAndServe()
 	}()
 	defer reports.Close()
+	policy, err := net.Listen("tcp", cfg.PolicyListen)
+	if err != nil {
+		return err
+	}
+	go func() {
+		log.Info("postfix policy service listening", "addr", cfg.PolicyListen)
+		errCh <- srv.ServePolicy(policy)
+	}()
+	defer policy.Close()
 	go func() {
 		log.Info("aether api listening", "addr", cfg.Listen, "public_url", cfg.PublicURL.String())
 		errCh <- httpServer.ListenAndServe()

@@ -138,3 +138,23 @@ func (s *Server) removeDelegate(w http.ResponseWriter, r *http.Request, p *princ
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_remove", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": email})
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) managedMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {
+	id, ok := pathID(w, r, "mailboxId")
+	if !ok {
+		return nil, false
+	}
+	m := &ownedMailbox{}
+	err := s.db.QueryRow(r.Context(), `
+		SELECT m.id, m.org_id, m.address, m.display_name FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		WHERE m.id = $1 AND m.active AND d.active AND d.verified_at IS NOT NULL`, id).
+		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName)
+	if err == nil && p.canAdminOrg(m.OrgID) {
+		return m, true
+	}
+	if p.apiKey != nil {
+		notFound(w)
+		return nil, false
+	}
+	return s.ownedMailbox(w, r, p)
+}

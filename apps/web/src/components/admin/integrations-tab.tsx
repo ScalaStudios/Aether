@@ -28,13 +28,18 @@ import type { APIKey, Webhook, WebhookDelivery } from "@/lib/types"
 
 type Access = "" | "read" | "write"
 
-const resources: { value: string; label: string; levels: Access[] }[] = [
-  { value: "domains", label: "Domains", levels: ["", "read", "write"] },
-  { value: "mailboxes", label: "Mailboxes", levels: ["", "read", "write"] },
-  { value: "aliases", label: "Aliases", levels: ["", "read", "write"] },
-  { value: "members", label: "Members", levels: ["", "read", "write"] },
-  { value: "audit", label: "Audit log", levels: ["", "read"] },
-  { value: "webhooks", label: "Webhooks", levels: ["", "read", "write"] },
+const resources: { value: string; label: string; description: string; levels: Access[] }[] = [
+  { value: "domains", label: "Domains", description: "Domains, DNS records, verification and DMARC reports.", levels: ["", "read", "write"] },
+  {
+    value: "mailboxes",
+    label: "Mailboxes",
+    description: "Mailboxes, delegates, mail rules, automatic replies and signatures. Write also imports calendars and contacts for the mailbox owner.",
+    levels: ["", "read", "write"],
+  },
+  { value: "aliases", label: "Aliases", description: "Aliases and distribution lists, with their members, sender restrictions and owners.", levels: ["", "read", "write"] },
+  { value: "members", label: "Members", description: "Members and their roles. Write also adds and removes members.", levels: ["", "read", "write"] },
+  { value: "audit", label: "Audit log", description: "The organization’s audit log.", levels: ["", "read"] },
+  { value: "webhooks", label: "Webhooks", description: "Webhooks, their delivery history and test deliveries.", levels: ["", "read", "write"] },
 ]
 
 const levelLabels: Record<Access, string> = { "": "None", read: "Read", write: "Write" }
@@ -207,11 +212,14 @@ function APIKeys({ orgId }: { orgId: string }) {
               control={form.control}
               name="access"
               render={({ field, fieldState }) => (
-                <fieldset className="flex flex-col gap-2">
+                <fieldset className="flex flex-col gap-4">
                   <legend className="mb-2 text-label text-fg-secondary">Scopes</legend>
                   {resources.map((r) => (
                     <div key={r.value} className="flex items-center justify-between gap-4">
-                      <span>{r.label}</span>
+                      <div className="flex flex-col gap-1">
+                        <span>{r.label}</span>
+                        <span className="text-sm text-fg-tertiary">{r.description}</span>
+                      </div>
                       <SegmentedControl
                         label={`${r.label} access`}
                         options={r.levels.map((level) => ({ value: level, label: levelLabels[level] }))}

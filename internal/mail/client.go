@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -89,6 +90,7 @@ type Folder struct {
 	SpecialUse string `json:"specialUse"`
 	Total      uint32 `json:"total"`
 	Unread     uint32 `json:"unread"`
+	Subscribed bool   `json:"subscribed"`
 }
 
 var specialUses = map[imap.MailboxAttr]string{
@@ -98,10 +100,23 @@ var specialUses = map[imap.MailboxAttr]string{
 
 var folderOrder = []string{"inbox", "drafts", "sent", "archive", "junk", "trash", ""}
 
+func specialUse(l *imap.ListData) string {
+	use := ""
+	if strings.EqualFold(l.Mailbox, "INBOX") {
+		use = "inbox"
+	}
+	for _, a := range l.Attrs {
+		if u, ok := specialUses[a]; ok {
+			use = u
+		}
+	}
+	return use
+}
+
 func (c *Client) Folders(address string) ([]Folder, error) {
 	var out []Folder
 	err := c.with(address, func(ic *imapclient.Client) error {
-		list, err := ic.List("", "*", &imap.ListOptions{ReturnStatus: &imap.StatusOptions{NumMessages: true, NumUnseen: true}, ReturnSpecialUse: true}).Collect()
+		list, err := ic.List("", "*", &imap.ListOptions{ReturnStatus: &imap.StatusOptions{NumMessages: true, NumUnseen: true}, ReturnSpecialUse: true, ReturnSubscribed: true}).Collect()
 		if err != nil {
 			return err
 		}
@@ -109,15 +124,7 @@ func (c *Client) Folders(address string) ([]Folder, error) {
 			if slices.Contains(l.Attrs, imap.MailboxAttrNoSelect) {
 				continue
 			}
-			f := Folder{Name: l.Mailbox}
-			if strings.EqualFold(l.Mailbox, "INBOX") {
-				f.SpecialUse = "inbox"
-			}
-			for _, a := range l.Attrs {
-				if use, ok := specialUses[a]; ok {
-					f.SpecialUse = use
-				}
-			}
+			f := Folder{Name: l.Mailbox, SpecialUse: specialUse(l), Subscribed: slices.Contains(l.Attrs, imap.MailboxAttrSubscribed)}
 			if l.Status != nil && l.Status.NumMessages != nil {
 				f.Total = *l.Status.NumMessages
 			}
@@ -174,7 +181,48 @@ type Summary struct {
 type Page struct {
 	Messages   []Summary `json:"messages"`
 	Total      int       `json:"total"`
-	NextCursor *uint32   `json:"nextCursor"`
+	NextCursor *string   `json:"nextCursor"`
+}
+
+var SortKeys = map[string]imapclient.SortKey{
+	"date": imapclient.SortKeyArrival, "sent": imapclient.SortKeyDate, "from": "DISPLAYFROM", "to": "DISPLAYTO",
+	"subject": imapclient.SortKeySubject, "size": imapclient.SortKeySize,
+}
+
+var ErrInvalidCursor = errors.New("invalid cursor")
+
+type ListOptions struct {
+	Query          string
+	Sort           string
+	Desc           bool
+	Threads        bool
+	Unread         bool
+	Flagged        bool
+	HasAttachments bool
+	From, To       string
+	Since, Until   time.Time
+	Cursor         string
+	Limit          int
+}
+
+func (o ListOptions) criteria() *imap.SearchCriteria {
+	c := &imap.SearchCriteria{Text: strings.Fields(o.Query), Since: o.Since}
+	if o.Unread {
+		c.NotFlag = append(c.NotFlag, imap.FlagSeen)
+	}
+	if o.Flagged {
+		c.Flag = append(c.Flag, imap.FlagFlagged)
+	}
+	if o.From != "" {
+		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "From", Value: o.From})
+	}
+	if o.To != "" {
+		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "To", Value: o.To})
+	}
+	if !o.Until.IsZero() {
+		c.Before = o.Until.AddDate(0, 0, 1)
+	}
+	return c
 }
 
 func addresses(in []imap.Address) []Address {
@@ -200,15 +248,21 @@ func summarize(m *imapclient.FetchMessageBuffer) Summary {
 	s.Seen = slices.Contains(m.Flags, imap.FlagSeen)
 	s.Flagged = slices.Contains(m.Flags, imap.FlagFlagged)
 	s.Answered = slices.Contains(m.Flags, imap.FlagAnswered)
-	if m.BodyStructure != nil {
-		m.BodyStructure.Walk(func(path []int, part imap.BodyStructure) bool {
+	s.HasAttachments = hasAttachments(m.BodyStructure)
+	return s
+}
+
+func hasAttachments(bs imap.BodyStructure) bool {
+	found := false
+	if bs != nil {
+		bs.Walk(func(path []int, part imap.BodyStructure) bool {
 			if single, ok := part.(*imap.BodyStructureSinglePart); ok && isAttachment(single) {
-				s.HasAttachments = true
+				found = true
 			}
 			return true
 		})
 	}
-	return s
+	return found
 }
 
 func isAttachment(p *imap.BodyStructureSinglePart) bool {
@@ -226,60 +280,137 @@ func flattenThread(t imapclient.ThreadData) []uint32 {
 	return out
 }
 
-func (c *Client) List(address, folder, query string, before uint32, limit int, threaded bool) (*Page, error) {
+func uidSet(uids []uint32) imap.UIDSet {
+	var set imap.UIDSet
+	for _, uid := range uids {
+		set.AddNum(imap.UID(uid))
+	}
+	return set
+}
+
+func sortUIDs(ic *imapclient.Client, criteria *imap.SearchCriteria, key imapclient.SortKey) ([]uint32, error) {
+	return ic.UIDSort(&imapclient.SortOptions{SearchCriteria: criteria, SortCriteria: []imapclient.SortCriterion{{Key: key}}}).Wait()
+}
+
+func withAttachments(ic *imapclient.Client, uids []uint32) ([]uint32, error) {
+	if len(uids) == 0 {
+		return uids, nil
+	}
+	msgs, err := ic.Fetch(uidSet(uids), &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}}).Collect()
+	if err != nil {
+		return nil, err
+	}
+	keep := map[uint32]bool{}
+	for _, m := range msgs {
+		keep[uint32(m.UID)] = hasAttachments(m.BodyStructure)
+	}
+	return slices.DeleteFunc(uids, func(uid uint32) bool { return !keep[uid] }), nil
+}
+
+func ranks(uids []uint32) map[uint32]int {
+	out := make(map[uint32]int, len(uids))
+	for i, uid := range uids {
+		out[uid] = i
+	}
+	return out
+}
+
+func threadGroups(threads []imapclient.ThreadData, arrival, sorted []uint32) [][]uint32 {
+	newest, position := ranks(arrival), ranks(sorted)
+	var groups [][]uint32
+	for _, t := range threads {
+		uids := slices.DeleteFunc(flattenThread(t), func(uid uint32) bool {
+			_, ok := position[uid]
+			return !ok
+		})
+		if len(uids) == 0 {
+			continue
+		}
+		slices.SortFunc(uids, func(a, b uint32) int { return newest[b] - newest[a] })
+		groups = append(groups, uids)
+	}
+	slices.SortFunc(groups, func(a, b []uint32) int { return position[a[0]] - position[b[0]] })
+	return groups
+}
+
+func pageStart(groups [][]uint32, cursor string) (int, error) {
+	if cursor == "" {
+		return 0, nil
+	}
+	var offset int
+	var anchor uint32
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, ErrInvalidCursor
+	}
+	if _, err := fmt.Sscanf(string(raw), "%d:%d", &offset, &anchor); err != nil || offset < 1 {
+		return 0, ErrInvalidCursor
+	}
+	for i, g := range groups {
+		if slices.Contains(g, anchor) {
+			return i + 1, nil
+		}
+	}
+	return min(offset-1, len(groups)), nil
+}
+
+func pageCursor(offset int, anchor uint32) *string {
+	cursor := base64.RawURLEncoding.EncodeToString(fmt.Appendf(nil, "%d:%d", offset, anchor))
+	return &cursor
+}
+
+func (c *Client) List(address, folder string, o ListOptions) (*Page, error) {
 	page := &Page{Messages: []Summary{}}
 	err := c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 			return ErrNotFound
 		}
-		criteria := &imap.SearchCriteria{}
-		if q := strings.TrimSpace(query); q != "" {
-			criteria.Text = strings.Fields(q)
+		criteria := o.criteria()
+		key := cmp.Or(SortKeys[o.Sort], imapclient.SortKeyArrival)
+		sorted, err := sortUIDs(ic, criteria, key)
+		if err != nil {
+			return err
+		}
+		if o.HasAttachments {
+			if sorted, err = withAttachments(ic, sorted); err != nil {
+				return err
+			}
 		}
 		var groups [][]uint32
-		if threaded {
+		if o.Threads {
+			arrival := sorted
+			if key != imapclient.SortKeyArrival {
+				if arrival, err = sortUIDs(ic, criteria, imapclient.SortKeyArrival); err != nil {
+					return err
+				}
+			}
 			threads, err := ic.UIDThread(&imapclient.ThreadOptions{Algorithm: imap.ThreadReferences, SearchCriteria: criteria}).Wait()
 			if err != nil {
 				return err
 			}
-			for _, t := range threads {
-				uids := flattenThread(t)
-				slices.SortFunc(uids, func(a, b uint32) int { return int(b) - int(a) })
-				groups = append(groups, uids)
-			}
+			groups = threadGroups(threads, arrival, sorted)
 		} else {
-			data, err := ic.UIDSearch(criteria, nil).Wait()
-			if err != nil {
-				return err
-			}
-			for _, uid := range data.AllUIDs() {
-				groups = append(groups, []uint32{uint32(uid)})
+			for _, uid := range sorted {
+				groups = append(groups, []uint32{uid})
 			}
 		}
-		slices.SortFunc(groups, func(a, b []uint32) int { return int(b[0]) - int(a[0]) })
+		if o.Desc {
+			slices.Reverse(groups)
+		}
 		page.Total = len(groups)
-		if before > 0 {
-			i := 0
-			for i < len(groups) && groups[i][0] >= before {
-				i++
-			}
-			groups = groups[i:]
+		start, err := pageStart(groups, o.Cursor)
+		if err != nil {
+			return err
 		}
-		if len(groups) > limit {
-			groups = groups[:limit]
-			next := groups[len(groups)-1][0]
-			page.NextCursor = &next
+		groups = groups[start:]
+		if len(groups) > o.Limit {
+			groups = groups[:o.Limit]
+			page.NextCursor = pageCursor(start+o.Limit, groups[o.Limit-1][0])
 		}
 		if len(groups) == 0 {
 			return nil
 		}
-		var all []imap.UID
-		for _, g := range groups {
-			for _, uid := range g {
-				all = append(all, imap.UID(uid))
-			}
-		}
-		msgs, err := ic.Fetch(imap.UIDSetNum(all...), &imap.FetchOptions{
+		msgs, err := ic.Fetch(uidSet(slices.Concat(groups...)), &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
 		}).Collect()
@@ -636,7 +767,7 @@ func (c *Client) SetFlags(address, folder string, uid uint32, seen, flagged *boo
 	})
 }
 
-func (c *Client) Move(address, folder string, uid uint32, to string) error {
+func (c *Client) Move(address, folder string, uids []uint32, to string, keep bool) error {
 	return c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Status(to, &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
 			return ErrNotFound
@@ -644,9 +775,58 @@ func (c *Client) Move(address, folder string, uid uint32, to string) error {
 		if _, err := ic.Select(folder, nil).Wait(); err != nil {
 			return ErrNotFound
 		}
-		_, err := ic.Move(imap.UIDSetNum(imap.UID(uid)), to).Wait()
+		if keep {
+			_, err := ic.Copy(uidSet(uids), to).Wait()
+			return err
+		}
+		_, err := ic.Move(uidSet(uids), to).Wait()
 		return err
 	})
+}
+
+func (c *Client) Transfer(from, folder string, uids []uint32, to, target string, keep bool) (int, error) {
+	var n int
+	err := c.with(from, func(src *imapclient.Client) error {
+		return c.with(to, func(dst *imapclient.Client) error {
+			var err error
+			n, err = transfer(src, dst, folder, uids, target, keep)
+			return err
+		})
+	})
+	return n, err
+}
+
+func transfer(src, dst *imapclient.Client, folder string, uids []uint32, target string, keep bool) (int, error) {
+	if _, err := dst.Status(target, &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
+		return 0, ErrNotFound
+	}
+	if _, err := src.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+		return 0, ErrNotFound
+	}
+	body := &imap.FetchItemBodySection{Peek: true}
+	n := 0
+	for _, uid := range uids {
+		msgs, err := src.Fetch(imap.UIDSetNum(imap.UID(uid)), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, BodySection: []*imap.FetchItemBodySection{body}}).Collect()
+		if err != nil {
+			return n, err
+		}
+		if len(msgs) == 0 || msgs[0].FindBodySection(body) == nil {
+			continue
+		}
+		if err := appendOriginal(dst, target, msgs[0], msgs[0].FindBodySection(body)); err != nil {
+			return n, err
+		}
+		n++
+		if !keep {
+			if err := expungeUID(src, folder, uid); err != nil {
+				return n, err
+			}
+		}
+	}
+	if n == 0 {
+		return 0, ErrNotFound
+	}
+	return n, nil
 }
 
 const SnoozedFolder = "Snoozed"

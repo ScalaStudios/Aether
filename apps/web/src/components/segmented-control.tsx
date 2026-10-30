@@ -12,9 +12,10 @@ export function SegmentedControl<T extends string | number>({
 }: {
   label: string
   options: { value: T; label: string }[]
-  value: T
+  value: T | T[]
   onChange: (value: T) => void
 }) {
+  const pressed = (v: T) => (Array.isArray(value) ? value.includes(v) : value === v)
   return (
     <div role="group" aria-label={label} className="flex gap-1 rounded-lg border border-strong p-1">
       {options.map((o) => (
@@ -23,8 +24,8 @@ export function SegmentedControl<T extends string | number>({
           type="button"
           variant="quiet"
           size="sm"
-          aria-pressed={value === o.value}
-          className={cn("max-md:min-h-11", value === o.value && "bg-muted text-foreground")}
+          aria-pressed={pressed(o.value)}
+          className={cn("max-md:min-h-11", pressed(o.value) && "bg-muted text-foreground")}
           onClick={() => onChange(o.value)}
         >
           {o.label}

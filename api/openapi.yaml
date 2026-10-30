@@ -23,6 +23,7 @@ tags:
   - name: contacts
   - name: calendar
   - name: integrations
+  - name: branding
 paths:
   /auth/providers:
     get:
@@ -154,6 +155,200 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Organization" }
         "404": { $ref: "#/components/responses/Error" }
+  /branding:
+    get:
+      tags: [branding]
+      summary: The branding for this browser
+      description: "For a signed-in member, the branding of their organization, preferring the one that owns host. Otherwise the branding of the organization with a verified domain that host equals or is a subdomain of. null when there is none, and Aether's own look applies."
+      security: []
+      parameters:
+        - { name: host, in: query, schema: { type: string }, description: "The host name the page is served on, such as mail.example.com" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/Branding" }
+                  - { type: "null" }
+  /branding/{orgId}/{asset}:
+    get:
+      tags: [branding]
+      summary: An organization's logo, favicon or custom stylesheet
+      description: "Public and cached for five minutes. custom.css is not served while AETHER_CUSTOM_CSS is false."
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: asset, in: path, required: true, schema: { type: string, enum: [logo-light, logo-dark, favicon, custom.css] } }
+      responses:
+        "200":
+          description: The image or the stylesheet
+          content:
+            image/png: {}
+            image/jpeg: {}
+            image/webp: {}
+            text/css: {}
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/branding:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [branding]
+      summary: The organization's branding settings (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationBranding" }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [branding]
+      summary: Replace the name, sign-in message, colours and custom CSS
+      description: "Recorded in the audit log as branding.update with the fields that changed. Custom CSS may not use @import, image-set() or src(), and url() must point at this server or be a data: URL."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrandingSettings" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationBranding" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/branding/{image}:
+    parameters:
+      - { $ref: "#/components/parameters/orgId" }
+      - { name: image, in: path, required: true, schema: { type: string, enum: [logo-light, logo-dark, favicon] } }
+    put:
+      tags: [branding]
+      summary: Upload a logo or the favicon
+      description: "The body is the image: PNG, JPEG or WebP, up to 256 KB and 2048 by 2048 pixels. Recorded in the audit log as branding.image.update."
+      requestBody:
+        required: true
+        content:
+          image/png: { schema: { type: string, format: binary } }
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationBranding" }
+        "413": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [branding]
+      summary: Remove a logo or the favicon
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationBranding" }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/signature-templates:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [branding]
+      summary: The organization's signature templates (owners and administrators)
+      description: "templates holds the organization-wide template, with domainId null, and the templates of individual domains. builtIn is the layout used while the organization has none."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [builtIn, templates]
+                properties:
+                  builtIn: { $ref: "#/components/schemas/SignatureTemplate" }
+                  templates: { type: array, items: { $ref: "#/components/schemas/SignatureTemplate" } }
+    put:
+      tags: [branding]
+      summary: Save the organization-wide template, or a domain's own template
+      description: "Recorded in the audit log as signature_template.update."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignatureTemplate" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignatureTemplate" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [branding]
+      summary: Remove a template
+      description: "Without domainId, removes the organization-wide template and the built-in layout applies again. With domainId, that domain goes back to the organization-wide template."
+      parameters:
+        - { name: domainId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/signature-templates/preview:
+    post:
+      tags: [branding]
+      summary: Fill in a template for one of the organization's mailboxes without saving it
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/SignatureTemplate" }
+                - type: object
+                  required: [mailboxId]
+                  properties:
+                    mailboxId: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Sanitized HTML
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RenderedSignature" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/signature-template:
+    get:
+      tags: [mail]
+      summary: The organization's signature template filled in for this mailbox
+      description: "Uses the template of the mailbox's domain, else the organization-wide template, else the built-in layout. The logo is the organization's light theme logo, inlined as a data: URL."
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: Sanitized HTML, ready to save as a signature
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RenderedSignature" }
+        "404": { $ref: "#/components/responses/Error" }
+  /me/profile:
+    put:
+      tags: [auth]
+      summary: Set your job title and phone, which signature templates fill in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, phone]
+              properties:
+                title: { type: string, maxLength: 100 }
+                phone: { type: string, maxLength: 40 }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/domains:
     get:
       tags: [domains]
@@ -296,19 +491,20 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/Alias" } }
     post:
       tags: [aliases]
-      summary: Create an alias. An empty localPart creates the domain catch-all.
+      summary: Create an alias or distribution list. An empty localPart creates the domain catch-all.
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [domainId, localPart, destinations]
-              properties:
-                domainId: { type: string, format: uuid }
-                localPart: { type: string }
-                destinations: { type: array, items: { type: string, format: email } }
+              allOf:
+                - type: object
+                  required: [domainId, localPart, destinations]
+                  properties:
+                    domainId: { type: string, format: uuid }
+                    localPart: { type: string }
+                - { $ref: "#/components/schemas/AliasInput" }
       responses:
         "201":
           description: Created
@@ -316,11 +512,48 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Alias" }
   /aliases/{aliasId}:
+    get:
+      tags: [aliases]
+      summary: Read an alias or list. Organization admins and list owners.
+      parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alias" }
+    patch:
+      tags: [aliases]
+      summary: Change an alias or list in place
+      description: Only the fields sent are changed. List owners who are not organization admins may only send destinations, addDestinations and removeDestinations. Writes one alias.update audit event with the old and new values.
+      parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AliasInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alias" }
+        "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [aliases]
       parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "204": { description: Deleted }
+  /me/lists:
+    get:
+      tags: [aliases]
+      summary: Distribution lists the signed-in person owns
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Alias" } }
   /organizations/{orgId}/members:
     get:
       tags: [members]
@@ -348,6 +581,17 @@ paths:
       responses:
         "204": { description: Saved }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/members/{userId}:
+    delete:
+      tags: [members]
+      summary: Remove a person from the organization
+      description: Also removes their delegated access to the organization's mailboxes and their list ownerships. Removing an owner requires the owner role, and the last owner cannot be removed.
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Removed }
+        "409": { $ref: "#/components/responses/Error" }
   /domains/{domainId}/dmarc:
     get:
       tags: [domains]
@@ -388,6 +632,56 @@ paths:
           content:
             text/calendar:
               schema: { type: string }
+  /mailboxes/{mailboxId}/calendar/import:
+    post:
+      tags: [calendar]
+      summary: Import an iCalendar file into the personal calendar of the mailbox owner
+      description: For organization admins and API keys with mailboxes:write, for example during a migration. Works the same as /calendar/import.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          text/calendar:
+            schema: { type: string, maxLength: 10485760 }
+      responses:
+        "200":
+          description: Counts of imported, replaced, and skipped events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportCounts" }
+  /contacts/import:
+    post:
+      tags: [contacts]
+      summary: Import contacts from a vCard file into the personal address book
+      description: A contact whose UID already exists is replaced. Contacts without a UID get one.
+      requestBody:
+        required: true
+        content:
+          text/vcard:
+            schema: { type: string, maxLength: 10485760 }
+      responses:
+        "200":
+          description: Counts of imported, replaced, and skipped contacts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportCounts" }
+  /mailboxes/{mailboxId}/contacts/import:
+    post:
+      tags: [contacts]
+      summary: Import a vCard file into the address book of the mailbox owner
+      description: For organization admins and API keys with mailboxes:write.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          text/vcard:
+            schema: { type: string, maxLength: 10485760 }
+      responses:
+        "200":
+          description: Counts of imported, replaced, and skipped contacts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportCounts" }
   /calendar/import:
     post:
       tags: [calendar]
@@ -668,6 +962,90 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Folder" } }
+    post:
+      tags: [mail]
+      summary: Create a folder, inside parent when given. The new folder is subscribed.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100, description: "One level of the name. It cannot contain . / * or %, or start with ~." }
+                parent: { type: string, description: Full name of an existing folder }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { type: object, required: [name], properties: { name: { type: string, description: Full name of the new folder } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [mail]
+      summary: Rename a folder, move it under another folder, or change its subscription
+      description: Subfolders move with it, and mail rules that file into it are updated. Inbox, Drafts, Sent, Archive, Junk, Trash, and Snoozed cannot be renamed or moved.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: folder, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 100, description: New last level of the name }
+                parent: { type: string, description: Full name of the new parent folder, or an empty string for the top level }
+                subscribed: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object, required: [name], properties: { name: { type: string, description: Full name after the change } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [mail]
+      summary: Delete a folder that has no subfolders
+      description: A folder that still has messages is refused with 409 folder_not_empty unless moveTo names a folder to move them to first. Special folders cannot be deleted.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: folder, in: query, required: true, schema: { type: string } }
+        - { name: moveTo, in: query, description: Folder that receives the messages before the folder is deleted, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/folders/empty:
+    post:
+      tags: [mail]
+      summary: Delete every message in a folder
+      description: Trash and Junk are emptied permanently. Any other folder moves its messages to Trash.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: folder, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Emptied }
+        "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/folders/mark-read:
+    post:
+      tags: [mail]
+      summary: Mark every message in a folder as read
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: folder, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Marked as read }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages:
     get:
       tags: [mail]
@@ -675,12 +1053,21 @@ paths:
         - { $ref: "#/components/parameters/mailboxId" }
         - { $ref: "#/components/parameters/folder" }
         - { name: q, in: query, description: Server-side full text search, schema: { type: string } }
-        - { name: threads, in: query, description: "Group conversations with THREAD=REFERENCES. Each row is the newest message; threadUids lists the conversation newest first.", schema: { type: boolean } }
-        - { name: before, in: query, description: Return messages with a UID lower than this cursor, schema: { type: integer } }
+        - { name: threads, in: query, description: "Group conversations with THREAD=REFERENCES. Each row is the conversation's newest message, and conversations are sorted by it; threadUids lists the conversation newest first.", schema: { type: boolean } }
+        - { name: sort, in: query, description: "date is when the message arrived, sent is its Date header, and from and to sort by display name", schema: { type: string, enum: [date, sent, from, to, subject, size], default: date } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: unread, in: query, schema: { type: boolean } }
+        - { name: flagged, in: query, schema: { type: boolean } }
+        - { name: hasAttachments, in: query, schema: { type: boolean } }
+        - { name: from, in: query, description: Text in the From header, schema: { type: string } }
+        - { name: to, in: query, description: Text in the To header, schema: { type: string } }
+        - { name: since, in: query, description: Arrived on or after this date, schema: { type: string, format: date } }
+        - { name: until, in: query, description: Arrived on or before this date, schema: { type: string, format: date } }
+        - { name: cursor, in: query, description: nextCursor of the previous page, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
       responses:
         "200":
-          description: Newest first
+          description: In the requested order. Filters combine with q.
           content:
             application/json:
               schema:
@@ -689,7 +1076,8 @@ paths:
                 properties:
                   messages: { type: array, items: { $ref: "#/components/schemas/MessageSummary" } }
                   total: { type: integer }
-                  nextCursor: { type: [integer, "null"] }
+                  nextCursor: { type: [string, "null"], description: Opaque. Pass it back as cursor with the same sort and filters. }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}:
     get:
       tags: [mail]
@@ -732,6 +1120,8 @@ paths:
   /mailboxes/{mailboxId}/messages/{uid}/move:
     post:
       tags: [mail]
+      summary: Move a message to a folder in this mailbox or in another mailbox you have full access to
+      description: A move to another mailbox appends the original message unchanged, with its flags and received date, and removes it from this mailbox only after that succeeds. It is recorded in the audit log as mailbox.messages.move.
       parameters:
         - { $ref: "#/components/parameters/mailboxId" }
         - { $ref: "#/components/parameters/uid" }
@@ -740,13 +1130,66 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [to]
-              properties:
-                to: { type: string }
+            schema: { $ref: "#/components/schemas/MessageTransfer" }
       responses:
         "204": { description: Moved }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/messages/{uid}/copy:
+    post:
+      tags: [mail]
+      summary: Copy a message to a folder in this mailbox or in another mailbox you have full access to
+      description: A copy to another mailbox is recorded in the audit log as mailbox.messages.copy.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessageTransfer" }
+      responses:
+        "204": { description: Copied }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/messages/move:
+    post:
+      tags: [mail]
+      summary: Move up to 500 messages, listed in uids, like the single-message move
+      description: Messages that no longer exist are skipped. If a move to another mailbox fails partway, the messages already moved stay moved and the rest stay where they were.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessageTransfer" }
+      responses:
+        "204": { description: Moved }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/messages/copy:
+    post:
+      tags: [mail]
+      summary: Copy up to 500 messages, listed in uids, like the single-message copy
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessageTransfer" }
+      responses:
+        "204": { description: Copied }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}/invitation:
     post:
       tags: [mail, calendar]
@@ -1412,7 +1855,7 @@ components:
     apiKey:
       type: http
       scheme: bearer
-      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes, aliases, members, audit, and webhooks. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
+      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, members, audit, and webhooks. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1437,13 +1880,15 @@ components:
   schemas:
     User:
       type: object
-      required: [id, email, displayName, isPlatformAdmin, status]
+      required: [id, email, displayName, isPlatformAdmin, status, title, phone]
       properties:
         id: { type: string, format: uuid }
         email: { type: string }
         displayName: { type: string }
         isPlatformAdmin: { type: boolean }
         status: { type: string, enum: [active, suspended, deprovisioned] }
+        title: { type: string }
+        phone: { type: string }
     Session:
       type: object
       required: [user, memberships, csrfToken]
@@ -1468,6 +1913,75 @@ components:
         name: { type: string }
         slug: { type: string }
         createdAt: { type: string, format: date-time }
+    ThemeColors:
+      type: object
+      description: "Colours that replace Aether's in one theme, as #rrggbb. Leave a key out to keep Aether's colour."
+      additionalProperties: false
+      properties:
+        accent: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        accentHover: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        accentActive: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        background: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        surface: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        border: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        text: { type: string, pattern: "^#[0-9a-f]{6}$" }
+        link: { type: string, pattern: "^#[0-9a-f]{6}$" }
+    BrandColors:
+      type: object
+      additionalProperties: false
+      properties:
+        dark: { $ref: "#/components/schemas/ThemeColors" }
+        light: { $ref: "#/components/schemas/ThemeColors" }
+    BrandingSettings:
+      type: object
+      required: [name, signInMessage, colors, customCss]
+      properties:
+        name: { type: string, maxLength: 100, description: "Shown instead of Aether. Empty uses the organization's name." }
+        signInMessage: { type: string, maxLength: 500, description: "Plain text on the sign-in page" }
+        colors: { $ref: "#/components/schemas/BrandColors" }
+        customCss: { type: string, description: "Up to 32 KB, added after Aether's stylesheet everywhere except Administration" }
+    OrganizationBranding:
+      allOf:
+        - { $ref: "#/components/schemas/BrandingSettings" }
+        - type: object
+          required: [logoLight, logoDark, favicon, customCssEnabled]
+          properties:
+            logoLight: { type: [string, "null"], description: "URL of the logo for the light theme" }
+            logoDark: { type: [string, "null"], description: "URL of the logo for the dark theme" }
+            favicon: { type: [string, "null"] }
+            customCssEnabled: { type: boolean, description: "false while the server sets AETHER_CUSTOM_CSS=false" }
+    Branding:
+      type: object
+      required: [orgId, name, signInMessage, colors, customCssUrl, logoLight, logoDark, favicon]
+      properties:
+        orgId: { type: string, format: uuid }
+        name: { type: string }
+        signInMessage: { type: string }
+        colors: { $ref: "#/components/schemas/BrandColors" }
+        customCssUrl: { type: [string, "null"] }
+        logoLight: { type: [string, "null"] }
+        logoDark: { type: [string, "null"] }
+        favicon: { type: [string, "null"] }
+    SignatureLink:
+      type: object
+      required: [label, url]
+      properties:
+        label: { type: string, maxLength: 40 }
+        url: { type: string, description: "An https://, http:// or mailto: address" }
+    SignatureTemplate:
+      type: object
+      required: [html, logoWidth]
+      properties:
+        domainId: { type: [string, "null"], format: uuid, description: "null for the organization-wide template" }
+        html: { type: string, description: "Up to 32 KB of HTML with {{displayName}}, {{title}}, {{phone}}, {{organization}}, {{domain}}, {{address}}, {{logo}} and {{links}}. {{#title}}…{{/title}} keeps a part only when the value is not empty. The filled-in result is sanitized like mail." }
+        links: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/SignatureLink" } }
+        logoWidth: { type: integer, minimum: 16, maximum: 240, description: "Width of {{logo}} in pixels. The light theme logo from branding is embedded, scaled down to at most twice this width." }
+        updatedAt: { type: string, format: date-time, readOnly: true }
+    RenderedSignature:
+      type: object
+      required: [html]
+      properties:
+        html: { type: string }
     Domain:
       type: object
       required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, createdAt]
@@ -1490,7 +2004,7 @@ components:
         name: { type: string }
         value: { type: string }
         purpose: { type: string, enum: [verification, mx, spf, dkim, dmarc, mta-sts-host, mta-sts, tls-rpt, autoconfig, autodiscover, srv-imaps, srv-submissions] }
-        status: { type: string, enum: [ok, missing, mismatch, error] }
+        status: { type: string, enum: [ok, warning, missing, mismatch, error] }
         found: { type: array, items: { type: string } }
     Mailbox:
       type: object
@@ -1508,7 +2022,7 @@ components:
         createdAt: { type: string, format: date-time }
     Alias:
       type: object
-      required: [id, orgId, domainId, address, localPart, destinations, active]
+      required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -1517,6 +2031,34 @@ components:
         localPart: { type: string }
         destinations: { type: array, items: { type: string } }
         active: { type: boolean }
+        kind: { type: string, enum: [alias, list] }
+        name: { type: string }
+        acceptFrom: { type: string, enum: [anyone, organization, members, allowlist] }
+        allowedSenders: { type: array, items: { type: string } }
+        sendAs: { type: array, items: { type: string } }
+        owners: { type: array, items: { type: string, format: uuid } }
+    AliasInput:
+      type: object
+      properties:
+        kind: { type: string, enum: [alias, list], default: alias, description: "A list can have up to 5,000 destinations, sender restrictions, send-as people and owners. An alias has up to 100 destinations and every mailbox among them may send as it." }
+        name: { type: string, maxLength: 200, description: Shown in the organization directory for lists }
+        destinations: { type: array, items: { type: string, format: email }, description: Replaces all destinations. Other lists and outside addresses are allowed. }
+        addDestinations: { type: array, items: { type: string, format: email } }
+        removeDestinations: { type: array, items: { type: string, format: email } }
+        active: { type: boolean }
+        acceptFrom:
+          type: string
+          enum: [anyone, organization, members, allowlist]
+          description: "Who may send to a list. organization: people who signed in to send from a domain of this organization. members: the list's destinations. allowlist: the addresses and @domain entries in allowedSenders. Mail from anyone else is rejected with 5.7.1."
+        allowedSenders: { type: array, items: { type: string }, description: Addresses or @domain entries }
+        sendAs: { type: array, items: { type: string, format: email }, description: Mailboxes of this organization that may send as the list }
+        owners: { type: array, items: { type: string, format: uuid }, description: Organization members who may change the list's destinations }
+    ImportCounts:
+      type: object
+      properties:
+        imported: { type: integer }
+        updated: { type: integer }
+        skipped: { type: integer }
     Member:
       type: object
       required: [userId, email, displayName, role, status]
@@ -1548,12 +2090,20 @@ components:
         createdAt: { type: string, format: date-time }
     Folder:
       type: object
-      required: [name, specialUse, total, unread]
+      required: [name, specialUse, total, unread, subscribed]
       properties:
-        name: { type: string }
+        name: { type: string, description: "Full name. Levels are separated by /." }
         specialUse: { type: string, enum: ["", inbox, drafts, sent, trash, junk, archive] }
         total: { type: integer }
         unread: { type: integer }
+        subscribed: { type: boolean, description: Whether IMAP clients that show only subscribed folders list it }
+    MessageTransfer:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string, description: Destination folder }
+        mailboxId: { type: string, format: uuid, description: "Destination mailbox. Both mailboxes need full access. Defaults to this mailbox." }
+        uids: { type: array, maxItems: 500, items: { type: integer }, description: Messages for the bulk endpoints. The single-message endpoints use the uid in the path. }
     Address:
       type: object
       required: [address]
@@ -1733,15 +2283,19 @@ components:
           maxItems: 20
           items:
             type: object
-            required: [field, contains]
+            required: [field]
             properties:
-              field: { type: string, enum: [from, to, cc, subject] }
-              contains: { type: string, maxLength: 500, description: Case-insensitive substring of the header }
+              field: { type: string, enum: [from, to, cc, subject, body, header, sizeOver, sizeUnder, notToMe] }
+              header: { type: string, description: Header name when field is header, such as List-Id }
+              contains: { type: string, maxLength: 500, description: Case-insensitive text to look for. Not used by sizeOver, sizeUnder and notToMe. }
+              negate: { type: boolean, description: Match when the text is not found }
+              sizeKb: { type: integer, minimum: 1, description: Size in KB for sizeOver and sizeUnder }
         actions:
           type: object
-          description: At least one of moveTo, markRead, flag, or forwardTo.
+          description: At least one of moveTo, delete, markRead, flag, or forwardTo.
           properties:
             moveTo: { type: string, description: Existing folder name }
+            delete: { type: boolean, description: Discard the message. Cannot be combined with moveTo or keepCopy. }
             markRead: { type: boolean }
             flag: { type: boolean }
             forwardTo: { type: array, maxItems: 5, items: { type: string, format: email }, description: Forwarded with this mailbox as the envelope sender }

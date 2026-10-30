@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -26,6 +27,8 @@ type User struct {
 	DisplayName     string `json:"displayName"`
 	IsPlatformAdmin bool   `json:"isPlatformAdmin"`
 	Status          string `json:"status"`
+	Title           string `json:"title"`
+	Phone           string `json:"phone"`
 }
 
 type membership struct {
@@ -139,8 +142,8 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 
 func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionResponse, error) {
 	resp := &sessionResponse{Memberships: []membership{}}
-	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status FROM users WHERE id = $1`, userID).
-		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status)
+	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone FROM users WHERE id = $1`, userID).
+		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +164,26 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request, p *principal) {
 	}
 	resp.CSRFToken = p.csrf
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request, p *principal) {
+	var in struct {
+		Title string `json:"title"`
+		Phone string `json:"phone"`
+	}
+	if !decode(w, r, 8<<10, &in) {
+		return
+	}
+	in.Title, in.Phone = strings.TrimSpace(in.Title), strings.TrimSpace(in.Phone)
+	if utf8.RuneCountInString(in.Title) > 100 || utf8.RuneCountInString(in.Phone) > 40 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_profile", "Keep the job title to 100 characters and the phone number to 40.")
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, updated_at = now() WHERE id = $1`, p.User.ID, in.Title, in.Phone); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.session(w, r, p)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, p *principal) {

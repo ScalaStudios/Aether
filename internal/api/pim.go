@@ -25,8 +25,34 @@ import (
 var objectNamePattern = regexp.MustCompile(`^[A-Za-z0-9._@-]{1,255}$`)
 
 func (s *Server) pimContext(r *http.Request, p *principal) (context.Context, error) {
-	ctx := context.WithValue(r.Context(), davUserKey{}, p.User.ID)
-	return ctx, s.ensureDAVDefaults(ctx, p.User.ID)
+	return s.pimContextFor(r, p.User.ID)
+}
+
+func (s *Server) pimContextFor(r *http.Request, userID string) (context.Context, error) {
+	ctx := context.WithValue(r.Context(), davUserKey{}, userID)
+	return ctx, s.ensureDAVDefaults(ctx, userID)
+}
+
+func (s *Server) mailboxOwnerContext(w http.ResponseWriter, r *http.Request, p *principal) (context.Context, *ownedMailbox, bool) {
+	m, ok := s.managedMailbox(w, r, p)
+	if !ok {
+		return nil, nil, false
+	}
+	var owner *string
+	if err := s.db.QueryRow(r.Context(), `SELECT owner_user_id FROM mailboxes WHERE id = $1`, m.ID).Scan(&owner); err != nil {
+		s.internalError(w, r, err)
+		return nil, nil, false
+	}
+	if owner == nil {
+		writeError(w, http.StatusUnprocessableEntity, "no_owner", "This mailbox has no owner whose calendar and contacts could receive the import.")
+		return nil, nil, false
+	}
+	ctx, err := s.pimContextFor(r, *owner)
+	if err != nil {
+		s.internalError(w, r, err)
+		return nil, nil, false
+	}
+	return ctx, m, true
 }
 
 func davStatusCode(err error) int {
@@ -255,7 +281,11 @@ func (s *Server) directory(ctx context.Context, userID, q string, limit int) ([]
 		FROM mailboxes m LEFT JOIN users u ON u.id = m.owner_user_id
 		WHERE m.active AND m.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
 		  AND (m.address LIKE $2 OR lower(m.display_name) LIKE $2 OR lower(coalesce(u.display_name, '')) LIKE $2)
-		ORDER BY m.address LIMIT $3`, userID, q, limit)
+		UNION ALL
+		SELECT a.name, a.address, 'directory' FROM aliases a
+		WHERE a.kind = 'list' AND a.active AND a.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
+		  AND (a.address LIKE $2 OR lower(a.name) LIKE $2)
+		ORDER BY 2 LIMIT $3`, userID, q, limit)
 	if err != nil {
 		return nil, err
 	}

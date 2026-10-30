@@ -2,7 +2,10 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"github.com/emersion/go-vcard"
+	"io"
 	"net/http"
 
 	"github.com/emersion/go-ical"
@@ -51,16 +54,30 @@ func (s *Server) importCalendar(w http.ResponseWriter, r *http.Request, p *princ
 		s.internalError(w, r, err)
 		return
 	}
+	s.importCalendarInto(ctx, w, r)
+}
+
+func (s *Server) importMailboxCalendar(w http.ResponseWriter, r *http.Request, p *principal) {
+	ctx, m, ok := s.mailboxOwnerContext(w, r, p)
+	if !ok {
+		return
+	}
+	if counts, ok := s.importCalendarInto(ctx, w, r); ok {
+		s.audit(r.Context(), r, p, &m.OrgID, "calendar.import", "mailbox", m.ID, counts)
+	}
+}
+
+func (s *Server) importCalendarInto(ctx context.Context, w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportBytes)
 	source, err := ical.NewDecoder(r.Body).Decode()
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_calendar", "The file is not a valid iCalendar (.ics) file.")
-		return
+		return nil, false
 	}
 	calendar, err := s.davCollection(ctx, "calendar", "personal")
 	if err != nil {
 		s.davError(w, r, err)
-		return
+		return nil, false
 	}
 	timezones := map[string]*ical.Component{}
 	groups := map[string][]*ical.Component{}
@@ -85,7 +102,7 @@ func (s *Server) importCalendar(w http.ResponseWriter, r *http.Request, p *princ
 	}
 	if len(order) > maxImportObjects {
 		writeError(w, http.StatusUnprocessableEntity, "too_many_events", "Import at most 5,000 events at a time.")
-		return
+		return nil, false
 	}
 	var imported, updated, skipped int
 	for _, uid := range order {
@@ -115,7 +132,7 @@ func (s *Server) importCalendar(w http.ResponseWriter, r *http.Request, p *princ
 			}
 		} else if err != nil {
 			s.internalError(w, r, err)
-			return
+			return nil, false
 		}
 		if _, err := s.putDAVObject(ctx, calendar.ID, name, buf.String(), fields, webdav.ConditionalMatch(""), webdav.ConditionalMatch("")); err != nil {
 			skipped++
@@ -127,7 +144,9 @@ func (s *Server) importCalendar(w http.ResponseWriter, r *http.Request, p *princ
 			imported++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"imported": imported, "updated": updated, "skipped": skipped})
+	counts := map[string]any{"imported": imported, "updated": updated, "skipped": skipped}
+	writeJSON(w, http.StatusOK, counts)
+	return counts, true
 }
 
 func (s *Server) exportCalendar(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -182,4 +201,90 @@ func (s *Server) exportCalendar(w http.ResponseWriter, r *http.Request, p *princ
 	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="calendar.ics"`)
 	w.Write(buf.Bytes())
+}
+
+func (s *Server) importContacts(w http.ResponseWriter, r *http.Request, p *principal) {
+	ctx, err := s.pimContext(r, p)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.importContactsInto(ctx, w, r)
+}
+
+func (s *Server) importMailboxContacts(w http.ResponseWriter, r *http.Request, p *principal) {
+	ctx, m, ok := s.mailboxOwnerContext(w, r, p)
+	if !ok {
+		return
+	}
+	if counts, ok := s.importContactsInto(ctx, w, r); ok {
+		s.audit(r.Context(), r, p, &m.OrgID, "contacts.import", "mailbox", m.ID, counts)
+	}
+}
+
+func (s *Server) importContactsInto(ctx context.Context, w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
+	dec := vcard.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportBytes))
+	var cards []vcard.Card
+	for {
+		card, err := dec.Decode()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_contacts", "The file is not a valid vCard (.vcf) file.")
+			return nil, false
+		}
+		if len(cards) == maxImportObjects {
+			writeError(w, http.StatusUnprocessableEntity, "too_many_contacts", "Import at most 5,000 contacts at a time.")
+			return nil, false
+		}
+		cards = append(cards, card)
+	}
+	book, err := s.davCollection(ctx, "addressbook", "contacts")
+	if err != nil {
+		s.davError(w, r, err)
+		return nil, false
+	}
+	var imported, updated, skipped int
+	for _, card := range cards {
+		if card.Value(vcard.FieldUID) == "" {
+			card.SetValue(vcard.FieldUID, secrets.Token(16))
+		}
+		if card.Value(vcard.FieldVersion) == "" {
+			card.SetValue(vcard.FieldVersion, "4.0")
+		}
+		fields, err := cardFields(card)
+		var buf bytes.Buffer
+		if err == nil {
+			err = vcard.NewEncoder(&buf).Encode(card)
+		}
+		if err != nil {
+			skipped++
+			continue
+		}
+		var name string
+		err = s.db.QueryRow(ctx, `SELECT name FROM dav_objects WHERE collection_id = $1 AND uid = $2`, book.ID, fields.UID).Scan(&name)
+		exists := err == nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			name = fields.UID + ".vcf"
+			if !objectNamePattern.MatchString(name) {
+				name = secrets.Token(16) + ".vcf"
+			}
+		} else if err != nil {
+			s.internalError(w, r, err)
+			return nil, false
+		}
+		if _, err := s.putDAVObject(ctx, book.ID, name, buf.String(), fields, webdav.ConditionalMatch(""), webdav.ConditionalMatch("")); err != nil {
+			skipped++
+			continue
+		}
+		if exists {
+			updated++
+		} else {
+			imported++
+		}
+	}
+	counts := map[string]any{"imported": imported, "updated": updated, "skipped": skipped}
+	writeJSON(w, http.StatusOK, counts)
+	return counts, true
 }

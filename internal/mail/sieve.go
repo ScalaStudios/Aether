@@ -15,11 +15,15 @@ import (
 
 type RuleCondition struct {
 	Field    string `json:"field"`
+	Header   string `json:"header,omitempty"`
+	Negate   bool   `json:"negate,omitempty"`
 	Contains string `json:"contains"`
+	SizeKB   int64  `json:"sizeKb,omitempty"`
 }
 
 type RuleActions struct {
 	MoveTo    string   `json:"moveTo,omitempty"`
+	Delete    bool     `json:"delete,omitempty"`
 	MarkRead  bool     `json:"markRead,omitempty"`
 	Flag      bool     `json:"flag,omitempty"`
 	ForwardTo []string `json:"forwardTo,omitempty"`
@@ -63,6 +67,55 @@ type Rule struct {
 
 var ruleHeaders = map[string]string{"from": "From", "to": "To", "cc": "Cc", "subject": "Subject"}
 
+var headerNamePattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,76}$`)
+
+func (c RuleCondition) sieve(address string) string {
+	var test string
+	switch c.Field {
+	case "body":
+		test = "body :text :contains " + sieveString(c.Contains)
+	case "header":
+		test = "header :contains " + sieveString(c.Header) + " " + sieveString(c.Contains)
+	case "sizeOver":
+		return fmt.Sprintf("size :over %dK", c.SizeKB)
+	case "sizeUnder":
+		return fmt.Sprintf("size :under %dK", c.SizeKB)
+	case "notToMe":
+		return `not address :is ["to", "cc"] ` + sieveString(address)
+	default:
+		test = "header :contains " + sieveString(ruleHeaders[c.Field]) + " " + sieveString(c.Contains)
+	}
+	if c.Negate {
+		return "not " + test
+	}
+	return test
+}
+
+func (c RuleCondition) validate() error {
+	switch c.Field {
+	case "sizeOver", "sizeUnder":
+		if c.SizeKB < 1 || c.SizeKB > 1<<20 {
+			return errors.New("Enter a size between 1 KB and 1 GB.")
+		}
+		return nil
+	case "notToMe":
+		return nil
+	case "header":
+		if !headerNamePattern.MatchString(c.Header) {
+			return errors.New("Enter a header name such as List-Id, using letters, digits and hyphens.")
+		}
+	case "body":
+	default:
+		if _, ok := ruleHeaders[c.Field]; !ok {
+			return errors.New("Conditions can check from, to, cc, subject, body, a header, size, or whether you are a recipient.")
+		}
+	}
+	if strings.TrimSpace(c.Contains) == "" || len(c.Contains) > 500 || strings.ContainsAny(c.Contains, "\r\n\x00") {
+		return errors.New("Each condition needs text to look for, up to 500 characters on one line.")
+	}
+	return nil
+}
+
 func sieveString(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
@@ -75,8 +128,10 @@ func (r Rule) Validate() error {
 		return errors.New("Match must be all or any.")
 	case len(r.Conditions) == 0 || len(r.Conditions) > 20:
 		return errors.New("Each rule needs between 1 and 20 conditions.")
-	case r.Actions.MoveTo == "" && !r.Actions.MarkRead && !r.Actions.Flag && len(r.Actions.ForwardTo) == 0:
+	case r.Actions.MoveTo == "" && !r.Actions.Delete && !r.Actions.MarkRead && !r.Actions.Flag && len(r.Actions.ForwardTo) == 0:
 		return errors.New("Each rule needs at least one action.")
+	case r.Actions.Delete && (r.Actions.MoveTo != "" || r.Actions.KeepCopy):
+		return errors.New("A rule that deletes a message cannot also move it or keep a copy.")
 	case len(r.Actions.ForwardTo) > 5:
 		return errors.New("Forward to 5 addresses or fewer.")
 	case strings.ContainsAny(r.Actions.MoveTo, "\r\n\x00"):
@@ -88,11 +143,8 @@ func (r Rule) Validate() error {
 		}
 	}
 	for _, c := range r.Conditions {
-		if _, ok := ruleHeaders[c.Field]; !ok {
-			return errors.New("Conditions can check from, to, cc, or subject.")
-		}
-		if strings.TrimSpace(c.Contains) == "" || len(c.Contains) > 500 || strings.ContainsAny(c.Contains, "\r\n\x00") {
-			return errors.New("Each condition needs text to look for, up to 500 characters on one line.")
+		if err := c.validate(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -100,7 +152,7 @@ func (r Rule) Validate() error {
 
 func CompileSieve(rules []Rule, reply AutoReply, address string) string {
 	var b strings.Builder
-	b.WriteString(`require ["fileinto", "imap4flags", "mailbox", "copy", "vacation", "date", "relational"];` + "\n")
+	b.WriteString(`require ["fileinto", "imap4flags", "mailbox", "copy", "vacation", "date", "relational", "body"];` + "\n")
 	if reply.Enabled {
 		var window []string
 		if reply.Start != "" {
@@ -126,7 +178,7 @@ func CompileSieve(rules []Rule, reply AutoReply, address string) string {
 		}
 		tests := make([]string, len(r.Conditions))
 		for i, c := range r.Conditions {
-			tests[i] = fmt.Sprintf("header :contains %s %s", sieveString(ruleHeaders[c.Field]), sieveString(c.Contains))
+			tests[i] = c.sieve(address)
 		}
 		op := "allof"
 		if r.Match == "any" {
@@ -148,6 +200,9 @@ func CompileSieve(rules []Rule, reply AutoReply, address string) string {
 		}
 		if r.Actions.MoveTo != "" {
 			fmt.Fprintf(&b, "  fileinto :create %s;\n", sieveString(r.Actions.MoveTo))
+		}
+		if r.Actions.Delete {
+			b.WriteString("  discard;\n")
 		}
 		if r.Actions.Stop {
 			b.WriteString("  stop;\n")

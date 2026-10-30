@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -236,125 +235,6 @@ func (s *Server) deleteMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delete", "mailbox", m.ID, map[string]any{"address": m.Address})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-type alias struct {
-	ID           string   `json:"id"`
-	OrgID        string   `json:"orgId"`
-	DomainID     string   `json:"domainId"`
-	Address      string   `json:"address"`
-	LocalPart    string   `json:"localPart"`
-	Destinations []string `json:"destinations"`
-	Active       bool     `json:"active"`
-}
-
-func (s *Server) listAliases(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
-	if !ok {
-		return
-	}
-	rows, err := s.db.Query(r.Context(), `SELECT id, org_id, domain_id, address, local_part, destinations, active FROM aliases WHERE org_id = $1 ORDER BY address`, orgID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[alias])
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, nonNil(out))
-}
-
-func (s *Server) createAlias(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
-	if !ok {
-		return
-	}
-	var in struct {
-		DomainID     string   `json:"domainId"`
-		LocalPart    string   `json:"localPart"`
-		Destinations []string `json:"destinations"`
-	}
-	if !decode(w, r, 32<<10, &in) {
-		return
-	}
-	in.LocalPart = strings.ToLower(strings.TrimSpace(in.LocalPart))
-	if in.LocalPart != "" && !localPartPattern.MatchString(in.LocalPart) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, underscores, or plus signs, or leave it empty for a catch-all.")
-		return
-	}
-	if len(in.Destinations) == 0 || len(in.Destinations) > 100 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", "Add between 1 and 100 destination addresses.")
-		return
-	}
-	for i, d := range in.Destinations {
-		a, err := mail.ParseAddress(d)
-		if err != nil || a.Name != "" {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", d+" is not a valid email address.")
-			return
-		}
-		in.Destinations[i] = strings.ToLower(a.Address)
-	}
-	domainName, err := s.orgDomain(r, orgID, in.DomainID)
-	if errors.Is(err, pgx.ErrNoRows) || !uuidPattern.MatchString(in.DomainID) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_domain", "Choose a domain that belongs to this organization.")
-		return
-	}
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	address := in.LocalPart + "@" + domainName
-	var exists bool
-	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, address).Scan(&exists); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if exists {
-		writeError(w, http.StatusConflict, "address_taken", address+" is already a mailbox.")
-		return
-	}
-	var a alias
-	err = s.db.QueryRow(r.Context(), `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations) VALUES ($1, $2, $3, $4, $5) RETURNING id, org_id, domain_id, address, local_part, destinations, active`,
-		orgID, in.DomainID, in.LocalPart, address, in.Destinations).Scan(&a.ID, &a.OrgID, &a.DomainID, &a.Address, &a.LocalPart, &a.Destinations, &a.Active)
-	if isUniqueViolation(err) {
-		writeError(w, http.StatusConflict, "address_taken", address+" is already an alias.")
-		return
-	}
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	s.audit(r.Context(), r, p, &orgID, "alias.create", "alias", a.ID, map[string]any{"address": address, "destinations": a.Destinations})
-	writeJSON(w, http.StatusCreated, a)
-}
-
-func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principal) {
-	id, ok := pathID(w, r, "aliasId")
-	if !ok {
-		return
-	}
-	var orgID, address string
-	err := s.db.QueryRow(r.Context(), `SELECT org_id, address FROM aliases WHERE id = $1`, id).Scan(&orgID, &address)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.orgRole(orgID) == "") {
-		notFound(w)
-		return
-	}
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if !p.canAdminOrg(orgID) {
-		forbidden(w)
-		return
-	}
-	if _, err := s.db.Exec(r.Context(), `DELETE FROM aliases WHERE id = $1`, id); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	s.audit(r.Context(), r, p, &orgID, "alias.delete", "alias", id, map[string]any{"address": address})
 	w.WriteHeader(http.StatusNoContent)
 }
 

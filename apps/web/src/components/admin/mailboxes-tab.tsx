@@ -2,8 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Inbox, Plus, Trash2, Users } from "lucide-react"
-import { useState } from "react"
+import { CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, Trash2, Upload, Users } from "lucide-react"
+import { useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -15,18 +15,29 @@ import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
+import { MailboxRules } from "@/components/settings/mail-rules"
 import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api, ApiError, errorMessage } from "@/lib/api"
-import { formatBytes } from "@/lib/format"
-import type { Delegate, DelegateAccess, Mailbox } from "@/lib/types"
+import { formatBytes, plural } from "@/lib/format"
+import type { Delegate, DelegateAccess, ImportCounts, Mailbox } from "@/lib/types"
 
 const MB = 1024 * 1024
+
+const imports = {
+  calendar: { path: "calendar/import", accept: ".ics,text/calendar", noun: "event" },
+  contacts: { path: "contacts/import", accept: ".vcf,text/vcard", noun: "contact" },
+}
+
+type ImportKind = keyof typeof imports
 
 const schema = z.object({
   domainId: z.string().min(1, "Choose a domain."),
@@ -153,6 +164,9 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
+  const [managing, setManaging] = useState<Mailbox | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const importTarget = useRef<{ mailbox: Mailbox; kind: ImportKind } | null>(null)
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { domainId: "", localPart: "", displayName: "", password: "", quotaMb: "" },
@@ -186,6 +200,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
     mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}`, { method: "PATCH", body: { active: !m.active } }),
     onSuccess: refresh,
   })
+  const importFile = useMutation({
+    mutationFn: ({ mailbox, kind, file }: { mailbox: Mailbox; kind: ImportKind; file: File }) =>
+      api<ImportCounts>(`/mailboxes/${mailbox.id}/${imports[kind].path}`, { method: "POST", body: file }),
+    onSuccess: (r, { mailbox, kind }) =>
+      toast.success(`Imported ${plural(r.imported + r.updated, imports[kind].noun)} for ${mailbox.address}`, {
+        description: `${r.imported} new, ${r.updated} replaced, ${r.skipped} unreadable and skipped.`,
+      }),
+  })
   const remove = useMutation({
     mutationFn: (id: string) => api(`/mailboxes/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -194,6 +216,13 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       refresh()
     },
   })
+
+  function pick(mailbox: Mailbox, kind: ImportKind) {
+    importTarget.current = { mailbox, kind }
+    if (!fileInput.current) return
+    fileInput.current.accept = imports[kind].accept
+    fileInput.current.click()
+  }
 
   return (
     <section className="flex flex-col gap-6">
@@ -216,7 +245,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                 <TableHead>Display name</TableHead>
                 <TableHead>Quota</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-20">
+                <TableHead className="w-28">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -246,6 +275,34 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                       <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => setDeleting(m)}>
                         <Trash2 />
                       </IconButton>
+                      {m.active && (
+                        <DropdownMenu>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="quiet" size="icon-sm" aria-label={`More actions for ${m.address}`} loading={importFile.isPending && importFile.variables?.mailbox.id === m.id}>
+                                  <Ellipsis />
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>{`More actions for ${m.address}`}</TooltipContent>
+                          </Tooltip>
+                          <DropdownMenuContent align="end" className="w-auto min-w-64">
+                            <DropdownMenuItem onSelect={() => setManaging(m)}>
+                              <ListFilter aria-hidden />
+                              Mail rules and automatic replies
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
+                              <CalendarArrowUp aria-hidden />
+                              Import calendar (.ics)
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
+                              <Upload aria-hidden />
+                              Import contacts (.vcf)
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -285,6 +342,27 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       </FormDialog>
 
       <DelegatesDialog mailbox={delegating} onOpenChange={(open) => !open && setDelegating(null)} />
+
+      <input
+        ref={fileInput}
+        type="file"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file && importTarget.current) importFile.mutate({ ...importTarget.current, file })
+          e.target.value = ""
+        }}
+      />
+
+      <Sheet open={!!managing} onOpenChange={(open) => !open && setManaging(null)}>
+        <SheetContent side="right" className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[800px]">
+          <SheetHeader className="border-b border-border p-6">
+            <SheetTitle>Mail rules and automatic replies</SheetTitle>
+            <SheetDescription>{managing?.address}</SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} />}</div>
+        </SheetContent>
+      </Sheet>
 
       <ConfirmDialog
         open={!!deleting}

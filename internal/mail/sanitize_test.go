@@ -140,3 +140,31 @@ func TestCompileSieveEscapesAndSkipsDisabled(t *testing.T) {
 		t.Error("inverted date range accepted")
 	}
 }
+
+func TestCompileSieveBodyHeaderSizeAndDelete(t *testing.T) {
+	rule := Rule{Name: "auto", Enabled: true, Match: "all", Conditions: []RuleCondition{
+		{Field: "body", Contains: "automatically generated"},
+		{Field: "header", Header: "List-Id", Contains: "alerts", Negate: true},
+		{Field: "sizeOver", SizeKB: 512},
+		{Field: "notToMe"},
+	}, Actions: RuleActions{Delete: true}}
+	if err := rule.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	script := CompileSieve([]Rule{rule}, AutoReply{}, "me@example.test")
+	for _, want := range []string{`"body"]`, `body :text :contains "automatically generated"`, `not header :contains "List-Id" "alerts"`, `size :over 512K`, `not address :is ["to", "cc"] "me@example.test"`, "discard;"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %s:\n%s", want, script)
+		}
+	}
+	bad := []Rule{
+		{Name: "x", Match: "all", Conditions: []RuleCondition{{Field: "header", Header: "Bad Header", Contains: "a"}}, Actions: RuleActions{Flag: true}},
+		{Name: "x", Match: "all", Conditions: []RuleCondition{{Field: "sizeOver"}}, Actions: RuleActions{Flag: true}},
+		{Name: "x", Match: "all", Conditions: []RuleCondition{{Field: "subject", Contains: "a"}}, Actions: RuleActions{Delete: true, MoveTo: "Archive"}},
+	}
+	for _, r := range bad {
+		if r.Validate() == nil {
+			t.Errorf("accepted %+v", r)
+		}
+	}
+}

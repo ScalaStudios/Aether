@@ -16,6 +16,7 @@ export function ConfirmDialog({
   typedConfirmation,
   pending,
   onConfirm,
+  children,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -25,6 +26,7 @@ export function ConfirmDialog({
   typedConfirmation?: string
   pending?: boolean
   onConfirm: () => void
+  children?: React.ReactNode
 }) {
   const [typed, setTyped] = useState("")
   const blocked = typedConfirmation !== undefined && typed !== typedConfirmation
@@ -42,6 +44,7 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {children}
         {typedConfirmation !== undefined && (
           <Field id="confirm-typed" label={`Type ${typedConfirmation} to confirm`}>
             <Input id="confirm-typed" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />

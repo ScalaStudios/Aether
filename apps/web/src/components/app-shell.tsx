@@ -8,6 +8,7 @@ import { useTheme } from "next-themes"
 import { cn } from "cn"
 
 import { Avatar } from "@/components/avatar"
+import { BrandMark } from "@/components/branding"
 import { ErrorState } from "@/components/states"
 import {
   DropdownMenu,
@@ -58,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         Skip to content
       </a>
       <nav aria-label="Primary" className={railClass}>
-        <span className="hidden pb-4 text-center font-display text-[15px] font-extrabold tracking-tight md:block">Aether</span>
+        <BrandMark />
         {session.isPending
           ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="m-2 h-12 md:mx-4" />)
           : items.map((item) => {

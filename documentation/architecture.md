@@ -29,7 +29,7 @@ There is a single Go binary. It is the only component that writes application da
 - sessions
 - the audit log
 
-Postfix and Dovecot do not keep their own user database. They read a small set of PostgreSQL views (`mail_domains`, `mail_users`, `mail_credentials`, `mail_aliases`, `mail_senders`) through a dedicated `aether_mail` role. That role can only `SELECT` from those views. It cannot see password hashes, OIDC secrets, or DKIM keys.
+Postfix and Dovecot do not keep their own user database. They read a small set of PostgreSQL views (`mail_domains`, `mail_users`, `mail_credentials`, `mail_aliases`, `mail_senders`, `mail_restricted_lists`) through a dedicated `aether_mail` role. That role can only `SELECT` from those views. It cannot see password hashes, OIDC secrets, or DKIM keys.
 
 ## Why Postfix, Dovecot, and Rspamd
 
@@ -72,6 +72,8 @@ We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because 
 
 Mail rules and automatic replies are stored per mailbox in PostgreSQL. Whenever either changes, the API compiles both into one Sieve script and installs it over ManageSieve, on Dovecot's internal port 4190, using the same master-user login as webmail. Dovecot runs the script at delivery, after the global spam-to-Junk script.
 
+A rule has up to 20 conditions, matched with all or any, and at least one action. A condition tests From, To, Cc, Subject, the body, a named header, the size in kilobytes (over or under), or whether the mailbox's address is absent from To and Cc. The text conditions can be negated. The actions move the message to a folder, mark it read, flag it, forward it to up to five addresses, keep a copy when forwarding, delete it (Sieve `discard`), and stop later rules. A rule that deletes cannot also move the message or keep a copy.
+
 Forwarding (`redirect`) and automatic replies (`vacation`) need Dovecot to send mail:
 
 - **Sending path.** Dovecot hands the message to `msmtp`, which submits it to Postfix on internal port 10025. That port is never published, and it requires TLS and the `aether-sieve-relay` login. The relay account accepts logins only from private networks, has no mailbox, and authenticates with `AETHER_SIEVE_RELAY_PASSWORD`.
@@ -98,7 +100,7 @@ The data model is defined in `migrations/0001_init.sql`:
 - `users`, `user_identities`, linking an OIDC issuer and subject to a user
 - `domains`, with a verification token and an encrypted DKIM key
 - `mailboxes`, each with an owner
-- `aliases`, where an empty local part is the catch-all
+- `aliases`, where an empty local part is the catch-all, and `kind` is `alias` or `list`; `alias_owners` holds the owners of lists
 - `app_passwords`
 - `oidc_providers`, `oidc_login_states`, `sessions`, `audit_events`
 
@@ -136,3 +138,26 @@ An alias can forward to an address at another provider. Postfix relays the forwa
 Senders from hosted domains are never rewritten, so DMARC alignment of normal outgoing mail is unaffected. Postfix rewrites at the moment it accepts a message, before it knows where the message goes. Mail delivered to local mailboxes therefore also shows an SRS `Return-Path` for external senders. Spam and SPF checks run before the rewrite and see the original sender.
 
 The SRS secret is generated on first start and kept in the Postfix spool volume.
+
+## Distribution lists
+
+A distribution list is an alias whose `kind` is `list`. It needs a local part, so a catch-all cannot be a list, and it has a name that appears in the organization directory. The two kinds differ in what they allow:
+
+| | Alias | List |
+| --- | --- | --- |
+| Destinations | Up to 100 | Up to 5,000, including other lists and outside addresses |
+| Who may send to it | Anyone | `acceptFrom`: `anyone`, `organization`, `members` or `allowlist` |
+| Who may send as it | Every destination mailbox | The mailboxes in `sendAs`, which must belong to the organization |
+| Who may change it | Organization administrators | Administrators, and the owners for the destinations only |
+
+Owners must be members of the organization. `GET /api/v1/me/lists` returns the lists the signed-in user owns, and `PATCH /api/v1/aliases/{aliasId}` with `destinations`, `addDestinations` or `removeDestinations` is the one change an owner may make. The `mail_senders` view gives a list's `sendAs` mailboxes the right to send as it, and still gives that right to every destination mailbox of a plain alias.
+
+Sender restrictions are enforced by Postfix during the SMTP session, on port 25 and on submission. `smtpd_recipient_restrictions` looks the recipient up in `mail_restricted_lists`, which holds only active lists whose `acceptFrom` is not `anyone` on active, verified domains; mail to any other address is not checked. For a restricted list, Postfix asks the API's policy service with `check_policy_service`. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). The decision uses the envelope sender, the recipient and the SASL login:
+
+- `organization`: the session authenticated, and the sender's domain belongs to the list's organization.
+- `members`: the sender is one of the list's destinations.
+- `allowlist`: the sender, or `@` followed by its domain, is in `allowedSenders`.
+
+For `members` and `allowlist`, a sender on a domain that Aether hosts counts only when the session authenticated, so an outside server cannot claim a hosted address to reach a list. Mail with an empty envelope sender, such as a bounce, is rejected by every restricted list. The rejection is `5.7.1 <list> does not accept mail from this sender`, given while the sender is still connected. If the API cannot query the database, it asks Postfix to defer the message instead.
+
+Moderation, and members taken from identity provider groups, are not built.

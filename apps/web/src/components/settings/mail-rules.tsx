@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowDown, ArrowUp, ListFilter, Pencil, Plus, Trash2, X } from "lucide-react"
+import { ArrowDown, ArrowUp, CircleAlert, ListFilter, Pencil, Plus, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -24,35 +24,61 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api"
 import { folderLabel } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { AutoReply, Mailbox, MailRule, RuleField } from "@/lib/types"
+import type { AutoReply, Mailbox, MailRule, RuleCondition, RuleField } from "@/lib/types"
 
-const fields: Record<RuleField, string> = { from: "From", to: "To", cc: "Cc", subject: "Subject" }
+const fields: Record<RuleField, string> = {
+  from: "From",
+  to: "To",
+  cc: "Cc",
+  subject: "Subject",
+  body: "Body",
+  header: "Header",
+  sizeOver: "Size over",
+  sizeUnder: "Size under",
+  notToMe: "Not addressed to me",
+}
 const keepInPlace = "__keep__"
+
+const sized = (field: RuleField) => field === "sizeOver" || field === "sizeUnder"
+
+const condition = z
+  .object({
+    field: z.enum(["from", "to", "cc", "subject", "body", "header", "sizeOver", "sizeUnder", "notToMe"]),
+    header: z.string().trim(),
+    negate: z.boolean(),
+    contains: z.string().trim().max(500),
+    sizeKb: z.string().trim(),
+  })
+  .refine((c) => sized(c.field) || c.field === "notToMe" || c.contains !== "", { message: "Enter text to look for.", path: ["contains"] })
+  .refine((c) => c.field !== "header" || /^[A-Za-z0-9-]{1,76}$/.test(c.header), { message: "Enter a header name such as List-Id.", path: ["header"] })
+  .refine((c) => !sized(c.field) || (/^\d+$/.test(c.sizeKb) && Number(c.sizeKb) >= 1 && Number(c.sizeKb) <= 1048576), { message: "Enter a size from 1 KB to 1 GB (1,048,576 KB).", path: ["sizeKb"] })
 
 const schema = z
   .object({
     name: z.string().trim().min(1, "Name the rule.").max(100),
     match: z.enum(["all", "any"]),
-    conditions: z
-      .array(z.object({ field: z.enum(["from", "to", "cc", "subject"]), contains: z.string().trim().min(1, "Enter text to look for.").max(500) }))
-      .min(1, "Add at least one condition."),
+    conditions: z.array(condition).min(1, "Add at least one condition."),
     moveTo: z.string(),
+    delete: z.boolean(),
     markRead: z.boolean(),
     flag: z.boolean(),
     forwardTo: z.array(z.object({ name: z.string().optional(), address: z.email() })).max(5, "Forward to 5 addresses or fewer."),
     keepCopy: z.boolean(),
     stop: z.boolean(),
   })
-  .refine((v) => v.moveTo !== keepInPlace || v.markRead || v.flag || v.forwardTo.length > 0, { message: "Choose at least one action.", path: ["moveTo"] })
+  .refine((v) => v.delete || v.moveTo !== keepInPlace || v.markRead || v.flag || v.forwardTo.length > 0, { message: "Choose at least one action.", path: ["moveTo"] })
 
 type Values = z.infer<typeof schema>
+
+const toCondition = (c: RuleCondition) => ({ field: c.field, header: c.header ?? "", negate: c.negate ?? false, contains: c.contains ?? "", sizeKb: c.sizeKb ? String(c.sizeKb) : "" })
 
 function toValues(rule?: MailRule): Values {
   return {
     name: rule?.name ?? "",
     match: rule?.match ?? "all",
-    conditions: rule?.conditions ?? [{ field: "from", contains: "" }],
+    conditions: (rule?.conditions ?? [{ field: "from" }]).map(toCondition),
     moveTo: rule?.actions.moveTo || keepInPlace,
+    delete: rule?.actions.delete ?? false,
     markRead: rule?.actions.markRead ?? false,
     flag: rule?.actions.flag ?? false,
     forwardTo: (rule?.actions.forwardTo ?? []).map((address) => ({ address })),
@@ -66,22 +92,36 @@ function toRule(v: Values, enabled: boolean): MailRule {
     name: v.name,
     enabled,
     match: v.match,
-    conditions: v.conditions,
+    conditions: v.conditions.map((c) =>
+      sized(c.field)
+        ? { field: c.field, sizeKb: Number(c.sizeKb) }
+        : c.field === "notToMe"
+          ? { field: c.field }
+          : { field: c.field, contains: c.contains, negate: c.negate || undefined, header: c.field === "header" ? c.header : undefined }
+    ),
     actions: {
-      moveTo: v.moveTo === keepInPlace ? undefined : v.moveTo,
+      moveTo: v.delete || v.moveTo === keepInPlace ? undefined : v.moveTo,
+      delete: v.delete || undefined,
       markRead: v.markRead,
       flag: v.flag,
       forwardTo: v.forwardTo.length ? v.forwardTo.map((a) => a.address) : undefined,
-      keepCopy: v.forwardTo.length ? v.keepCopy : undefined,
+      keepCopy: v.forwardTo.length && !v.delete ? v.keepCopy : undefined,
       stop: v.stop,
     },
   }
 }
 
+function describe(c: RuleCondition) {
+  if (sized(c.field)) return `size is ${c.field === "sizeOver" ? "over" : "under"} ${c.sizeKb} KB`
+  if (c.field === "notToMe") return "this mailbox isn’t in To or Cc"
+  const subject = c.field === "header" ? c.header : c.field === "body" ? "the body" : fields[c.field]
+  return `${subject} ${c.negate ? "doesn’t contain" : "contains"} “${c.contains}”`
+}
+
 function summary(rule: MailRule) {
-  const when = rule.conditions.map((c) => `${fields[c.field]} contains “${c.contains}”`).join(rule.match === "all" ? " and " : " or ")
-  const forward = rule.actions.forwardTo?.length && `forward to ${rule.actions.forwardTo.join(", ")}${rule.actions.keepCopy || rule.actions.moveTo ? "" : " without keeping a copy"}`
-  const then = [rule.actions.moveTo && `move to ${rule.actions.moveTo}`, rule.actions.markRead && "mark as read", rule.actions.flag && "flag", forward].filter(Boolean).join(", ")
+  const when = rule.conditions.map(describe).join(rule.match === "all" ? " and " : " or ")
+  const forward = rule.actions.forwardTo?.length && `forward to ${rule.actions.forwardTo.join(", ")}${rule.actions.keepCopy || rule.actions.moveTo || rule.actions.delete ? "" : " without keeping a copy"}`
+  const then = [rule.actions.moveTo && `move to ${rule.actions.moveTo}`, rule.actions.markRead && "mark as read", rule.actions.flag && "flag", forward, rule.actions.delete && "delete permanently"].filter(Boolean).join(", ")
   return { when, then }
 }
 
@@ -116,14 +156,20 @@ export function MailRules() {
         actions={<MailboxPicker mailboxes={mailboxes.data} value={mailboxId} onChange={setChosen} />}
       />
       {mailboxId ? (
-        <>
-          <RuleList key={`rules-${mailboxId}`} mailboxId={mailboxId} />
-          <AutoReplyCard key={`reply-${mailboxId}`} mailboxId={mailboxId} />
-        </>
+        <MailboxRules key={mailboxId} mailboxId={mailboxId} />
       ) : (
         !mailboxes.isPending && <EmptyState icon={ListFilter} title="No mailbox" description="Rules need a mailbox. Ask an administrator to create one for you." />
       )}
     </section>
+  )
+}
+
+export function MailboxRules({ mailboxId }: { mailboxId: string }) {
+  return (
+    <>
+      <RuleList mailboxId={mailboxId} />
+      <AutoReplyCard mailboxId={mailboxId} />
+    </>
   )
 }
 
@@ -136,7 +182,9 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
   const [deleting, setDeleting] = useState<number | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues() })
   const conditions = useFieldArray({ control: form.control, name: "conditions" })
-  const forwarding = useWatch({ control: form.control, name: "forwardTo" }).length > 0
+  const [forwardTo, discard, rows] = useWatch({ control: form.control, name: ["forwardTo", "delete", "conditions"] })
+  const forwarding = forwardTo.length > 0
+  const errors = form.formState.errors
 
   const save = useMutation({
     mutationFn: (next: MailRule[]) => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`, { method: "PUT", body: next }),
@@ -202,7 +250,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
                         onCheckedChange={(enabled) => save.mutate(items.map((r, j) => (j === i ? { ...r, enabled } : r)))}
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-normal">
                       <p className="font-medium">{rule.name}</p>
                       <p className="text-sm text-fg-tertiary">
                         When {when}, {then}
@@ -265,44 +313,95 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
         />
         <fieldset className="flex flex-col gap-3">
           <legend className="mb-2 text-label text-fg-secondary">Conditions</legend>
-          {conditions.fields.map((c, i) => (
-            <div key={c.id} className="flex items-start gap-2">
-              <Controller
-                control={form.control}
-                name={`conditions.${i}.field`}
-                render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger aria-label={`Condition ${i + 1} field`} className="w-32 shrink-0">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(fields) as RuleField[]).map((f) => (
-                        <SelectItem key={f} value={f}>
-                          {fields[f]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <Input
-                  aria-label={`Condition ${i + 1} contains`}
-                  placeholder="contains…"
-                  autoComplete="off"
-                  aria-invalid={!!form.formState.errors.conditions?.[i]?.contains}
-                  {...form.register(`conditions.${i}.contains`)}
+          {conditions.fields.map((c, i) => {
+            const kind = rows[i]?.field ?? c.field
+            const rowErrors = errors.conditions?.[i]
+            return (
+              <div key={c.id} className="flex flex-wrap items-start gap-2">
+                <Controller
+                  control={form.control}
+                  name={`conditions.${i}.field`}
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger aria-label={`Condition ${i + 1} field`} className="w-52 shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.keys(fields) as RuleField[]).map((f) => (
+                          <SelectItem key={f} value={f}>
+                            {fields[f]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 />
-                {form.formState.errors.conditions?.[i]?.contains && (
-                  <p role="alert" className="text-sm text-danger">{form.formState.errors.conditions[i]?.contains?.message}</p>
+                {kind === "header" && (
+                  <div className="flex w-32 flex-col gap-1">
+                    <Input
+                      aria-label={`Condition ${i + 1} header name`}
+                      placeholder="List-Id"
+                      autoComplete="off"
+                      spellCheck={false}
+                      aria-invalid={!!rowErrors?.header}
+                      {...form.register(`conditions.${i}.header`)}
+                    />
+                    {rowErrors?.header && <p role="alert" className="text-sm text-danger">{rowErrors.header.message}</p>}
+                  </div>
                 )}
+                {sized(kind) ? (
+                  <div className="flex flex-1 flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        aria-label={`Condition ${i + 1} size in KB`}
+                        inputMode="numeric"
+                        autoComplete="off"
+                        className="w-32"
+                        aria-invalid={!!rowErrors?.sizeKb}
+                        {...form.register(`conditions.${i}.sizeKb`)}
+                      />
+                      <span className="text-fg-secondary">KB</span>
+                    </div>
+                    {rowErrors?.sizeKb && <p role="alert" className="text-sm text-danger">{rowErrors.sizeKb.message}</p>}
+                  </div>
+                ) : kind === "notToMe" ? (
+                  <p className="flex min-h-10 flex-1 items-center text-sm text-fg-tertiary">This mailbox isn’t in To or Cc</p>
+                ) : (
+                  <>
+                    <Controller
+                      control={form.control}
+                      name={`conditions.${i}.negate`}
+                      render={({ field }) => (
+                        <Select value={field.value ? "not" : "contains"} onValueChange={(v) => field.onChange(v === "not")}>
+                          <SelectTrigger aria-label={`Condition ${i + 1} match`} className="w-44 shrink-0">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="contains">Contains</SelectItem>
+                            <SelectItem value="not">Doesn’t contain</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                    <div className="flex min-w-36 flex-1 flex-col gap-1">
+                      <Input
+                        aria-label={`Condition ${i + 1} text`}
+                        placeholder="Text to look for"
+                        autoComplete="off"
+                        aria-invalid={!!rowErrors?.contains}
+                        {...form.register(`conditions.${i}.contains`)}
+                      />
+                      {rowErrors?.contains && <p role="alert" className="text-sm text-danger">{rowErrors.contains.message}</p>}
+                    </div>
+                  </>
+                )}
+                <IconButton type="button" label={`Remove condition ${i + 1}`} disabled={conditions.fields.length === 1} onClick={() => conditions.remove(i)}>
+                  <X />
+                </IconButton>
               </div>
-              <IconButton type="button" label={`Remove condition ${i + 1}`} disabled={conditions.fields.length === 1} onClick={() => conditions.remove(i)}>
-                <X />
-              </IconButton>
-            </div>
-          ))}
-          <Button type="button" variant="ghost" className="self-start" disabled={conditions.fields.length >= 20} onClick={() => conditions.append({ field: "subject", contains: "" })}>
+            )
+          })}
+          <Button type="button" variant="ghost" className="self-start" disabled={conditions.fields.length >= 20} onClick={() => conditions.append(toCondition({ field: "subject" }))}>
             <Plus aria-hidden />
             Add condition
           </Button>
@@ -312,7 +411,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
           name="moveTo"
           render={({ field, fieldState }) => (
             <Field id="rule-move" label="Move to folder" error={fieldState.error?.message}>
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select value={discard ? keepInPlace : field.value} onValueChange={field.onChange} disabled={discard}>
                 <SelectTrigger id="rule-move" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -323,11 +422,19 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
                       {folderLabel(f)}
                     </SelectItem>
                   ))}
+                  {field.value !== keepInPlace && !folders.data?.some((f) => f.name === field.value) && <SelectItem value={field.value}>{field.value}</SelectItem>}
                 </SelectContent>
               </Select>
             </Field>
           )}
         />
+        <SwitchField control={form.control} name="delete" id="rule-delete" label="Delete permanently" hint="Discard matching messages as they arrive, without moving them to Trash." />
+        {discard && (
+          <div role="status" className="flex gap-3 rounded-lg border border-warning/40 bg-warning/12 p-4 text-sm">
+            <CircleAlert aria-hidden className="size-4 shrink-0 translate-y-0.5 text-warning" />
+            <span>Messages this rule deletes can’t be recovered. To keep a way back, move them to Trash instead.</span>
+          </div>
+        )}
         <Controller
           control={form.control}
           name="forwardTo"
@@ -337,7 +444,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
             </Field>
           )}
         />
-        {forwarding && <SwitchField control={form.control} name="keepCopy" id="rule-keep" label="Keep a copy in this mailbox" />}
+        {forwarding && !discard && <SwitchField control={form.control} name="keepCopy" id="rule-keep" label="Keep a copy in this mailbox" />}
         <SwitchField control={form.control} name="markRead" id="rule-read" label="Mark as read" />
         <SwitchField control={form.control} name="flag" id="rule-flag" label="Flag" />
         <SwitchField control={form.control} name="stop" id="rule-stop" label="Stop processing more rules" hint="Later rules are skipped for messages this rule matches." />

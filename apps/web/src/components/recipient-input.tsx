@@ -11,8 +11,10 @@ import { formatAddress } from "@/lib/format"
 import type { Address, Recipient } from "@/lib/types"
 
 const emailSchema = z.email()
+const domainPattern = /^@([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/i
 
-function parse(raw: string): Address | null {
+function parse(raw: string, allowDomains?: boolean): Address | null {
+  if (allowDomains && domainPattern.test(raw)) return { address: raw.toLowerCase() }
   const match = raw.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/)
   const address = (match ? match[2] : raw).trim()
   if (!emailSchema.safeParse(address).success) return null
@@ -27,6 +29,7 @@ export function RecipientInput({
   invalid,
   placeholder,
   suggest,
+  allowDomains,
 }: {
   id: string
   value: Address[]
@@ -34,6 +37,7 @@ export function RecipientInput({
   invalid?: boolean
   placeholder?: string
   suggest?: boolean
+  allowDomains?: boolean
 }) {
   const [draft, setDraft] = useState("")
   const [error, setError] = useState("")
@@ -62,13 +66,13 @@ export function RecipientInput({
   function commit(text: string) {
     const parts = text.split(/[,;\n]/).map((p) => p.trim()).filter(Boolean)
     if (parts.length === 0) return true
-    const parsed = parts.map(parse)
+    const parsed = parts.map((p) => parse(p, allowDomains))
     const bad = parts.filter((_, i) => !parsed[i])
     const good = parsed.filter((a): a is Address => a !== null)
     const known = new Set(value.map((a) => a.address.toLowerCase()))
     onChange([...value, ...good.filter((a) => !known.has(a.address.toLowerCase()))])
     setDraft(bad.join(", "))
-    setError(bad.length ? `${bad.join(", ")} is not a valid email address.` : "")
+    setError(bad.length ? `${bad.join(", ")} is not a valid email address${allowDomains ? " or @domain" : ""}.` : "")
     return bad.length === 0
   }
 

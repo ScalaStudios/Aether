@@ -1,6 +1,8 @@
 package api
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"mime"
 	"net/http"
@@ -21,17 +23,22 @@ type ownedMailbox struct {
 	DisplayName string
 }
 
+func (s *Server) accessibleMailbox(ctx context.Context, id, userID string) (*ownedMailbox, string, error) {
+	m := &ownedMailbox{}
+	var access string
+	err := s.db.QueryRow(ctx, `
+		SELECT m.id, m.org_id, m.address, m.display_name, `+mailboxAccessLevel("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, userID).
+		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &access)
+	return m, access, err
+}
+
 func (s *Server) ownedMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {
 	id, ok := pathID(w, r, "mailboxId")
 	if !ok {
 		return nil, false
 	}
-	m := &ownedMailbox{}
-	var access string
-	err := s.db.QueryRow(r.Context(), `
-		SELECT m.id, m.org_id, m.address, m.display_name, `+mailboxAccessLevel("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
-		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, p.User.ID).
-		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &access)
+	m, access, err := s.accessibleMailbox(r.Context(), id, p.User.ID)
 	if err != nil {
 		notFound(w)
 		return nil, false
@@ -50,6 +57,13 @@ func folderParam(r *http.Request) string {
 	return "INBOX"
 }
 
+func parseDate(v string) (time.Time, error) {
+	if v == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.DateOnly, v)
+}
+
 func uidParam(w http.ResponseWriter, r *http.Request) (uint32, bool) {
 	uid, err := strconv.ParseUint(r.PathValue("uid"), 10, 32)
 	if err != nil || uid == 0 {
@@ -59,10 +73,25 @@ func uidParam(w http.ResponseWriter, r *http.Request) (uint32, bool) {
 	return uint32(uid), true
 }
 
+var mailErrors = []struct {
+	err           error
+	status        int
+	code, message string
+}{
+	{mailpkg.ErrNotFound, http.StatusNotFound, "not_found", "The folder or message no longer exists. It may have been moved or deleted from another client."},
+	{mailpkg.ErrInvalidCursor, http.StatusUnprocessableEntity, "invalid_cursor", "The page cursor is not valid. Load the list again from the first page."},
+	{mailpkg.ErrFolderExists, http.StatusConflict, "folder_exists", "A folder with this name already exists."},
+	{mailpkg.ErrProtectedFolder, http.StatusUnprocessableEntity, "protected_folder", "Inbox, Drafts, Sent, Archive, Junk, Trash, and Snoozed cannot be renamed, moved, or deleted."},
+	{mailpkg.ErrFolderHasChildren, http.StatusConflict, "folder_has_subfolders", "This folder has subfolders. Move or delete them first."},
+	{mailpkg.ErrFolderNotEmpty, http.StatusConflict, "folder_not_empty", "This folder still has messages. Choose a folder to move them to first."},
+}
+
 func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, mailpkg.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "The folder or message no longer exists. It may have been moved or deleted from another client.")
-		return
+	for _, e := range mailErrors {
+		if errors.Is(err, e.err) {
+			writeError(w, e.status, e.code, e.message)
+			return
+		}
 	}
 	mailBackendErrs.Inc()
 	s.log.Error("mail backend request failed", "path", r.URL.Path, "err", err)
@@ -70,7 +99,7 @@ func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (s *Server) listFolders(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -92,8 +121,23 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, p *princip
 	if err != nil || limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	before, _ := strconv.ParseUint(q.Get("before"), 10, 32)
-	page, err := s.mail.List(m.Address, folderParam(r), q.Get("q"), uint32(before), limit, q.Get("threads") == "true")
+	o := mailpkg.ListOptions{
+		Query: q.Get("q"), Sort: cmp.Or(q.Get("sort"), "date"), Desc: q.Get("order") != "asc", Threads: q.Get("threads") == "true",
+		Unread: q.Get("unread") == "true", Flagged: q.Get("flagged") == "true", HasAttachments: q.Get("hasAttachments") == "true",
+		From: strings.TrimSpace(q.Get("from")), To: strings.TrimSpace(q.Get("to")), Cursor: q.Get("cursor"), Limit: limit,
+	}
+	if _, ok := mailpkg.SortKeys[o.Sort]; !ok || !slices.Contains([]string{"", "asc", "desc"}, q.Get("order")) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_sort", "Sort by date, sent, from, to, subject, or size, in asc or desc order.")
+		return
+	}
+	var sinceErr, untilErr error
+	o.Since, sinceErr = parseDate(q.Get("since"))
+	o.Until, untilErr = parseDate(q.Get("until"))
+	if sinceErr != nil || untilErr != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_date", "Write since and until as dates like 2026-10-31.")
+		return
+	}
+	page, err := s.mail.List(m.Address, folderParam(r), o)
 	if err != nil {
 		s.mailError(w, r, err)
 		return
@@ -171,25 +215,76 @@ func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request, p *princi
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) moveMessage(w http.ResponseWriter, r *http.Request, p *principal) {
+func (s *Server) moveMessages(w http.ResponseWriter, r *http.Request, p *principal) {
+	s.transferMessages(w, r, p, false)
+}
+
+func (s *Server) copyMessages(w http.ResponseWriter, r *http.Request, p *principal) {
+	s.transferMessages(w, r, p, true)
+}
+
+func (s *Server) transferMessages(w http.ResponseWriter, r *http.Request, p *principal, keep bool) {
 	m, ok := s.ownedMailbox(w, r, p)
 	if !ok {
 		return
 	}
-	uid, ok := uidParam(w, r)
-	if !ok {
-		return
-	}
 	var in struct {
-		To string `json:"to"`
+		To        string   `json:"to"`
+		MailboxID string   `json:"mailboxId"`
+		UIDs      []uint32 `json:"uids"`
 	}
-	if !decode(w, r, 1<<10, &in) || in.To == "" {
-		if in.To == "" {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_folder", "Choose a destination folder.")
-		}
+	if !decode(w, r, 16<<10, &in) {
 		return
 	}
-	if err := s.mail.Move(m.Address, folderParam(r), uid, in.To); err != nil {
+	uids := in.UIDs
+	if r.PathValue("uid") != "" {
+		uid, ok := uidParam(w, r)
+		if !ok {
+			return
+		}
+		uids = []uint32{uid}
+	}
+	switch {
+	case in.To == "":
+		writeError(w, http.StatusUnprocessableEntity, "invalid_folder", "Choose a destination folder.")
+		return
+	case len(uids) == 0 || len(uids) > 500 || slices.Contains(uids, 0):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_messages", "Choose between 1 and 500 messages.")
+		return
+	}
+	folder, targetID := folderParam(r), strings.ToLower(in.MailboxID)
+	if targetID == "" || targetID == m.ID {
+		if err := s.mail.Move(m.Address, folder, uids, in.To, keep); err != nil {
+			s.mailError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !uuidPattern.MatchString(targetID) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose a mailbox you have full access to.")
+		return
+	}
+	target, access, err := s.accessibleMailbox(r.Context(), targetID, p.User.ID)
+	switch {
+	case err != nil:
+		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose a mailbox you have full access to.")
+		return
+	case access == "read":
+		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to the destination mailbox.")
+		return
+	}
+	n, err := s.mail.Transfer(m.Address, folder, uids, target.Address, in.To, keep)
+	if n > 0 {
+		action := "mailbox.messages.move"
+		if keep {
+			action = "mailbox.messages.copy"
+		}
+		s.audit(r.Context(), r, p, &m.OrgID, action, "mailbox", m.ID, map[string]any{
+			"from": m.Address, "fromFolder": folder, "to": target.Address, "toMailboxId": target.ID, "toFolder": in.To, "messages": n,
+		})
+	}
+	if err != nil {
 		s.mailError(w, r, err)
 		return
 	}

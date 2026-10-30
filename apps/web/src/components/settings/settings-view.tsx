@@ -17,6 +17,7 @@ import { IconButton } from "@/components/icon-button"
 import { PageContainer } from "@/components/page-container"
 import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
+import { ManagedLists } from "@/components/settings/managed-lists"
 import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
@@ -30,7 +31,7 @@ import { useSession } from "@/hooks/use-session"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { myMailboxesQuery } from "@/lib/queries"
-import type { AppPassword, CreatedAppPassword } from "@/lib/types"
+import type { AppPassword, CreatedAppPassword, Session } from "@/lib/types"
 
 export function SettingsView() {
   const session = useSession().data
@@ -69,14 +70,52 @@ export function SettingsView() {
               </dd>
             </div>
           </dl>
+          <SignatureDetails title={session.user.title} phone={session.user.phone} />
         </section>
       )}
       <Signatures />
       <MailRules />
+      <ManagedLists />
       <ImportMail />
       <AppPasswords />
       <CalendarApps />
     </PageContainer>
+  )
+}
+
+function SignatureDetails({ title, phone }: { title: string; phone: string }) {
+  const qc = useQueryClient()
+  const [values, setValues] = useState({ title, phone })
+  const save = useMutation({
+    mutationFn: () => api<Session>("/me/profile", { method: "PUT", body: values }),
+    onSuccess: (saved) => {
+      qc.setQueryData(["session"], saved)
+      toast.success("Profile saved")
+    },
+  })
+
+  return (
+    <form
+      noValidate
+      className="flex flex-col gap-4 border-t border-border pt-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        save.mutate()
+      }}
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="profile-title" label="Job title">
+          <Input id="profile-title" maxLength={100} autoComplete="organization-title" value={values.title} onChange={(e) => setValues({ ...values, title: e.target.value })} />
+        </Field>
+        <Field id="profile-phone" label="Phone">
+          <Input id="profile-phone" type="tel" maxLength={40} autoComplete="tel" value={values.phone} onChange={(e) => setValues({ ...values, phone: e.target.value })} />
+        </Field>
+      </div>
+      <p className="text-sm text-fg-tertiary">Filled in when you start a signature from your organization&apos;s template.</p>
+      <Button type="submit" variant="secondary" className="self-start" loading={save.isPending} disabled={values.title.trim() === title && values.phone.trim() === phone}>
+        Save job title and phone
+      </Button>
+    </form>
   )
 }
 

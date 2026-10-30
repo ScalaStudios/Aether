@@ -49,6 +49,20 @@
 8. Publish the DNS records shown on the domain page. Ownership TXT, MX, SPF, DKIM, and DMARC are required. The MTA-STS and TLS reporting records are recommended (see "MTA-STS and TLS reporting" below).
 9. Click **Verify**. Mail for a domain is accepted only after the domain is verified.
 
+### SPF status
+
+The domain page checks every record live. For SPF, Aether evaluates the record as a receiving server would, for each address of `AETHER_MAIL_HOSTNAME`, following `include`, `redirect`, `a`, `mx`, `ip4`, `ip6` and `exists` within the limit of 10 DNS lookups:
+
+| Status | Meaning |
+| --- | --- |
+| OK | Every address of the mail host passes |
+| Not strict | An address gets softfail or neutral, or the record cannot be evaluated: more than 10 lookups, two SPF records, or a term such as a macro that Aether does not support |
+| Mismatch | An address of the mail host fails |
+| Missing | The domain has no `v=spf1` record |
+| Lookup error | DNS did not answer |
+
+A record that authorizes the server only through an `include` or an IP address is OK. The suggested record stays `v=spf1 mx -all`.
+
 ## Behind an existing reverse proxy
 
 If ports 80 and 443 already belong to another web server on the host, skip the bundled Caddy:
@@ -137,6 +151,10 @@ AETHER_RELAY_PASSWORD=...
 ```
 
 With these set, Postfix requires TLS to the relay. Mail between Aether's own domains is still delivered locally. Make sure the domain's SPF record includes the relay.
+
+## Distribution list policy service
+
+Postfix decides who may send to a restricted distribution list by asking the API on port 10040 during the SMTP session. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). In Compose the port is not published and is reachable only inside the Compose network. If the API runs elsewhere, open that port to Postfix and set `AETHER_POLICY_SERVICE` on the Postfix container.
 
 ## Monitoring
 

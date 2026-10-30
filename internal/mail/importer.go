@@ -224,19 +224,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 				p.Skipped++
 				continue
 			}
-			flags := slices.DeleteFunc(slices.Clone(m.Flags), func(f imap.Flag) bool { return f == imap.FlagDeleted || f == "\\Recent" })
-			date := m.InternalDate
-			if date.IsZero() {
-				date = time.Now()
-			}
-			cmd := to.Append(target, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: date})
-			if _, err := cmd.Write(raw); err != nil {
-				return err
-			}
-			if err := cmd.Close(); err != nil {
-				return err
-			}
-			if _, err := cmd.Wait(); err != nil {
+			if err := appendOriginal(to, target, m, raw); err != nil {
 				return err
 			}
 			if m.Envelope != nil && m.Envelope.MessageID != "" {
@@ -247,4 +235,21 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 		progress(*p)
 	}
 	return nil
+}
+
+func appendOriginal(to *imapclient.Client, target string, m *imapclient.FetchMessageBuffer, raw []byte) error {
+	flags := slices.DeleteFunc(slices.Clone(m.Flags), func(f imap.Flag) bool { return f == imap.FlagDeleted || f == "\\Recent" })
+	date := m.InternalDate
+	if date.IsZero() {
+		date = time.Now()
+	}
+	cmd := to.Append(target, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: date})
+	if _, err := cmd.Write(raw); err != nil {
+		return err
+	}
+	if err := cmd.Close(); err != nil {
+		return err
+	}
+	_, err := cmd.Wait()
+	return err
 }

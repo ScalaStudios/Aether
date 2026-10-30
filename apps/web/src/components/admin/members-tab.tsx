@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Ban, Pencil, Plus, RotateCcw, Users } from "lucide-react"
+import { Ban, Pencil, Plus, RotateCcw, UserMinus, Users } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
+import { membersQuery } from "@/lib/queries"
 import type { Member, Role } from "@/lib/types"
 
 const roles: Record<Role, string> = { owner: "Owner", admin: "Administrator", member: "Member" }
@@ -34,9 +35,10 @@ type Values = z.infer<typeof schema>
 
 export function MembersTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
-  const members = useQuery({ queryKey: ["members", orgId], queryFn: () => api<Member[]>(`/organizations/${orgId}/members`) })
+  const members = useQuery(membersQuery(orgId))
   const [editing, setEditing] = useState<Member | "new" | null>(null)
   const [suspending, setSuspending] = useState<Member | null>(null)
+  const [removing, setRemoving] = useState<Member | null>(null)
   const session = useSession()
   const platformAdmin = session.data?.user.isPlatformAdmin ?? false
 
@@ -47,6 +49,15 @@ export function MembersTab({ orgId }: { orgId: string }) {
       toast.success(status === "suspended" ? `Suspended ${member.email}` : `Restored ${member.email}`)
       qc.invalidateQueries({ queryKey: ["members", orgId] })
       setSuspending(null)
+    },
+  })
+  const remove = useMutation({
+    mutationFn: (member: Member) => api(`/organizations/${orgId}/members/${member.userId}`, { method: "DELETE" }),
+    meta: { silent: true },
+    onSuccess: (_d, member) => {
+      toast.success(`Removed ${member.email}`)
+      qc.invalidateQueries({ queryKey: ["members", orgId] })
+      setRemoving(null)
     },
   })
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", role: "member" } })
@@ -97,7 +108,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-20">
+                <TableHead className="w-28">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -126,6 +137,11 @@ export function MembersTab({ orgId }: { orgId: string }) {
                             <RotateCcw />
                           </IconButton>
                         )
+                      )}
+                      {m.userId !== session.data?.user.id && (
+                        <IconButton label={`Remove ${m.email}`} size="icon-sm" onClick={() => setRemoving(m)}>
+                          <UserMinus />
+                        </IconButton>
                       )}
                     </div>
                   </TableCell>
@@ -185,6 +201,25 @@ export function MembersTab({ orgId }: { orgId: string }) {
         pending={setStatus.isPending}
         onConfirm={() => suspending && setStatus.mutate({ member: suspending, status: "suspended" })}
       />
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(o) => {
+          if (o) return
+          setRemoving(null)
+          remove.reset()
+        }}
+        title={`Remove ${removing?.email}?`}
+        description="They lose their role here, their delegated access to this organization’s mailboxes, and ownership of its distribution lists. Their account and the mailboxes they own aren’t deleted."
+        confirmLabel="Remove member"
+        pending={remove.isPending}
+        onConfirm={() => removing && remove.mutate(removing)}
+      >
+        {remove.error && (
+          <p role="alert" className="text-sm text-danger">
+            {errorMessage(remove.error)}
+          </p>
+        )}
+      </ConfirmDialog>
     </section>
   )
 }

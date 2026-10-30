@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next"
 import localFont from "next/font/local"
 
+import { brandingScript } from "@/lib/branding"
+
 import { Providers } from "./providers"
 import "./globals.css"
 
@@ -31,6 +33,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" suppressHydrationWarning className={`${inter.variable} ${archivo.variable} ${jetbrains.variable} h-full antialiased`}>
       <body className="h-full">
+        <script dangerouslySetInnerHTML={{ __html: brandingScript }} />
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -15,15 +15,31 @@ A key belongs to one organization and acts as an administrator of that organizat
 | Scope | Allows |
 | --- | --- |
 | `domains:read`, `domains:write` | Listing, adding, verifying, and removing domains, and DNS status |
-| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, and removing mailboxes |
-| `aliases:read`, `aliases:write` | Listing, creating, and removing aliases |
-| `members:read`, `members:write` | Listing members and changing their roles. A key cannot make anyone an owner. |
+| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, and removing mailboxes, and managing their delegates, mail rules, automatic replies, signatures, and calendar and contacts imports (see below) |
+| `aliases:read`, `aliases:write` | Listing, creating, changing, and removing aliases and distribution lists |
+| `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
 | `audit:read` | Reading the audit log |
 | `webhooks:read`, `webhooks:write` | Managing webhooks and reading deliveries |
 
 A `write` scope includes `read`. Keys cannot read mail, use the platform administration endpoints, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name.
 
 To revoke a key, use `DELETE /api/v1/api-keys/{keyId}`. Revocation takes effect immediately.
+
+Removing a member with `DELETE /api/v1/organizations/{orgId}/members/{userId}` also removes their delegated mailbox access and list ownership in that organization. Only an owner can remove another owner, and the last owner cannot be removed.
+
+## Setting up mailboxes for other people
+
+Organization administrators, signed in or using a key, can prepare a mailbox on its owner's behalf. These routes accept any active mailbox on a verified domain of the organization:
+
+| Route | What it does |
+| --- | --- |
+| `GET`, `POST /api/v1/mailboxes/{mailboxId}/delegates` and `DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}` | Shared access |
+| `GET`, `PUT /api/v1/mailboxes/{mailboxId}/rules` and `/auto-reply` | Mail rules and automatic replies, compiled to Sieve as when the owner changes them |
+| `GET`, `PUT /api/v1/mailboxes/{mailboxId}/signatures` | Signatures |
+| `POST /api/v1/mailboxes/{mailboxId}/calendar/import` | An iCalendar file into the owner's personal calendar |
+| `POST /api/v1/mailboxes/{mailboxId}/contacts/import` | A vCard file into the owner's address book |
+
+An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate changes, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.
 
 ## Webhooks
 

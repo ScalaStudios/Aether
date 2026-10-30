@@ -12,6 +12,7 @@ import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api, apiUrl, errorMessage } from "@/lib/api"
+import { brandingQuery } from "@/lib/queries"
 import type { AuthProviders, Session } from "@/lib/types"
 
 const loginErrors: Record<string, string> = {
@@ -40,6 +41,7 @@ export function LoginForm() {
   const router = useRouter()
   const errorCode = params.get("error")
   const providers = useQuery({ queryKey: ["auth-providers"], queryFn: () => api<AuthProviders>("/auth/providers") })
+  const branding = useQuery(brandingQuery)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", password: "" } })
   const login = useMutation({
     mutationFn: (values: Values) => api<Session>("/auth/login", { method: "POST", body: values }),
@@ -51,14 +53,14 @@ export function LoginForm() {
     ? errorMessage(login.error)
     : errorCode && (loginErrors[errorCode] ?? `Sign-in failed (${errorCode}). Try again, or contact your administrator.`)
 
-  if (providers.isPending) return <RowsSkeleton rows={3} />
+  if (providers.isPending || branding.isPending) return <RowsSkeleton rows={3} />
   if (providers.isError) return <ErrorState error={providers.error} onRetry={() => providers.refetch()} />
 
   const { localLogin, providers: list } = providers.data
 
   return (
     <div className="animate-content flex flex-col gap-6">
-      <p className="text-fg-secondary">Sign in to read your mail and manage your organization.</p>
+      <p className="whitespace-pre-line text-fg-secondary">{branding.data?.signInMessage || "Sign in to read your mail and manage your organization."}</p>
       {message && (
         <div role="alert" className="flex gap-3 rounded-lg border border-danger/40 bg-danger/12 p-4 text-sm">
           <CircleX aria-hidden className="size-4 shrink-0 translate-y-0.5 text-danger" />

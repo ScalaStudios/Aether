@@ -51,7 +51,7 @@ func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *princip
 }
 
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -64,7 +64,7 @@ func (s *Server) listRules(w http.ResponseWriter, r *http.Request, p *principal)
 }
 
 func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -104,7 +104,7 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 }
 
 func (s *Server) getAutoReply(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -117,7 +117,7 @@ func (s *Server) getAutoReply(w http.ResponseWriter, r *http.Request, p *princip
 }
 
 func (s *Server) saveAutoReply(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}

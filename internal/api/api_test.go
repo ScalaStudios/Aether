@@ -40,7 +40,6 @@ func TestSafeReturnToRejectsOffsiteTargets(t *testing.T) {
 
 func TestRecordMatches(t *testing.T) {
 	dkim := &dnsRecord{Purpose: "dkim", Value: "v=DKIM1; k=rsa; p=ABC123"}
-	spf := &dnsRecord{Purpose: "spf"}
 	dmarc := &dnsRecord{Purpose: "dmarc"}
 	sts := &dnsRecord{Purpose: "mta-sts", Value: "v=STSv1; id=abc123"}
 	tlsrpt := &dnsRecord{Purpose: "tls-rpt"}
@@ -52,9 +51,6 @@ func TestRecordMatches(t *testing.T) {
 	}{
 		{dkim, "v=DKIM1; k=rsa; p=ABC123", true},
 		{dkim, "v=DKIM1; k=rsa; p=OTHER", false},
-		{spf, "v=spf1 mx -all", true},
-		{spf, "v=spf1 a:mail.example.com ~all", true},
-		{spf, "v=spf1 include:_spf.google.com -all", false},
 		{dmarc, "v=DMARC1; p=none", true},
 		{dmarc, "v=spf1 -all", false},
 		{sts, "v=STSv1;id=abc123", true},

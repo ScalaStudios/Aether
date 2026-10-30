@@ -290,6 +290,10 @@ func (s *Server) checkRecord(ctx context.Context, rec *dnsRecord) {
 		rec.Status = "missing"
 		return
 	}
+	if rec.Purpose == "spf" {
+		rec.Status = s.spfStatus(ctx, rec.Name)
+		return
+	}
 	rec.Status = "mismatch"
 	for _, f := range rec.Found {
 		if recordMatches(rec, f, s.cfg.MailHostname) {
@@ -331,14 +335,6 @@ func recordMatches(rec *dnsRecord, found, mailHost string) bool {
 	switch rec.Purpose {
 	case "mx":
 		return found == mailHost
-	case "spf":
-		fields := strings.Fields(strings.ToLower(found))
-		for _, f := range fields {
-			if f == "mx" || f == "+mx" || f == "a:"+mailHost || f == "+a:"+mailHost {
-				return true
-			}
-		}
-		return false
 	case "dmarc":
 		return strings.HasPrefix(normalized, "v=dmarc1;")
 	case "mta-sts":

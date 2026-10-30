@@ -2,9 +2,9 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { BookUser, Mail, Pencil, Plus, SearchX, Trash2, Users, X } from "lucide-react"
+import { BookUser, Mail, Pencil, Plus, SearchX, Trash2, Upload, Users, X } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -24,7 +24,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { ApiError, api } from "@/lib/api"
-import type { Contact, ContactInput, Recipient } from "@/lib/types"
+import { plural } from "@/lib/format"
+import type { Contact, ContactInput, ImportCounts, Recipient } from "@/lib/types"
 
 const schema = z.object({
   name: z.string().trim().min(1, "Enter a name.").max(200, "Use 200 characters or fewer."),
@@ -56,6 +57,38 @@ function toInput(v: Values): ContactInput {
   }
 }
 
+function ImportContacts() {
+  const qc = useQueryClient()
+  const fileInput = useRef<HTMLInputElement>(null)
+  const importFile = useMutation({
+    mutationFn: (file: File) => api<ImportCounts>("/contacts/import", { method: "POST", body: file }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["contacts"] })
+      toast.success(`Imported ${plural(r.imported + r.updated, "contact")}`, { description: r.skipped ? `Skipped ${plural(r.skipped, "contact")} that couldn't be read.` : undefined })
+    },
+  })
+
+  return (
+    <>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".vcf,text/vcard"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) importFile.mutate(file)
+          e.target.value = ""
+        }}
+      />
+      <Button variant="secondary" loading={importFile.isPending} onClick={() => fileInput.current?.click()}>
+        <Upload aria-hidden />
+        Import .vcf file
+      </Button>
+    </>
+  )
+}
+
 function WriteEmail({ address, name }: { address: string; name: string }) {
   return (
     <IconButton label={`Write email to ${name || address}`} size="icon-sm" asChild>
@@ -77,10 +110,13 @@ export function ContactsView() {
         description="People you write to, also available on your phone over CardDAV, and everyone with a mailbox in your organizations."
         actions={
           tab === "contacts" && (
-            <Button onClick={() => setEditing("new")}>
-              <Plus aria-hidden />
-              New contact
-            </Button>
+            <>
+              <ImportContacts />
+              <Button onClick={() => setEditing("new")}>
+                <Plus aria-hidden />
+                New contact
+              </Button>
+            </>
           )
         }
       />

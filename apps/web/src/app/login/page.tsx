@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Image from "next/image"
 import { Suspense } from "react"
 
+import { BrandHeading } from "@/components/branding"
 import { LoginForm } from "@/components/login-form"
 
 export const metadata: Metadata = {
@@ -13,7 +14,7 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-12 px-5 py-12">
       <div className="flex w-full max-w-[400px] flex-col gap-8">
-        <h1 className="font-display text-[40px] leading-none font-extrabold tracking-tight">Aether</h1>
+        <BrandHeading />
         <Suspense>
           <LoginForm />
         </Suspense>

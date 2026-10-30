@@ -6,6 +6,8 @@ export interface User {
   displayName: string
   isPlatformAdmin: boolean
   status: "active" | "suspended" | "deprovisioned"
+  title: string
+  phone: string
 }
 
 export interface Membership {
@@ -48,7 +50,7 @@ export interface Domain {
   createdAt: string
 }
 
-export type DNSStatus = "ok" | "missing" | "mismatch" | "error"
+export type DNSStatus = "ok" | "warning" | "missing" | "mismatch" | "error"
 
 export interface DNSRecord {
   type: "MX" | "TXT" | "CNAME" | "PTR"
@@ -100,6 +102,8 @@ export interface Delegate {
   createdAt: string
 }
 
+export type AcceptFrom = "anyone" | "organization" | "members" | "allowlist"
+
 export interface Alias {
   id: string
   orgId: string
@@ -108,6 +112,12 @@ export interface Alias {
   localPart: string
   destinations: string[]
   active: boolean
+  kind: "alias" | "list"
+  name: string
+  acceptFrom: AcceptFrom
+  allowedSenders: string[]
+  sendAs: string[]
+  owners: string[]
 }
 
 export interface Member {
@@ -174,6 +184,7 @@ export interface Folder {
   specialUse: SpecialUse
   total: number
   unread: number
+  subscribed: boolean
 }
 
 export interface Address {
@@ -198,7 +209,7 @@ export interface MessageSummary {
 export interface MessagePage {
   messages: MessageSummary[]
   total: number
-  nextCursor?: number | null
+  nextCursor?: string | null
 }
 
 export interface Attachment {
@@ -296,14 +307,22 @@ export interface Discovery {
   redirectUri: string
 }
 
-export type RuleField = "from" | "to" | "cc" | "subject"
+export type RuleField = "from" | "to" | "cc" | "subject" | "body" | "header" | "sizeOver" | "sizeUnder" | "notToMe"
+
+export interface RuleCondition {
+  field: RuleField
+  contains?: string
+  header?: string
+  negate?: boolean
+  sizeKb?: number
+}
 
 export interface MailRule {
   name: string
   enabled: boolean
   match: "all" | "any"
-  conditions: { field: RuleField; contains: string }[]
-  actions: { moveTo?: string; markRead?: boolean; flag?: boolean; forwardTo?: string[]; keepCopy?: boolean; stop?: boolean }
+  conditions: RuleCondition[]
+  actions: { moveTo?: string; delete?: boolean; markRead?: boolean; flag?: boolean; forwardTo?: string[]; keepCopy?: boolean; stop?: boolean }
 }
 
 export interface AutoReply {
@@ -336,6 +355,12 @@ export interface Contact {
 }
 
 export type ContactInput = Omit<Contact, "id">
+
+export interface ImportCounts {
+  imported: number
+  updated: number
+  skipped: number
+}
 
 export interface Recipient {
   name: string
@@ -428,4 +453,46 @@ export type MailImport = {
   error: string
   createdAt: string
   finishedAt: string | null
+}
+
+export type BrandTheme = "dark" | "light"
+
+export type BrandColorKey = "accent" | "accentHover" | "accentActive" | "background" | "surface" | "border" | "text" | "link"
+
+export type BrandColors = Record<BrandTheme, Partial<Record<BrandColorKey, string>>>
+
+export interface BrandImages {
+  logoLight: string | null
+  logoDark: string | null
+  favicon: string | null
+}
+
+export interface Branding extends BrandImages {
+  orgId: string
+  name: string
+  signInMessage: string
+  colors: BrandColors
+  customCssUrl: string | null
+}
+
+export interface BrandingSettings {
+  name: string
+  signInMessage: string
+  colors: BrandColors
+  customCss: string
+}
+
+export type OrgBranding = BrandingSettings & BrandImages & { customCssEnabled: boolean }
+
+export interface SignatureLink {
+  label: string
+  url: string
+}
+
+export interface SignatureTemplate {
+  domainId: string | null
+  html: string
+  links: SignatureLink[]
+  logoWidth: number
+  updatedAt?: string
 }

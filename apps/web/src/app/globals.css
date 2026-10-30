@@ -29,15 +29,15 @@
 
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.6);
-  --shadow-ember: 0 6px 20px rgba(250, 126, 38, 0.28);
+  --shadow-ember: 0 6px 20px color-mix(in oklab, var(--ember) 28%, transparent);
 
   --ease-brand: cubic-bezier(0.2, 0.8, 0.2, 1);
 
-  --color-ember: #fa7e26;
-  --color-ember-hover: #ff8f3d;
-  --color-ember-active: #e06a18;
+  --color-ember: var(--ember);
+  --color-ember-hover: var(--ember-hover);
+  --color-ember-active: var(--ember-active);
   --color-gold: #f7ad31;
-  --color-ink: #111111;
+  --color-ink: var(--ink);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -56,7 +56,7 @@
   --color-destructive: var(--danger);
   --color-border: var(--border);
   --color-input: var(--border-strong);
-  --color-ring: #fa7e26;
+  --color-ring: var(--ember);
   --color-sunken: var(--sunken);
   --color-strong: var(--border-strong);
   --color-fg-secondary: var(--fg-secondary);
@@ -68,8 +68,13 @@
   --color-info: var(--info);
 }
 
-:root {
+:root,
+.dark {
   color-scheme: dark;
+  --ember: #fa7e26;
+  --ember-hover: #ff8f3d;
+  --ember-active: #e06a18;
+  --ink: #111111;
   --background: #111111;
   --foreground: #ffffff;
   --card: #1c1917;
@@ -90,6 +95,10 @@
 
 .light {
   color-scheme: light;
+  --ember: #fa7e26;
+  --ember-hover: #ff8f3d;
+  --ember-active: #e06a18;
+  --ink: #111111;
   --background: #fafaf9;
   --foreground: #2a2724;
   --card: #ffffff;
@@ -188,11 +197,11 @@
 
 :focus-visible:not([data-focus-ring="off"]) {
   outline: none;
-  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px #fa7e26;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ember);
 }
 
 .focus-ring-within:has(:focus-visible) {
-  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px #fa7e26;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ember);
 }
 
 .lucide {

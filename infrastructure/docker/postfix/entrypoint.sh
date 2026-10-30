@@ -10,6 +10,7 @@ sed -i \
   -e "s|__HOSTNAME__|${AETHER_MAIL_HOSTNAME}|" \
   -e "s|__RELAYHOST__|${AETHER_RELAYHOST:-}|" \
   -e "s|__REPORTS__|${AETHER_REPORT_LMTP:-api:2424}|" \
+  -e "s|__POLICY__|${AETHER_POLICY_SERVICE:-api:10040}|" \
   /etc/postfix/main.cf
 
 install -d -m 0750 -o root -g postfix /etc/postfix/pgsql
@@ -28,6 +29,7 @@ write_map domains "SELECT 1 FROM mail_domains WHERE name = '%s'"
 write_map mailboxes "SELECT 1 FROM mail_users WHERE address = '%s'"
 write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s'"
 write_map senders "SELECT login FROM mail_senders WHERE sender = '%s'"
+write_map restricted-lists "SELECT 'aether_list_policy' FROM mail_restricted_lists WHERE address = '%s'"
 write_map hosted-senders "SELECT '%s' FROM mail_domains WHERE name = '%d'"
 
 srs_secret=/var/spool/postfix/srs.secret

@@ -111,6 +111,32 @@ func (c *apiClient) must(method, path string, body any, out any, want int) {
 	}
 }
 
+func (c *apiClient) mustRaw(method, path, contentType, body string, out any, want int) {
+	c.t.Helper()
+	req, _ := http.NewRequest(method, c.base+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	if c.csrf != "" {
+		req.Header.Set("X-CSRF-Token", c.csrf)
+	}
+	if c.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != want {
+		c.t.Fatalf("%s %s: status %d, want %d: %s", method, path, resp.StatusCode, want, raw)
+	}
+	if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			c.t.Fatalf("%s %s: decode %q: %v", method, path, raw, err)
+		}
+	}
+}
+
 var adminSession struct {
 	jar  http.CookieJar
 	csrf string

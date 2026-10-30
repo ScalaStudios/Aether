@@ -35,7 +35,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 
 | Area | What Aether includes |
 | --- | --- |
-| **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself and as aliases that point to it, checked on both the envelope and the From header. |
+| **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself, as aliases that point to it and as distribution lists that allow it, checked on both the envelope and the From header. |
 | **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, spam filed into Junk, DKIM signing with a 2048-bit RSA key per domain, ARC signing, outbound rate limits and optional ClamAV virus scanning. |
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
 | **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
@@ -225,6 +225,7 @@ The Go API is the only component that writes application data. It keeps organiza
 | `AETHER_LOCAL_LOGIN` | `true` | Password sign-in. Set it to `false` once an identity provider is connected |
 | `AETHER_RELAYHOST`, `AETHER_RELAY_USER`, `AETHER_RELAY_PASSWORD` | none | An authenticated relay for outgoing mail, for hosts that block outbound port 25 |
 | `AETHER_MTA_STS_MODE` | `testing` | The MTA-STS policy mode. Set it to `enforce` once TLS reports show no failures |
+| `AETHER_CUSTOM_CSS` | `true` | Organizations' custom CSS from **Administration → Branding**. Set it to `false` if a stylesheet breaks the sign-in page |
 | `AETHER_BACKUP_REPOSITORY`, `AETHER_BACKUP_PASSWORD` | none | A restic repository on S3-compatible storage for off-site backups, and its encryption password |
 | `COMPOSE_PROFILES` | none | `antivirus` for ClamAV and `monitoring` for Prometheus and Grafana |
 | `COMPOSE_FILE` | `compose.yml` | Add `compose.external-proxy.yml` to run behind an existing reverse proxy instead of Caddy |

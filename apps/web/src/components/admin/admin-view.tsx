@@ -10,11 +10,13 @@ import { z } from "zod"
 
 import { AliasesTab } from "@/components/admin/aliases-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
+import { BrandingTab } from "@/components/admin/branding-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
 import { MembersTab } from "@/components/admin/members-tab"
+import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { PageContainer } from "@/components/page-container"
@@ -41,6 +43,8 @@ const orgTabs = [
   { value: "mailboxes", label: "Mailboxes", Component: MailboxesTab },
   { value: "aliases", label: "Aliases", Component: AliasesTab },
   { value: "members", label: "Members", Component: MembersTab },
+  { value: "branding", label: "Branding", Component: BrandingTab },
+  { value: "signatures", label: "Signatures", Component: SignaturesTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

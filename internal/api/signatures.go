@@ -26,7 +26,7 @@ type signatureSettings struct {
 var signatureIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
 func (s *Server) getSignatures(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -40,7 +40,7 @@ func (s *Server) getSignatures(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) saveSignatures(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -83,5 +83,6 @@ func (s *Server) saveSignatures(w http.ResponseWriter, r *http.Request, p *princ
 		s.internalError(w, r, err)
 		return
 	}
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.signatures.update", "mailbox", m.ID, map[string]any{"signatures": len(in.Signatures)})
 	writeJSON(w, http.StatusOK, in)
 }

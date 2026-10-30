@@ -60,7 +60,7 @@ spec:
     - ports: [{ port: 9090 }]
     - from:
         {{- include "aether.allowFrom" (list "postfix") | nindent 8 }}
-      ports: [{ port: 2424 }]
+      ports: [{ port: 2424 }, { port: 10040 }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

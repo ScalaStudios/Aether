@@ -37,6 +37,7 @@ type Values = z.infer<typeof schema>
 
 const dnsStatus: Record<DNSStatus, { tone: "success" | "warning" | "danger"; label: string }> = {
   ok: { tone: "success", label: "OK" },
+  warning: { tone: "warning", label: "Not strict" },
   missing: { tone: "warning", label: "Missing" },
   mismatch: { tone: "danger", label: "Mismatch" },
   error: { tone: "danger", label: "Lookup error" },

@@ -15,15 +15,15 @@ import { ScheduledList } from "@/components/mail/scheduled-list"
 import { ShortcutsDialog } from "@/components/mail/shortcuts-dialog"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { useListView } from "@/hooks/use-list-view"
 import { api } from "@/lib/api"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
-import { buildDraft, type ComposeMode, type Draft } from "@/lib/mail"
+import { buildDraft, folderLabel, snoozedFolder, type ComposeMode, type Draft } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { Message, MessagePage, MessageSummary, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
+import type { Folder, Mailbox, Message, MessagePage, MessageSummary, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
-const SNOOZED = "Snoozed"
 
 type Flags = { seen?: boolean; flagged?: boolean }
 
@@ -64,7 +64,7 @@ export function MailView() {
   const snoozed = useQuery({
     queryKey: ["snoozed", mbx],
     queryFn: () => api<SnoozedMessage[]>(`/mailboxes/${mbx}/snoozed`),
-    enabled: !!mailbox && folder === SNOOZED,
+    enabled: !!mailbox && folder === snoozedFolder,
   })
   const wakeTimes = new Map(snoozed.data?.map((s) => [s.uid, s.until]))
 
@@ -72,12 +72,15 @@ export function MailView() {
   const q = useDebouncedValue(search.trim(), 300)
 
   const isDrafts = folders.data?.find((f) => f.name === folder)?.specialUse === "drafts"
+  const [view, setView] = useListView(`${mbx}/${folder}`)
   const listKey = ["messages", mbx, folder]
   const messages = useInfiniteQuery({
-    queryKey: [...listKey, q],
+    queryKey: [...listKey, q, view],
     queryFn: ({ pageParam }) =>
-      api<MessagePage>(`/mailboxes/${mbx}/messages`, { query: { folder, q, before: pageParam, limit: 50, threads: isDrafts ? undefined : "true" } }),
-    initialPageParam: undefined as number | undefined,
+      api<MessagePage>(`/mailboxes/${mbx}/messages`, {
+        query: { folder, q, cursor: pageParam, limit: 50, threads: isDrafts ? undefined : "true", sort: view.sort, order: view.order, ...Object.fromEntries(view.filters.map((f) => [f, "true"])) },
+      }),
+    initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled: !!mailbox && folders.isSuccess,
     refetchInterval: POLL,
@@ -134,15 +137,15 @@ export function MailView() {
   })
 
   const remove = useMutation({
-    mutationFn: ({ uid, to, until, unsnooze }: { uid: number; to?: string; until?: Date; unsnooze?: boolean }) =>
+    mutationFn: ({ uid, to, target, until, unsnooze }: { uid: number; to?: Folder; target?: Mailbox; until?: Date; unsnooze?: boolean }) =>
       unsnooze
         ? api(`/mailboxes/${mbx}/snoozed/${uid}`, { method: "DELETE" })
         : until
           ? api(`/mailboxes/${mbx}/messages/${uid}/snooze`, { method: "POST", query: { folder }, body: { until: toRFC3339(until) } })
           : to
-            ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder }, body: { to } })
+            ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder }, body: { to: to.name, mailboxId: target?.id } })
             : api(`/mailboxes/${mbx}/messages/${uid}`, { method: "DELETE", query: { folder } }),
-    onSuccess: (_d, { uid, to, until, unsnooze }) => {
+    onSuccess: (_d, { uid, to, target, until, unsnooze }) => {
       const index = summaries.findIndex((m) => m.uid === uid)
       const next = summaries[index + 1] ?? summaries[index - 1]
       patchCaches(uid, null)
@@ -153,12 +156,22 @@ export function MailView() {
           : until
             ? `Snoozed until ${formatShortDateTime(until)}`
             : to
-              ? `Moved to ${to}`
+              ? `Moved to ${folderLabel(to)}${target ? ` in ${target.address}` : ""}`
               : "Message deleted"
       )
-      qc.invalidateQueries({ queryKey: ["folders", mbx] })
-      qc.invalidateQueries({ queryKey: ["messages", mbx] })
+      qc.invalidateQueries({ queryKey: ["folders"] })
+      qc.invalidateQueries({ queryKey: ["messages"] })
       qc.invalidateQueries({ queryKey: ["snoozed", mbx] })
+    },
+  })
+
+  const copy = useMutation({
+    mutationFn: ({ uid, to, target }: { uid: number; to: Folder; target?: Mailbox }) =>
+      api(`/mailboxes/${mbx}/messages/${uid}/copy`, { method: "POST", query: { folder }, body: { to: to.name, mailboxId: target?.id } }),
+    onSuccess: (_d, { to, target }) => {
+      toast.success(`Copied to ${folderLabel(to)}${target ? ` in ${target.address}` : ""}`)
+      qc.invalidateQueries({ queryKey: ["folders", target?.id ?? mbx] })
+      qc.invalidateQueries({ queryKey: ["messages", target?.id ?? mbx] })
     },
   })
 
@@ -284,6 +297,7 @@ export function MailView() {
           setShowFolders(false)
         }}
         onCompose={readOnly ? undefined : () => startCompose("new")}
+        onDropMessage={readOnly ? undefined : (uid, to) => remove.mutate({ uid, to })}
       />
       {showScheduled ? (
         <ScheduledList
@@ -308,24 +322,28 @@ export function MailView() {
           onShowFolders={() => setShowFolders(true)}
           onCompose={readOnly ? undefined : () => startCompose("new")}
           onHelp={() => setHelpOpen(true)}
-          wakeTimes={folder === SNOOZED ? wakeTimes : undefined}
+          wakeTimes={folder === snoozedFolder ? wakeTimes : undefined}
+          view={view}
+          onViewChange={setView}
+          draggable={!readOnly}
         />
       )}
       <ReadingPane
         className={cn("min-w-0 flex-1 md:flex", reading ? "flex" : "hidden")}
         mailboxId={mbx}
         folder={folder}
-        folders={folders.data ?? []}
+        mailboxes={mailboxes.data.filter((m) => m.id !== mbx && m.access !== "read")}
         query={message}
         selected={selectedUid !== null}
         earlier={summaries.find((m) => m.uid === selectedUid)?.threadUids?.slice(1) ?? []}
         onBack={() => setSelectedUid(null)}
         onReply={startCompose}
         onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}
-        onMove={(to) => selectedUid !== null && remove.mutate({ uid: selectedUid, to })}
+        onMove={(to, target) => selectedUid !== null && remove.mutate({ uid: selectedUid, to, target })}
+        onCopy={(to, target) => selectedUid !== null && copy.mutate({ uid: selectedUid, to, target })}
         onDelete={() => selectedUid !== null && remove.mutate({ uid: selectedUid })}
         onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
-        onUnsnooze={folder === SNOOZED ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
+        onUnsnooze={folder === snoozedFolder ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
         deleting={remove.isPending}
         readOnly={readOnly}
       />

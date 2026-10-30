@@ -1,16 +1,102 @@
 "use client"
 
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
-import { AlarmClock, Flag, FolderOpen, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
+import { AlarmClock, ArrowDownUp, Flag, FolderOpen, FunnelX, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { cn } from "cn"
 
 import { IconButton } from "@/components/icon-button"
 import { SearchInput } from "@/components/search-input"
+import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
-import { formatListDate, formatWhen } from "@/lib/format"
-import { folderIcons, folderLabel, senderLabel } from "@/lib/mail"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { formatBytes, formatListDate, formatWhen } from "@/lib/format"
+import { dragTypes, folderIcons, folderLabel, senderLabel, type ListView, type MessageSort, type QuickFilter } from "@/lib/mail"
 import type { Folder, MessagePage, MessageSummary } from "@/lib/types"
+
+const quickFilters: { value: QuickFilter; label: string }[] = [
+  { value: "unread", label: "Unread" },
+  { value: "flagged", label: "Flagged" },
+  { value: "hasAttachments", label: "Attachments" },
+]
+
+const alphabetical = [
+  { value: "asc", label: "A to Z" },
+  { value: "desc", label: "Z to A" },
+] as const
+
+const orders: Record<MessageSort, readonly { value: ListView["order"]; label: string }[]> = {
+  date: [
+    { value: "desc", label: "Newest first" },
+    { value: "asc", label: "Oldest first" },
+  ],
+  from: alphabetical,
+  to: alphabetical,
+  subject: alphabetical,
+  size: [
+    { value: "desc", label: "Largest first" },
+    { value: "asc", label: "Smallest first" },
+  ],
+}
+
+function SortMenu({ view, onViewChange, outgoing }: { view: ListView; onViewChange: (view: ListView) => void; outgoing: boolean }) {
+  const keys: { value: MessageSort; label: string }[] = [
+    { value: "date", label: "Date" },
+    outgoing ? { value: "to", label: "Recipient" } : { value: "from", label: "Sender" },
+    { value: "subject", label: "Subject" },
+    { value: "size", label: "Size" },
+  ]
+  const order = orders[view.sort].find((o) => o.value === view.order)?.label
+  const current = view.sort === "date" ? order : `${keys.find((k) => k.value === view.sort)?.label}, ${order?.toLowerCase()}`
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="quiet" size="icon-sm" aria-label={`Sort messages: ${current}`} className={cn((view.sort !== "date" || view.order !== "desc") && "text-ember")}>
+              <ArrowDownUp />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Sort: {current}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Sort by</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={view.sort} onValueChange={(v) => onViewChange({ ...view, sort: v as MessageSort, order: orders[v as MessageSort][0].value })}>
+          {keys.map((k) => (
+            <DropdownMenuRadioItem key={k.value} value={k.value}>
+              {k.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Order</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={view.order} onValueChange={(v) => onViewChange({ ...view, order: v as ListView["order"] })}>
+          {orders[view.sort].map((o) => (
+            <DropdownMenuRadioItem key={o.value} value={o.value}>
+              {o.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function filteredDescription(folder: string, filters: QuickFilter[]) {
+  const adjectives = filters.filter((f) => f !== "hasAttachments").join(", ")
+  return `${folder} has no ${adjectives ? `${adjectives} ` : ""}messages${filters.includes("hasAttachments") ? " with attachments" : ""}.`
+}
 
 export function MessageList({
   className,
@@ -27,6 +113,9 @@ export function MessageList({
   onCompose,
   onHelp,
   wakeTimes,
+  view,
+  onViewChange,
+  draggable,
 }: {
   className?: string
   folder: Pick<Folder, "name" | "specialUse">
@@ -42,6 +131,9 @@ export function MessageList({
   onCompose?: () => void
   onHelp: () => void
   wakeTimes?: Map<number, string>
+  view: ListView
+  onViewChange: (view: ListView) => void
+  draggable?: boolean
 }) {
   const sentinel = useRef<HTMLDivElement>(null)
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
@@ -65,6 +157,7 @@ export function MessageList({
 
   const FolderIcon = folderIcons[folder.specialUse]
   const total = query.data?.pages[0]?.total
+  const outgoing = folder.specialUse === "sent" || folder.specialUse === "drafts"
 
   return (
     <section aria-label="Messages" className={cn("min-h-0 flex-col border-r border-border", className)}>
@@ -82,11 +175,20 @@ export function MessageList({
               <PenSquare />
             </IconButton>
           )}
+          <SortMenu view={view} onViewChange={onViewChange} outgoing={outgoing} />
           <IconButton label="Keyboard shortcuts" size="icon-sm" className="max-md:hidden" onClick={onHelp}>
             <Keyboard />
           </IconButton>
         </div>
         <SearchInput ref={searchRef} aria-label="Search mail" placeholder="Search this folder" value={search} onChange={(e) => onSearchChange(e.target.value)} />
+        <div className="flex">
+          <SegmentedControl
+            label="Show only"
+            options={quickFilters}
+            value={view.filters}
+            onChange={(f) => onViewChange({ ...view, filters: view.filters.includes(f) ? view.filters.filter((x) => x !== f) : [...view.filters, f] })}
+          />
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {query.isPending ? (
@@ -96,6 +198,17 @@ export function MessageList({
         ) : summaries.length === 0 ? (
           q ? (
             <EmptyState icon={SearchX} title="No matches" description={`No messages in ${folderLabel(folder)} match “${q}”.`} />
+          ) : view.filters.length > 0 ? (
+            <EmptyState
+              icon={FunnelX}
+              title="No matching messages"
+              description={filteredDescription(folderLabel(folder), view.filters)}
+              action={
+                <Button variant="secondary" onClick={() => onViewChange({ ...view, filters: [] })}>
+                  Clear filters
+                </Button>
+              }
+            />
           ) : (
             <EmptyState icon={FolderIcon} title={`${folderLabel(folder)} is empty`} description="New messages appear here automatically." />
           )
@@ -107,6 +220,8 @@ export function MessageList({
                   id={`message-${m.uid}`}
                   type="button"
                   aria-current={m.uid === selectedUid ? "true" : undefined}
+                  draggable={draggable}
+                  onDragStart={(e) => e.dataTransfer.setData(dragTypes.message, String(m.uid))}
                   onClick={() => onOpen(m)}
                   className={cn(
                     "relative flex w-full cursor-pointer flex-col gap-1 border-b border-border px-4 py-3 text-left transition-colors duration-160 hover:bg-muted/60",
@@ -117,11 +232,15 @@ export function MessageList({
                     {!m.seen && <span aria-hidden className="size-2 shrink-0 rounded-full bg-ember" />}
                     <span className={cn("flex-1 truncate", m.seen ? "text-fg-secondary" : "font-semibold text-foreground")}>
                       {!m.seen && <span className="sr-only">Unread, </span>}
-                      {folder.specialUse === "sent" || folder.specialUse === "drafts" ? senderLabel(m.to, "No recipients") : senderLabel(m.from)}
+                      {outgoing ? senderLabel(m.to, "No recipients") : senderLabel(m.from)}
                     </span>
-                    <time dateTime={m.date} className="shrink-0 text-xs text-fg-tertiary tabular-nums">
-                      {formatListDate(m.date)}
-                    </time>
+                    {view.sort === "size" ? (
+                      <span className="shrink-0 text-xs text-fg-tertiary tabular-nums">{formatBytes(m.size)}</span>
+                    ) : (
+                      <time dateTime={m.date} className="shrink-0 text-xs text-fg-tertiary tabular-nums">
+                        {formatListDate(m.date)}
+                      </time>
+                    )}
                   </span>
                   <span className="flex items-center gap-2">
                     <span className={cn("flex-1 truncate text-sm", m.seen ? "text-fg-tertiary" : "font-semibold text-fg-secondary")}>
