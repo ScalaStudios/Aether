@@ -36,10 +36,11 @@ type Server struct {
 	resolve       resolver
 	webhookClient *http.Client
 	imports       sync.Map
+	kickWake      chan struct{}
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate)}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -114,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/organizations/{orgId}/mailboxes", s.createMailbox)
 	authed("PATCH /api/v1/mailboxes/{mailboxId}", s.updateMailbox)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}", s.deleteMailbox)
+	authed("POST /api/v1/mailboxes/{mailboxId}/convert", s.convertMailbox)
 	authed("GET /api/v1/mailboxes/{mailboxId}/delegates", s.listDelegates)
 	authed("POST /api/v1/mailboxes/{mailboxId}/delegates", s.addDelegate)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}", s.removeDelegate)

@@ -6,6 +6,27 @@ x-mail-env: &mail-env
   AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD:?run scripts/setup.sh}
   AETHER_SIEVE_RELAY_PASSWORD: ${AETHER_SIEVE_RELAY_PASSWORD:?run scripts/setup.sh or add AETHER_SIEVE_RELAY_PASSWORD to .env}
 
+x-api-env: &api-env
+  AETHER_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
+  AETHER_PUBLIC_URL: ${AETHER_PUBLIC_URL:?set AETHER_PUBLIC_URL in .env}
+  AETHER_SECRET_KEY: ${AETHER_SECRET_KEY:?run scripts/setup.sh}
+  AETHER_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
+  AETHER_MAIL_TLS_CA_FILE: ${AETHER_MAIL_TLS_CA_FILE:-/tls/fullchain.pem}
+  AETHER_IMAP_ADDR: ${AETHER_IMAP_ADDR:-dovecot:143}
+  AETHER_DOVECOT_API_URL: ${AETHER_DOVECOT_API_URL:-http://dovecot:8089}
+  AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
+  AETHER_DOVECOT_API_KEY: ${AETHER_DOVECOT_API_KEY}
+  AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
+  AETHER_TRUST_PROXY: "true"
+  AETHER_METRICS_LISTEN: ":9090"
+  AETHER_LOCAL_LOGIN: ${AETHER_LOCAL_LOGIN:-true}
+  AETHER_OIDC_ALLOW_HTTP: ${AETHER_OIDC_ALLOW_HTTP:-false}
+  AETHER_MTA_STS_MODE: ${AETHER_MTA_STS_MODE:-testing}
+  AETHER_WEBHOOK_ALLOW_PRIVATE: ${AETHER_WEBHOOK_ALLOW_PRIVATE:-false}
+  AETHER_CUSTOM_CSS: ${AETHER_CUSTOM_CSS:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -75,7 +96,9 @@ services:
   dovecot:
     image: aether/dovecot:dev
     restart: unless-stopped
-    environment: *mail-env
+    environment:
+      <<: *mail-env
+      AETHER_DOVECOT_API_KEY: ${AETHER_DOVECOT_API_KEY:?run scripts/setup.sh or add AETHER_DOVECOT_API_KEY to .env}
     volumes:
       - vmail:/var/vmail
       - tls:/tls:ro
@@ -123,23 +146,7 @@ services:
       dockerfile: infrastructure/docker/api/Dockerfile
     image: aether/api:dev
     restart: unless-stopped
-    environment:
-      AETHER_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
-      AETHER_PUBLIC_URL: ${AETHER_PUBLIC_URL:?set AETHER_PUBLIC_URL in .env}
-      AETHER_SECRET_KEY: ${AETHER_SECRET_KEY:?run scripts/setup.sh}
-      AETHER_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
-      AETHER_MAIL_TLS_CA_FILE: ${AETHER_MAIL_TLS_CA_FILE:-/tls/fullchain.pem}
-      AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
-      AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
-      AETHER_TRUST_PROXY: "true"
-      AETHER_METRICS_LISTEN: ":9090"
-      AETHER_LOCAL_LOGIN: ${AETHER_LOCAL_LOGIN:-true}
-      AETHER_OIDC_ALLOW_HTTP: ${AETHER_OIDC_ALLOW_HTTP:-false}
-      AETHER_MTA_STS_MODE: ${AETHER_MTA_STS_MODE:-testing}
-      AETHER_WEBHOOK_ALLOW_PRIVATE: ${AETHER_WEBHOOK_ALLOW_PRIVATE:-false}
-      AETHER_CUSTOM_CSS: ${AETHER_CUSTOM_CSS:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+    environment: *api-env
     volumes:
       - tls:/tls:ro
     depends_on:
@@ -149,6 +156,16 @@ services:
         condition: service_healthy
       tls-init:
         condition: service_completed_successfully
+
+  toxiproxy:
+    profiles: ["test"]
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ["-host", "0.0.0.0", "-config", "/toxiproxy.json"]
+    volumes:
+      - ./tests/integration/testdata/toxiproxy.json:/toxiproxy.json:ro
+    depends_on:
+      dovecot:
+        condition: service_started
 
   web:
     build: ./apps/web
@@ -184,13 +201,15 @@ services:
     profiles: ["test"]
     image: golang:1.27-bookworm
     working_dir: /src
-    command: ["go", "test", "-tags", "integration", "-count=1", "-v", "./tests/integration/..."]
+    command: ["go", "test", "-tags", "integration", "-count=1", "-timeout", "30m", "-v", "./tests/integration/..."]
     environment:
       AETHER_TEST_ADMIN_EMAIL: ${AETHER_TEST_ADMIN_EMAIL:-}
       AETHER_TEST_ADMIN_PASSWORD: ${AETHER_TEST_ADMIN_PASSWORD:-}
       AETHER_TEST_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
       AETHER_TEST_ANTIVIRUS: ${AETHER_CLAMAV_ADDR:+true}
       AETHER_TEST_WEBHOOKS: ${AETHER_WEBHOOK_ALLOW_PRIVATE:-false}
+      AETHER_TEST_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
+      AETHER_TEST_TOXIPROXY: http://toxiproxy:8474
     volumes:
       - .:/src:ro
       - tls:/tls:ro
@@ -200,6 +219,7 @@ services:
       - api
       - postfix
       - dovecot
+      - toxiproxy
 
   postfix-exporter:
     profiles: ["monitoring"]

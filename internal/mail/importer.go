@@ -90,9 +90,13 @@ func (c *Client) Import(ctx context.Context, address string, src ImportSource, p
 		to.Close()
 	}()
 
+	return importFolders(ctx, from, to, src.Host, progress)
+}
+
+func importFolders(ctx context.Context, from, to *imapclient.Client, host string, progress func(ImportProgress)) error {
 	sources, err := from.List("", "*", &imap.ListOptions{ReturnSpecialUse: true}).Collect()
 	if err != nil {
-		return fmt.Errorf("list folders on %s: %w", src.Host, err)
+		return fmt.Errorf("list folders on %s: %w", host, err)
 	}
 	sources = slices.DeleteFunc(sources, func(l *imap.ListData) bool {
 		return slices.ContainsFunc(l.Attrs, func(a imap.MailboxAttr) bool { return slices.Contains(skippedSourceFolders, a) })
@@ -101,6 +105,7 @@ func (c *Client) Import(ctx context.Context, address string, src ImportSource, p
 	if err != nil {
 		return err
 	}
+	targets = slices.DeleteFunc(targets, func(l *imap.ListData) bool { return SharedFolder(l.Mailbox) })
 
 	p := ImportProgress{FoldersTotal: len(sources)}
 	for _, folder := range sources {
@@ -113,8 +118,10 @@ func (c *Client) Import(ctx context.Context, address string, src ImportSource, p
 		if err != nil {
 			return err
 		}
-		if err := copyFolder(ctx, from, to, folder.Mailbox, target, &p, progress); err != nil {
-			return fmt.Errorf("copy %s: %w", folder.Mailbox, err)
+		if target != "" {
+			if err := copyFolder(ctx, from, to, folder.Mailbox, target, &p, progress); err != nil {
+				return fmt.Errorf("copy %s: %w", folder.Mailbox, err)
+			}
 		}
 		p.FoldersDone++
 		progress(p)
@@ -142,6 +149,9 @@ func importTarget(to *imapclient.Client, folder *imap.ListData, targets []*imap.
 	name := folder.Mailbox
 	if folder.Delim != 0 && folder.Delim != '/' {
 		name = strings.ReplaceAll(strings.ReplaceAll(name, "/", "-"), string(folder.Delim), "/")
+	}
+	if SharedFolder(name) {
+		return "", nil
 	}
 	if slices.ContainsFunc(targets, func(t *imap.ListData) bool { return t.Mailbox == name }) {
 		return name, nil

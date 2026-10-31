@@ -115,6 +115,33 @@ func TestBuildKeepsBodiesAndReferences(t *testing.T) {
 	}
 }
 
+func TestBuildSetsSenderForOnBehalf(t *testing.T) {
+	for _, sender := range []*Address{{Name: "Alice", Address: "alice@example.test"}, nil} {
+		o := Outgoing{From: Address{Name: "Support", Address: "support@example.test"}, Sender: sender, To: []Address{{Address: "b@example.test"}}, Subject: "s", Text: "hello"}
+		raw, _, err := o.Build("mail.example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := mail.CreateReader(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		from, err := r.Header.AddressList("From")
+		if err != nil || len(from) != 1 || from[0].Address != "support@example.test" {
+			t.Fatalf("From = %v, %v; want support@example.test", from, err)
+		}
+		got, err := r.Header.AddressList("Sender")
+		switch {
+		case err != nil:
+			t.Fatal(err)
+		case sender == nil && len(got) != 0:
+			t.Fatalf("Sender = %v without on-behalf, want none", got)
+		case sender != nil && (len(got) != 1 || got[0].Address != sender.Address):
+			t.Fatalf("Sender = %v, want %s", got, sender.Address)
+		}
+	}
+}
+
 func TestCompileSieveEscapesAndSkipsDisabled(t *testing.T) {
 	script := CompileSieve([]Rule{
 		{Name: "invoices", Enabled: true, Match: "any", Conditions: []RuleCondition{{Field: "subject", Contains: `say "hi" \ now`}, {Field: "from", Contains: "billing@"}},

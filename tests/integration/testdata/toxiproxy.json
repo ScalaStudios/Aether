@@ -1,0 +1,4 @@
+[
+  {"name": "imap", "listen": "0.0.0.0:1143", "upstream": "dovecot:143", "enabled": true},
+  {"name": "doveadm", "listen": "0.0.0.0:18089", "upstream": "dovecot:8089", "enabled": true}
+]

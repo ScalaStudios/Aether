@@ -22,6 +22,8 @@ type Config struct {
 	MailTLSCAFile         string
 	DovecotMasterUser     string
 	DovecotMasterPassword string
+	DovecotAPIURL         string
+	DovecotAPIKey         string
 	ValkeyAddr            string
 	ValkeyPassword        string
 	LocalLogin            bool
@@ -46,6 +48,8 @@ func Load() (*Config, error) {
 		MailTLSCAFile:         os.Getenv("AETHER_MAIL_TLS_CA_FILE"),
 		DovecotMasterUser:     env("AETHER_DOVECOT_MASTER_USER", "aether-webmail"),
 		DovecotMasterPassword: os.Getenv("AETHER_DOVECOT_MASTER_PASSWORD"),
+		DovecotAPIURL:         env("AETHER_DOVECOT_API_URL", "http://dovecot:8089"),
+		DovecotAPIKey:         os.Getenv("AETHER_DOVECOT_API_KEY"),
 		ValkeyAddr:            env("AETHER_VALKEY_ADDR", "valkey:6379"),
 		ValkeyPassword:        os.Getenv("AETHER_VALKEY_PASSWORD"),
 		LocalLogin:            env("AETHER_LOCAL_LOGIN", "true") == "true",
@@ -66,6 +70,9 @@ func Load() (*Config, error) {
 	}
 	if c.DovecotMasterPassword == "" {
 		errs = append(errs, errors.New("AETHER_DOVECOT_MASTER_PASSWORD is required"))
+	}
+	if c.DovecotAPIKey == "" {
+		errs = append(errs, errors.New("AETHER_DOVECOT_API_KEY is required"))
 	}
 	if c.MTASTSMode != "testing" && c.MTASTSMode != "enforce" {
 		errs = append(errs, errors.New("AETHER_MTA_STS_MODE must be testing or enforce"))

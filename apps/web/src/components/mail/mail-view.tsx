@@ -1,6 +1,6 @@
 "use client"
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
 import { Inbox } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
@@ -39,18 +39,23 @@ function isTyping(target: EventTarget | null) {
 export function MailView() {
   const qc = useQueryClient()
   const mailboxes = useQuery(myMailboxesQuery)
+  const own = mailboxes.data?.filter((m) => m.kind !== "shared") ?? []
+  const shared = mailboxes.data?.filter((m) => m.kind === "shared") ?? []
+  const [primaryId, setPrimaryId] = useState<string | null>(null)
+  const primary = own.find((m) => m.id === primaryId) ?? own[0]
+  const sections = primary ? [primary, ...shared] : shared
   const [mailboxId, setMailboxId] = useState<string | null>(null)
-  const mailbox = mailboxes.data?.find((m) => m.id === mailboxId) ?? mailboxes.data?.[0]
+  const mailbox = sections.find((m) => m.id === mailboxId) ?? sections[0]
   const readOnly = mailbox?.access === "read"
   const mbx = mailbox?.id ?? ""
+  const identities = mailboxes.data?.filter((m) => m.access === "owner" || m.sendAs || m.sendOnBehalf) ?? []
+  const from = identities.find((m) => m.id === mbx) ?? identities[0]
 
-  const folders = useQuery({
-    ...foldersQuery(mbx),
-    enabled: !!mailbox,
-    refetchInterval: POLL,
-  })
+  const folderQueries = useQueries({ queries: sections.map((m) => ({ ...foldersQuery(m.id), refetchInterval: POLL })) })
+  const trees = sections.map((m, i) => ({ mailbox: m, folders: folderQueries[i] }))
+  const folders = trees.find((t) => t.mailbox.id === mbx)?.folders
   const [folderName, setFolderName] = useState<string | null>(null)
-  const folder = folderName ?? folders.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX"
+  const folder = folderName ?? folders?.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX"
 
   const scheduled = useQuery({
     queryKey: ["scheduled", mbx],
@@ -71,7 +76,7 @@ export function MailView() {
   const [search, setSearch] = useState("")
   const q = useDebouncedValue(search.trim(), 300)
 
-  const isDrafts = folders.data?.find((f) => f.name === folder)?.specialUse === "drafts"
+  const isDrafts = folders?.data?.find((f) => f.name === folder)?.specialUse === "drafts"
   const [view, setView] = useListView(`${mbx}/${folder}`)
   const listKey = ["messages", mbx, folder]
   const messages = useInfiniteQuery({
@@ -82,7 +87,7 @@ export function MailView() {
       }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
-    enabled: !!mailbox && folders.isSuccess,
+    enabled: !!folders?.isSuccess,
     refetchInterval: POLL,
   })
   const summaries = messages.data?.pages.flatMap((p) => p.messages) ?? []
@@ -97,7 +102,7 @@ export function MailView() {
   const [composedTo, setComposedTo] = useState<string | null>(null)
   if (mailbox && composeTo !== composedTo) {
     setComposedTo(composeTo)
-    if (composeTo) setCompose({ key: (compose?.key ?? 0) + 1, draft: { ...buildDraft("new", undefined, mailbox.address, folder), to: [{ address: composeTo }] } })
+    if (composeTo && from) setCompose({ key: (compose?.key ?? 0) + 1, draft: { ...buildDraft("new", undefined, mailbox.address, folder), to: [{ address: composeTo }] } })
   }
   useEffect(() => {
     if (composeTo && composeTo === composedTo) router.replace("/mail", { scroll: false })
@@ -176,12 +181,13 @@ export function MailView() {
   })
 
   async function openDraft(uid: number, draftFolder: string) {
-    if (!mailbox) return
+    if (!mailbox || from?.id !== mbx) return
     const saved = await qc.fetchQuery({
       queryKey: ["message", mbx, draftFolder, uid],
       queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${uid}`, { query: { folder: draftFolder } }),
     })
-    setCompose({ key: Date.now(), draft: buildDraft("draft", saved, mailbox.address, draftFolder) })
+    const draft = buildDraft("draft", saved, mailbox.address, draftFolder)
+    setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft }))
   }
 
   const cancelScheduled = useMutation({
@@ -195,7 +201,7 @@ export function MailView() {
   })
 
   async function open(summary: MessageSummary) {
-    if (isDrafts) return openDraft(summary.uid, folder)
+    if (isDrafts && from?.id === mbx) return openDraft(summary.uid, folder)
     setSelectedUid(summary.uid)
     if (!summary.seen && !readOnly) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
   }
@@ -208,12 +214,15 @@ export function MailView() {
   }
 
   function startCompose(mode: ComposeMode) {
-    if (!mailbox) return
+    if (!mailbox || !from) return
     if (mode !== "new" && !message.data) return
-    setCompose({ key: Date.now(), draft: buildDraft(mode, message.data, mailbox.address, folder) })
+    const draft = buildDraft(mode, message.data, mailbox.address, folder)
+    if (from.id !== mbx && draft.forwardFrom) toast.info(`Forwarded attachments can't be sent from ${from.address}, so they were left out.`)
+    setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft }))
   }
 
-  function selectFolder(name: string) {
+  function selectFolder(id: string, name: string) {
+    setMailboxId(id)
     setFolderName(name)
     setScheduledView(false)
     setSelectedUid(null)
@@ -246,7 +255,7 @@ export function MailView() {
         Escape: () => setSelectedUid(null),
       }
       const action = actions[e.key]
-      if (!action || (readOnly && "craf#e".includes(e.key))) return
+      if (!action || (readOnly && "#e".includes(e.key)) || (!from && "craf".includes(e.key))) return
       e.preventDefault()
       action()
     }
@@ -283,11 +292,14 @@ export function MailView() {
     <div className="flex h-full min-h-0">
       <FolderPane
         className={cn("w-full shrink-0 md:w-66 lg:flex", showFolders && !reading ? "flex" : "hidden")}
-        mailboxes={mailboxes.data}
-        mailbox={mailbox}
-        onMailboxChange={selectMailbox}
-        folders={folders}
-        folder={folder}
+        own={own}
+        primary={trees.find((t) => t.mailbox.id === primary?.id)}
+        onPrimaryChange={(id) => {
+          setPrimaryId(id)
+          selectMailbox(id)
+        }}
+        shared={trees.filter((t) => t.mailbox.id !== primary?.id)}
+        active={{ mailboxId: mbx, folder }}
         onFolderChange={selectFolder}
         scheduled={scheduled.data?.length}
         scheduledActive={showScheduled}
@@ -296,8 +308,8 @@ export function MailView() {
           setSelectedUid(null)
           setShowFolders(false)
         }}
-        onCompose={readOnly ? undefined : () => startCompose("new")}
-        onDropMessage={readOnly ? undefined : (uid, to) => remove.mutate({ uid, to })}
+        onCompose={from ? () => startCompose("new") : undefined}
+        onDropMessage={readOnly ? undefined : (uid, to, target) => remove.mutate({ uid, to, target: target === mbx ? undefined : mailboxes.data.find((m) => m.id === target) })}
       />
       {showScheduled ? (
         <ScheduledList
@@ -310,7 +322,7 @@ export function MailView() {
       ) : (
         <MessageList
           className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders || reading ? "hidden" : "flex")}
-          folder={folders.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }}
+          folder={folders?.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }}
           search={search}
           onSearchChange={setSearch}
           searchRef={searchRef}
@@ -320,7 +332,7 @@ export function MailView() {
           selectedUid={selectedUid}
           onOpen={open}
           onShowFolders={() => setShowFolders(true)}
-          onCompose={readOnly ? undefined : () => startCompose("new")}
+          onCompose={from ? () => startCompose("new") : undefined}
           onHelp={() => setHelpOpen(true)}
           wakeTimes={folder === snoozedFolder ? wakeTimes : undefined}
           view={view}
@@ -337,7 +349,7 @@ export function MailView() {
         selected={selectedUid !== null}
         earlier={summaries.find((m) => m.uid === selectedUid)?.threadUids?.slice(1) ?? []}
         onBack={() => setSelectedUid(null)}
-        onReply={startCompose}
+        onReply={from ? startCompose : undefined}
         onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}
         onMove={(to, target) => selectedUid !== null && remove.mutate({ uid: selectedUid, to, target })}
         onCopy={(to, target) => selectedUid !== null && copy.mutate({ uid: selectedUid, to, target })}
@@ -347,7 +359,15 @@ export function MailView() {
         deleting={remove.isPending}
         readOnly={readOnly}
       />
-      {compose && <Composer key={compose.key} mailbox={mailbox} draft={compose.draft} onClose={() => setCompose(null)} />}
+      {compose && from && (
+        <Composer
+          key={compose.key}
+          identities={identities}
+          initial={from}
+          draft={from.id === mbx ? compose.draft : { ...compose.draft, draftUid: undefined, forwardFrom: undefined }}
+          onClose={() => setCompose(null)}
+        />
+      )}
       <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
     </div>
   )

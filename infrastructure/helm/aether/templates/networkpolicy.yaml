@@ -76,7 +76,7 @@ spec:
     - from: {{- include "aether.allowFrom" (list "postfix") | nindent 8 }}
       ports: [{ port: 24 }, { port: 12345 }]
     - from: {{- include "aether.allowFrom" (list "api") | nindent 8 }}
-      ports: [{ port: 4190 }]
+      ports: [{ port: 4190 }, { port: 8089 }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -61,10 +61,11 @@ func setupWorld(t *testing.T) *world {
 
 type messagePage struct {
 	Messages []struct {
-		UID     uint32 `json:"uid"`
-		Subject string `json:"subject"`
-		Seen    bool   `json:"seen"`
-		From    []struct {
+		UID      uint32 `json:"uid"`
+		Subject  string `json:"subject"`
+		Seen     bool   `json:"seen"`
+		Answered bool   `json:"answered"`
+		From     []struct {
 			Address string `json:"address"`
 		} `json:"from"`
 	} `json:"messages"`

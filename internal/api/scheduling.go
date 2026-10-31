@@ -26,7 +26,7 @@ type scheduledMessage struct {
 	Error   *string           `json:"error"`
 }
 
-func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, m *ownedMailbox, in *outgoingRequest, out *mailpkg.Outgoing) {
+func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, in *outgoingRequest, out *mailpkg.Outgoing) {
 	sendAt := in.SendAt.UTC()
 	if sendAt.Before(time.Now().Add(5*time.Second)) || sendAt.After(time.Now().Add(maxScheduleAhead)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_send_at", "Choose a send time in the future and within a year.")
@@ -55,17 +55,21 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, m *owne
 	if to == nil {
 		to = []mailpkg.Address{}
 	}
+	mode := "send_as"
+	if !m.SendAs {
+		mode = "send_on_behalf"
+	}
 	var item scheduledMessage
 	err = s.db.QueryRow(r.Context(), `
-		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, send_at, subject, to_addresses, error`,
-		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw).
+		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw, sender_user_id, sender_mode)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, send_at, subject, to_addresses, error`,
+		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw, p.User.ID, mode).
 		Scan(&item.ID, &item.SendAt, &item.Subject, &item.To, &item.Error)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	if in.DraftUID != 0 {
+	if in.DraftUID != 0 && m.Access != "read" {
 		if err := s.mail.DeleteDraft(m.Address, in.DraftUID); err != nil {
 			s.log.Error("removing scheduled draft failed", "mailbox", m.ID, "err", err)
 		}
@@ -254,14 +258,16 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	var recipients []string
 	var raw []byte
 	var attempts int
-	var usable bool
+	var usable, permitted, writable bool
 	err = tx.QueryRow(ctx, `
 		SELECT s.id, s.mailbox_id, m.address, m.display_name, s.recipients, s.raw, s.in_reply_to, s.attempts,
-		       m.active AND d.active AND d.verified_at IS NOT NULL
-		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id
+		       m.active AND d.active AND d.verified_at IS NOT NULL,
+		       coalesce(u.status = 'active' AND CASE s.sender_mode WHEN 'send_as' THEN `+mailboxSendAs("s.sender_user_id")+` ELSE `+mailboxSendOnBehalf("s.sender_user_id")+` END, false),
+		       `+mailboxAccessLevel("s.sender_user_id")+` IN ('owner', 'full')
+		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id LEFT JOIN users u ON u.id = s.sender_user_id
 		WHERE s.error IS NULL AND s.send_at <= now()
 		ORDER BY s.send_at LIMIT 1 FOR UPDATE OF s SKIP LOCKED`).
-		Scan(&id, &mailboxID, &address, &name, &recipients, &raw, &inReplyTo, &attempts, &usable)
+		Scan(&id, &mailboxID, &address, &name, &recipients, &raw, &inReplyTo, &attempts, &usable, &permitted, &writable)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.log.Error("loading scheduled messages failed", "err", err)
@@ -270,6 +276,10 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	}
 	if !usable {
 		tx.Exec(ctx, `UPDATE scheduled_messages SET error = 'The mailbox is disabled.' WHERE id = $1`, id)
+		return tx.Commit(ctx) == nil
+	}
+	if !permitted {
+		tx.Exec(ctx, `UPDATE scheduled_messages SET error = 'You no longer have permission to send from this mailbox.' WHERE id = $1`, id)
 		return tx.Commit(ctx) == nil
 	}
 	if err := s.mail.Send(mailpkg.Address{Name: name, Address: address}, recipients, raw); err != nil {
@@ -294,7 +304,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	if err := s.mail.SaveSent(address, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
 	}
-	if inReplyTo != "" {
+	if inReplyTo != "" && writable {
 		s.mail.MarkAnswered(address, inReplyTo)
 	}
 	return true

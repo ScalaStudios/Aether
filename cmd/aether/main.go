@@ -106,7 +106,7 @@ func serve(log *slog.Logger) error {
 	if err := redisotel.InstrumentTracing(kv, redisotel.WithDBStatement(false)); err != nil {
 		return err
 	}
-	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.SieveAddr, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword)
+	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.SieveAddr, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword, cfg.DovecotAPIURL, cfg.DovecotAPIKey)
 	if err != nil {
 		return err
 	}
@@ -115,6 +115,7 @@ func serve(log *slog.Logger) error {
 		log.Error("DKIM key sync incomplete; affected domains send unsigned mail", "err", err)
 	}
 	go srv.RunScheduler(ctx)
+	go srv.RunAccessWorkers(ctx)
 	httpServer := &http.Server{
 		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,

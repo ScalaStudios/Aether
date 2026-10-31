@@ -103,8 +103,20 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 	s.installSieve(w, r, p, m, rules, reply, nonNil(rules))
 }
 
-func (s *Server) getAutoReply(w http.ResponseWriter, r *http.Request, p *principal) {
+func (s *Server) autoReplyMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {
 	m, ok := s.managedMailbox(w, r, p)
+	if !ok {
+		return nil, false
+	}
+	if !m.SendAs && !p.canAdminOrg(m.OrgID) {
+		writeError(w, http.StatusForbidden, "cannot_send", "Automatic replies are sent as this mailbox's address. Ask an administrator for Send as.")
+		return nil, false
+	}
+	return m, true
+}
+
+func (s *Server) getAutoReply(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.autoReplyMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -117,7 +129,7 @@ func (s *Server) getAutoReply(w http.ResponseWriter, r *http.Request, p *princip
 }
 
 func (s *Server) saveAutoReply(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.managedMailbox(w, r, p)
+	m, ok := s.autoReplyMailbox(w, r, p)
 	if !ok {
 		return
 	}

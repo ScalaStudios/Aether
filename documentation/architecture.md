@@ -64,7 +64,8 @@ We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because 
 | Internet → submission 587/465 | TLS is required before AUTH. SASL is checked by Dovecot against SHA-256 hashes of app passwords; Dovecot computes the hash, so the plaintext never reaches PostgreSQL. `reject_sender_login_mismatch` binds MAIL FROM to the authenticated mailbox, and an Rspamd rule rejects authenticated mail whose header From differs from MAIL FROM. |
 | Internet → IMAP 143/993 | `ssl = required`, and plaintext auth is disabled without TLS. App passwords are accepted through PLAIN and LOGIN. OIDC access tokens are accepted through OAUTHBEARER and XOAUTH2: Dovecot's `checkpassword` passdb sends the address and token to the API's `/internal/mail-token`, which answers only callers on private networks, introspects the token with the provider, requires that it was issued to Aether, and checks mailbox access. Web passwords and ID tokens are not mail credentials. |
 | Browser → API | The `aether_session` cookie is HttpOnly and SameSite=Lax, and also Secure when the public URL uses https. The database stores only a SHA-256 of the session token. Every state-changing request needs an `X-CSRF-Token` header that is bound to the session. |
-| API → Dovecot / Postfix | The API connects over TLS and verifies the mail certificate against `AETHER_MAIL_TLS_CA_FILE` or the system roots. It logs in as `<mailbox>*aether-webmail` with the Dovecot master password, and Dovecot accepts that login only from private networks. The API opens a mailbox only when the signed-in user owns it. |
+| API → Dovecot / Postfix | The API connects over TLS and verifies the mail certificate against `AETHER_MAIL_TLS_CA_FILE` or the system roots. It logs in as `<mailbox>*aether-webmail` with the Dovecot master password, and Dovecot accepts that login only from private networks. The API opens a mailbox only when the signed-in user owns it, or is a delegate or member of it, and refuses folder names under `Shared/` so that the master login never reaches another mailbox through the shared namespace. Shared mailbox rights are written over the same login by a reconciliation worker on every replica, under a two-minute lease on the mailbox row rather than inside a database transaction. Each IMAP command of that session is bounded to 30 seconds for its write and its reply, armed before the lease renewal that precedes every write, so a process whose lease was taken over, or that was paused past the limit, cannot write again and marks the mailbox for another pass. Handler-initiated rights work is bounded to 60 seconds; the worker finishes what a handler could not. |
+| API → Dovecot doveadm | The doveadm HTTP API on port 8089, keyed with `AETHER_DOVECOT_API_KEY`, is used only to end IMAP sessions. Each kick is queued in `mail_kicks`, one row per address, in the transaction that revokes the access, and a kick worker on every API replica delivers it and retries until Dovecot confirms it. The addresses sent to doveadm are exact: `users.email` and `mail_kicks.identity` refuse `*` and `?`, which doveadm would treat as wildcards. Only the API and Dovecot hold the key; Postfix does not receive it. It is not published, and the Helm NetworkPolicy admits it from the API pods only. |
 | API → PostgreSQL | All queries are parameterized (pgx). Tenant scope is checked on every resource lookup: a resource is loaded first, then its `org_id` is compared with the caller's memberships. Platform administrators manage tenants, but they cannot read a user's mail through the API. |
 | Secrets at rest | OIDC client secrets and DKIM private keys are encrypted with AES-256-GCM using `AETHER_SECRET_KEY`. The encryption is bound to the row ID as additional data. |
 
@@ -99,9 +100,10 @@ The data model is defined in `migrations/0001_init.sql`:
 - `organizations`, `organization_members` with roles owner, admin, and member
 - `users`, `user_identities`, linking an OIDC issuer and subject to a user
 - `domains`, with a verification token and an encrypted DKIM key
-- `mailboxes`, each with an owner
+- `mailboxes`, each with an owner, or with `kind` `shared` and no owner, plus the pending flag, generation, lease, attempt count and next-attempt time that drive the Dovecot rights reconciliation; its foreign keys restrict the deletion of its domain and organization; `mailbox_delegates` holds delegates and members with their access level, `send_as` and `send_on_behalf`
 - `aliases`, where an empty local part is the catch-all, and `kind` is `alias` or `list`; `alias_owners` holds the owners of lists
 - `app_passwords`
+- `mail_kicks`, IMAP session kicks waiting for Dovecot to confirm them, one row per address with a generation that each new revocation increments
 - `oidc_providers`, `oidc_login_states`, `sessions`, `audit_events`
 
 Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data.
@@ -109,7 +111,7 @@ Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renam
 ## Request flow: webmail send
 
 1. The browser posts JSON to `/api/v1/mailboxes/{id}/send`. The request carries the session cookie and the CSRF header.
-2. The API checks that the caller owns the mailbox and builds a MIME message, sanitizing the HTML.
+2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address.
 3. The API opens SMTP with STARTTLS to Postfix on port 587. It authenticates with SASL PLAIN as `alice@example.com*aether-webmail`.
 4. Dovecot reports the authenticated user as `alice@example.com`.
 5. Postfix applies `smtpd_sender_login_maps`, then hands the message to Rspamd. Rspamd scores it, signs it with the domain's DKIM key from Valkey, and returns it.

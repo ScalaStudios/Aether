@@ -36,6 +36,7 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/mailboxes/{mailboxId}/delegates":             "mailboxes",
 	"POST /api/v1/mailboxes/{mailboxId}/delegates":            "mailboxes",
 	"DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}": "mailboxes",
+	"POST /api/v1/mailboxes/{mailboxId}/convert":              "mailboxes",
 	"GET /api/v1/mailboxes/{mailboxId}/rules":                 "mailboxes",
 	"PUT /api/v1/mailboxes/{mailboxId}/rules":                 "mailboxes",
 	"GET /api/v1/mailboxes/{mailboxId}/auto-reply":            "mailboxes",

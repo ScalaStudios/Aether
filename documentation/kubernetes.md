@@ -12,7 +12,7 @@ helm install aether infrastructure/helm/aether -n aether --create-namespace \
 ## What the chart creates
 
 - **Web and API:** Deployments with two replicas each. The API also serves Prometheus metrics on port 9090, and the distribution list policy service on port 10040, which the NetworkPolicy allows from Postfix only.
-- **Mail services:** StatefulSets for Postfix and Dovecot, each with one replica and its own persistent volume for the mail queue and maildirs.
+- **Mail services:** StatefulSets for Postfix and Dovecot, each with one replica and its own persistent volume for the mail queue and maildirs. Dovecot's doveadm HTTP API on port 8089 is reachable from the API pods only, through the NetworkPolicy, and is keyed with the `dovecotApiKey` entry of the Secret.
 - **Supporting services:** Rspamd, Valkey, and Unbound. The bundled PostgreSQL is optional: set `postgresql.enabled=false` and `secrets.databaseUrl` to use your own. That database needs an `aether_mail` role; see `infrastructure/docker/postgres/10-aether-mail-role.sh`.
 - **Ingress:** sends `/api`, `/dav`, and `/.well-known/cal|carddav` to the API, and everything else to the web app.
 - **Mail Services:** two LoadBalancer Services, `-mail-smtp` (25, 465, 587) and `-mail-imap` (143, 993). They use `externalTrafficPolicy: Local` so that Postfix, Rspamd, and Dovecot see real client addresses.

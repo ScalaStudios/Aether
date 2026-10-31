@@ -263,7 +263,7 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 			}
 			err = tx.QueryRow(ctx, `SELECT id, status FROM users WHERE email = $1`, email).Scan(&userID, &status)
 			if errors.Is(err, pgx.ErrNoRows) {
-				if !p.AutoProvision {
+				if !p.AutoProvision || strings.ContainsAny(email, "*?") {
 					return nil
 				}
 				status = "active"
@@ -312,6 +312,9 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 		}
 		return nil
 	})
+	if errors.Is(err, errSharedAddress) {
+		return "", "shared_mailbox", nil
+	}
 	if err != nil {
 		return "", "", err
 	}
@@ -326,10 +329,12 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 	return userID, "", nil
 }
 
+var errSharedAddress = errors.New("address belongs to a shared mailbox")
+
 func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, email string, provision bool) error {
-	var mailboxID, orgID string
+	var mailboxID, orgID, kind string
 	var owner *string
-	err := tx.QueryRow(ctx, `SELECT id, org_id, owner_user_id FROM mailboxes WHERE address = $1`, email).Scan(&mailboxID, &orgID, &owner)
+	err := tx.QueryRow(ctx, `SELECT id, org_id, owner_user_id, kind FROM mailboxes WHERE address = $1`, email).Scan(&mailboxID, &orgID, &owner, &kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if !provision {
 			return nil
@@ -348,6 +353,8 @@ func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, 
 		}
 	} else if err != nil {
 		return err
+	} else if kind == "shared" {
+		return errSharedAddress
 	} else if owner == nil {
 		if _, err := tx.Exec(ctx, `UPDATE mailboxes SET owner_user_id = $2 WHERE id = $1`, mailboxID, userID); err != nil {
 			return err

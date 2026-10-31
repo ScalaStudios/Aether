@@ -15,7 +15,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | Scope | Allows |
 | --- | --- |
 | `domains:read`, `domains:write` | Listing, adding, verifying, and removing domains, and DNS status |
-| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, and removing mailboxes, and managing their delegates, mail rules, automatic replies, signatures, and calendar and contacts imports (see below) |
+| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, converting, and removing mailboxes, and managing their delegates or members, mail rules, automatic replies, signatures, and calendar and contacts imports (see below) |
 | `aliases:read`, `aliases:write` | Listing, creating, changing, and removing aliases and distribution lists |
 | `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
 | `audit:read` | Reading the audit log |
@@ -33,13 +33,14 @@ Organization administrators, signed in or using a key, can prepare a mailbox on 
 
 | Route | What it does |
 | --- | --- |
-| `GET`, `POST /api/v1/mailboxes/{mailboxId}/delegates` and `DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}` | Shared access |
+| `GET`, `POST /api/v1/mailboxes/{mailboxId}/delegates` and `DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}` | Delegates of a user mailbox, or members of a shared one, with `access`, `sendAs` and `sendOnBehalf` |
+| `POST /api/v1/mailboxes/{mailboxId}/convert` | Converts a mailbox between `user` and `shared`, as [Shared mailboxes](shared-mailboxes.md#converting-a-mailbox) describes |
 | `GET`, `PUT /api/v1/mailboxes/{mailboxId}/rules` and `/auto-reply` | Mail rules and automatic replies, compiled to Sieve as when the owner changes them |
 | `GET`, `PUT /api/v1/mailboxes/{mailboxId}/signatures` | Signatures |
 | `POST /api/v1/mailboxes/{mailboxId}/calendar/import` | An iCalendar file into the owner's personal calendar |
 | `POST /api/v1/mailboxes/{mailboxId}/contacts/import` | A vCard file into the owner's address book |
 
-An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate changes, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.
+An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate and member changes, conversions, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.
 
 ## Webhooks
 

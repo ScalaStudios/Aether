@@ -13,20 +13,30 @@ func mailboxAccess(userParam string) string {
 	return `(m.owner_user_id = ` + userParam + ` OR EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + `))`
 }
 
-func fullMailboxAccess(userParam string) string {
-	return `(m.owner_user_id = ` + userParam + ` OR EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + ` AND md.access = 'full'))`
-}
-
 func mailboxAccessLevel(userParam string) string {
 	return `CASE WHEN m.owner_user_id = ` + userParam + ` THEN 'owner' ELSE coalesce((SELECT md.access FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + `), 'none') END`
 }
 
+func signInAsMailbox(userParam string) string {
+	return `(m.kind = 'user' AND (m.owner_user_id = ` + userParam + ` OR EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + ` AND md.access = 'full' AND md.send_as)))`
+}
+
+func mailboxSendAs(userParam string) string {
+	return `(coalesce(m.owner_user_id = ` + userParam + `, false) OR EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + ` AND md.send_as))`
+}
+
+func mailboxSendOnBehalf(userParam string) string {
+	return `EXISTS (SELECT 1 FROM mailbox_delegates md WHERE md.mailbox_id = m.id AND md.user_id = ` + userParam + ` AND md.send_on_behalf)`
+}
+
 type delegate struct {
-	UserID      string    `json:"userId"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"displayName"`
-	Access      string    `json:"access"`
-	CreatedAt   time.Time `json:"createdAt"`
+	UserID       string    `json:"userId"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"displayName"`
+	Access       string    `json:"access"`
+	SendAs       bool      `json:"sendAs"`
+	SendOnBehalf bool      `json:"sendOnBehalf"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 func (s *Server) listDelegates(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -35,7 +45,7 @@ func (s *Server) listDelegates(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `
-		SELECT u.id, u.email, u.display_name, md.access, md.created_at FROM mailbox_delegates md JOIN users u ON u.id = md.user_id
+		SELECT u.id, u.email, u.display_name, md.access, md.send_as, md.send_on_behalf, md.created_at FROM mailbox_delegates md JOIN users u ON u.id = md.user_id
 		WHERE md.mailbox_id = $1 ORDER BY u.email`, m.ID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -55,8 +65,10 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	var in struct {
-		Email  string `json:"email"`
-		Access string `json:"access"`
+		Email        string `json:"email"`
+		Access       string `json:"access"`
+		SendAs       *bool  `json:"sendAs"`
+		SendOnBehalf *bool  `json:"sendOnBehalf"`
 	}
 	if !decode(w, r, 4<<10, &in) {
 		return
@@ -88,23 +100,40 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		writeError(w, http.StatusUnprocessableEntity, "already_owner", "This person already owns the mailbox.")
 		return
 	}
+	var lowered bool
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(r.Context(), `
-			INSERT INTO mailbox_delegates (mailbox_id, user_id, access) VALUES ($1, $2, $3)
-			ON CONFLICT (mailbox_id, user_id) DO UPDATE SET access = EXCLUDED.access RETURNING created_at`, m.ID, d.UserID, d.Access).Scan(&d.CreatedAt); err != nil {
+		var prevAccess string
+		var prevSendAs, prevSendOnBehalf bool
+		err := tx.QueryRow(r.Context(), `SELECT access, send_as, send_on_behalf FROM mailbox_delegates WHERE mailbox_id = $1 AND user_id = $2`, m.ID, d.UserID).
+			Scan(&prevAccess, &prevSendAs, &prevSendOnBehalf)
+		existed := err == nil
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if d.Access == "full" {
-			return nil
+		if err := tx.QueryRow(r.Context(), `
+			INSERT INTO mailbox_delegates (mailbox_id, user_id, access, send_as, send_on_behalf) VALUES ($1, $2, $3, coalesce($4, false), coalesce($5, false))
+			ON CONFLICT (mailbox_id, user_id) DO UPDATE SET access = EXCLUDED.access, send_as = coalesce($4, mailbox_delegates.send_as), send_on_behalf = coalesce($5, mailbox_delegates.send_on_behalf)
+			RETURNING send_as, send_on_behalf, created_at`, m.ID, d.UserID, d.Access, in.SendAs, in.SendOnBehalf).Scan(&d.SendAs, &d.SendOnBehalf, &d.CreatedAt); err != nil {
+			return err
 		}
-		_, err := tx.Exec(r.Context(), `UPDATE app_passwords SET revoked_at = now() WHERE mailbox_id = $1 AND user_id = $2 AND revoked_at IS NULL`, m.ID, d.UserID)
+		lowered = existed && ((prevAccess == "full" && d.Access == "read") || (prevSendAs && !d.SendAs) || (prevSendOnBehalf && !d.SendOnBehalf))
+		if lowered {
+			return s.revokeMailAccess(r.Context(), tx, d.UserID, []string{m.ID})
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE mailboxes SET `+markACLPending+` WHERE id = $1 AND kind = 'shared'`, m.ID)
 		return err
 	})
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_add", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": d.Email, "access": d.Access})
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_add", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": d.Email, "access": d.Access, "sendAs": d.SendAs, "sendOnBehalf": d.SendOnBehalf})
+	if m.Kind == "shared" {
+		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
+			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)
+		}
+	}
+	wake(s.kickWake)
 	writeJSON(w, http.StatusOK, d)
 }
 
@@ -124,8 +153,7 @@ func (s *Server) removeDelegate(w http.ResponseWriter, r *http.Request, p *princ
 			m.ID, userID).Scan(&email); err != nil {
 			return err
 		}
-		_, err := tx.Exec(r.Context(), `UPDATE app_passwords SET revoked_at = now() WHERE mailbox_id = $1 AND user_id = $2 AND revoked_at IS NULL`, m.ID, userID)
-		return err
+		return s.revokeMailAccess(r.Context(), tx, userID, []string{m.ID})
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
@@ -136,6 +164,12 @@ func (s *Server) removeDelegate(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_remove", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": email})
+	if m.Kind == "shared" {
+		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
+			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)
+		}
+	}
+	wake(s.kickWake)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -146,9 +180,9 @@ func (s *Server) managedMailbox(w http.ResponseWriter, r *http.Request, p *princ
 	}
 	m := &ownedMailbox{}
 	err := s.db.QueryRow(r.Context(), `
-		SELECT m.id, m.org_id, m.address, m.display_name FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		SELECT m.id, m.org_id, m.address, m.display_name, m.kind FROM mailboxes m JOIN domains d ON d.id = m.domain_id
 		WHERE m.id = $1 AND m.active AND d.active AND d.verified_at IS NOT NULL`, id).
-		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName)
+		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &m.Kind)
 	if err == nil && p.canAdminOrg(m.OrgID) {
 		return m, true
 	}

@@ -156,15 +156,23 @@ With these set, Postfix requires TLS to the relay. Mail between Aether's own dom
 
 Postfix decides who may send to a restricted distribution list by asking the API on port 10040 during the SMTP session. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). In Compose the port is not published and is reachable only inside the Compose network. If the API runs elsewhere, open that port to Postfix and set `AETHER_POLICY_SERVICE` on the Postfix container.
 
+## Dovecot management API
+
+Dovecot serves its doveadm HTTP API on port 8089 inside the Compose network, protected by `AETHER_DOVECOT_API_KEY`, which `setup.sh` generates. The API uses it to end a member's IMAP sessions when their shared mailbox access changes. Only the API and the Dovecot containers receive the key, and neither starts without it; Postfix does not get it. Never publish the port: the key allows every doveadm command, including reading any mailbox. If the API runs elsewhere, set `AETHER_DOVECOT_API_URL` (default `http://dovecot:8089`) and open the port to the API only.
+
+Installations created before shared mailboxes existed must add the key to `.env` before upgrading. [Shared mailboxes](shared-mailboxes.md#upgrading-an-existing-installation) lists the steps, including the check for existing folders named `Shared`.
+
 ## Monitoring
 
-The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. The metrics cover:
+The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks; none of them can be switched off. The metrics cover:
 
 - request rate, errors, and latency by route,
 - sign-in attempts by method and result,
 - messages sent from Aether Mail,
 - mail service errors,
 - identity provider webhooks,
+- pending IMAP session kicks (age of the oldest),
+- pending rights reconciliation (age of the oldest),
 - Go runtime and process statistics.
 
 No metric carries a user, mailbox, or address label.

@@ -37,7 +37,7 @@ Halo does not publish role or tenant claims, so Aether maps Halo groups to Aethe
 2. Enter the issuer URL. Aether fetches the discovery document and shows whether PKCE S256 and the `groups` claim are available.
 3. Enter the client ID and client secret. The secret is encrypted at rest.
 4. Optionally configure provisioning:
-   - **Auto-provision:** creates an Aether account on first sign-in. If the user's verified email belongs to a verified Aether domain, it also creates that mailbox and adds the user to the domain's organization.
+   - **Auto-provision:** creates an Aether account on first sign-in. If the user's verified email belongs to a verified Aether domain, it also creates that mailbox and adds the user to the domain's organization. An address containing `*` or `?` is never provisioned; that sign-in fails with `not_provisioned`.
    - **Administrator group:** members of this Halo group become platform administrators.
    - **Group mappings:** members of a Halo group get the mapped role (owner, admin, or member) in an organization.
 
@@ -57,7 +57,7 @@ Otherwise sign-in fails with `not_provisioned`. Aether never stores Halo passwor
 
 - Halo rejects suspended or deprovisioned users at its token and userinfo endpoints, so they cannot start a new Aether session.
 - Aether sessions created through OIDC expire after 12 hours.
-- A platform administrator can suspend or restore any account under **Administration → Members**. Suspension ends every web session at once, blocks sign-in, and makes Dovecot reject the account's app passwords, which stops IMAP and SMTP. Mail keeps arriving in the account's mailboxes.
+- A platform administrator can suspend or restore any account under **Administration → Members**. Suspension ends every web session at once, blocks sign-in, makes Dovecot reject the account's app passwords, which stops IMAP and SMTP, ends its open IMAP sessions, including sessions opened for delegated mailboxes with an app password or an access token, and removes it from the shared mailboxes it belongs to until it is restored. Mail keeps arriving in the account's mailboxes. An account that was deprovisioned by converting its mailbox to a shared mailbox cannot be restored here: `PATCH /api/v1/admin/users/{id}` answers `409 mailbox_converted`, and only converting the mailbox back restores it.
 
 To have Halo suspensions take effect in Aether immediately, connect Halo's webhooks:
 
@@ -70,6 +70,7 @@ Aether checks each event's `Halo-Signature` header (HMAC-SHA256 with a timestamp
 - A suspend or deprovision event suspends the linked Aether account.
 - A restore event restores it, but only if Halo was what suspended it. A suspension made by an Aether administrator stays in place.
 - `session.revoke` signs the account out everywhere.
+- Events for an account whose mailbox was converted to a shared mailbox are accepted and change nothing.
 
 Halo must be able to reach Aether over the network for this to work. A local development stack on `localhost` cannot receive these events.
 
@@ -84,13 +85,13 @@ What each request does:
 
 | Request | Effect in Aether |
 | --- | --- |
-| `POST /Users` | Creates the account with the email address in `userName` (or the primary email). If the address is on a verified domain and no mailbox exists, creates the mailbox and adds the person to that domain's organization. `externalId` is linked as the person's subject at this provider, so they can sign in at once. An existing account with the same address returns `409`, and Halo then finds it with a filter and updates it. |
+| `POST /Users` | Creates the account with the email address in `userName` (or the primary email). If the address is on a verified domain and no mailbox exists, creates the mailbox and adds the person to that domain's organization. `externalId` is linked as the person's subject at this provider, so they can sign in at once. An existing account with the same address returns `409`, and Halo then finds it with a filter and updates it. A `userName` that is not an email address or contains `*` or `?` returns `400 invalidValue`. |
 | `GET /Users?filter=userName eq "…"` | Finds an account by address. Only `userName eq` filters are supported. |
-| `PUT /Users/{id}` | Updates the display name, links `externalId`, and applies `active`. The email address cannot change over SCIM. |
+| `PUT /Users/{id}` | Updates the display name, links `externalId`, and applies `active`. The email address cannot change over SCIM, and a `userName` containing `*` or `?` returns `400 invalidValue` here too. |
 | `PATCH /Users/{id}` | Applies `replace` operations on `active` and `displayName`. |
-| `DELETE /Users/{id}` | Marks the account deprovisioned. Its mail is kept. |
+| `DELETE /Users/{id}` | Marks the account deprovisioned and ends its IMAP sessions, including sessions opened for delegated mailboxes with an app password or an access token. Its mail is kept. |
 
-`active: false` suspends the account like a Halo suspension webhook: web sessions end and app passwords stop working, while mail keeps arriving. `active: true` restores the account only if this provider suspended it, so a suspension made by an Aether administrator stays in place. Groups are not provisioned; group mappings still apply when people sign in.
+`active: false` suspends the account like a Halo suspension webhook: web sessions end and app passwords stop working, while mail keeps arriving. `active: true` restores the account only if this provider suspended it, so a suspension made by an Aether administrator stays in place. Neither value changes an account whose mailbox was converted to a shared mailbox. Groups are not provisioned; group mappings still apply when people sign in.
 
 ## Generic OIDC providers
 
@@ -104,7 +105,7 @@ Use **Add generic provider** in the same screen. Providers without a `groups` cl
 
 ## Mail clients
 
-Create an app password in **Settings → App passwords**. Each one is bound to a single mailbox, is shown only once, and can be revoked at any time.
+Create an app password in **Settings → App passwords**. Each one is bound to a single mailbox, is shown only once, and can be revoked at any time. App passwords exist only for user mailboxes: shared mailboxes you belong to appear in the mail app under `Shared/<address>/` when you sign in as yourself (see [Shared mailboxes](shared-mailboxes.md#in-mail-apps)).
 
 | Setting | Value |
 | --- | --- |
@@ -131,7 +132,7 @@ IMAP and SMTP submission also accept an OpenID Connect access token through the 
 - An enabled identity provider in Aether publishes an `introspection_endpoint` (RFC 7662) in its discovery document, and reports the token as active when Aether asks with its client ID and secret. Halo does.
 - The token was issued to Aether's client ID, or its `aud` contains Aether's client ID or `AETHER_PUBLIC_URL`. A token issued to another application at the same provider is refused.
 - The token's subject is linked to an Aether account, which means the person has signed in to Aether through that provider at least once.
-- That account is active and owns the mailbox, or has full access to it as a delegate.
+- That account is active and owns the mailbox, or has full access and Send as on it as a delegate. A shared mailbox is never accepted as the username; its folders are reached through a member's own login, as [Shared mailboxes](shared-mailboxes.md#in-mail-apps) describes.
 
 Dovecot hands these logins to the API, which caches a positive introspection result for up to 5 minutes, or until the token expires if that is sooner. Suspending an account or removing access takes effect at once, because the mailbox check is not cached.
 

@@ -262,7 +262,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
             open={deleting}
             onOpenChange={setDeleting}
             title={`Delete ${d.name}?`}
-            description="This deletes the domain with all of its mailboxes and aliases. Stored mail stays on disk until an operator removes it."
+            description="This deletes the domain and its aliases. A domain that still has mailboxes, active or not, cannot be deleted: delete those mailboxes first. Stored mail stays on disk until an operator removes it."
             confirmLabel="Delete domain"
             typedConfirmation={d.name}
             pending={remove.isPending}

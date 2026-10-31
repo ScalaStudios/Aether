@@ -666,10 +666,10 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	if len(removed) > 0 {
 		cancel := cancelledCopy(event.Component, removed, sequence)
 		cancel.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
-		err = s.sendITIP(organizer, removed, "Cancelled: "+in.Title, "CANCEL", cancel)
+		err = s.sendITIP(organizer, nil, removed, "Cancelled: "+in.Title, "CANCEL", cancel)
 	}
 	if err == nil {
-		err = s.sendITIP(organizer, attendees, verb+": "+in.Title, "REQUEST", event.Component)
+		err = s.sendITIP(organizer, nil, attendees, verb+": "+in.Title, "REQUEST", event.Component)
 	}
 	if err != nil {
 		s.log.Warn("invitation rejected", "user", p.User.ID, "err", err)

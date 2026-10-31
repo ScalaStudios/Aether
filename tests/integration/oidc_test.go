@@ -164,6 +164,20 @@ func oidcLogin(t *testing.T, f *fakeIssuer, slug string) *apiClient {
 	return browser
 }
 
+func linkedIssuer(t *testing.T, w *world, email string) (*fakeIssuer, string, string) {
+	t.Helper()
+	f := startFakeIssuer(t)
+	slug := "halo-" + randomSuffix()
+	var provider idOnly
+	w.admin.must("POST", "/admin/identity-providers", map[string]any{
+		"slug": slug, "name": "Halo", "kind": "halo", "issuer": f.issuer, "clientId": f.clientID, "clientSecret": f.secret, "autoProvision": true,
+	}, &provider, 201)
+	t.Cleanup(func() { w.admin.do("DELETE", "/admin/identity-providers/"+provider.ID, nil, nil) })
+	f.subject, f.email = "halo-"+randomSuffix(), email
+	oidcLogin(t, f, slug)
+	return f, slug, provider.ID
+}
+
 func TestOIDCLoginWithPKCE(t *testing.T) {
 	w := setupWorld(t)
 	f := startFakeIssuer(t)

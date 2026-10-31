@@ -35,13 +35,13 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 
 | Area | What Aether includes |
 | --- | --- |
-| **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself, as aliases that point to it and as distribution lists that allow it, checked on both the envelope and the From header. |
+| **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself, as aliases that point to it, as distribution lists that allow it and as shared mailboxes its owner may send as, checked on both the envelope and the From header. |
 | **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, spam filed into Junk, DKIM signing with a 2048-bit RSA key per domain, ARC signing, outbound rate limits and optional ClamAV virus scanning. |
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
 | **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
 | **Webmail** | Aether Mail: folders, conversations, server-side search, rich-text compose with signatures and inline images, attachments, drafts, scheduled send, snooze, keyboard shortcuts, and HTML mail rendered with remote content blocked. |
 | **Importing** | Copy every folder from Gmail, iCloud, Yahoo, Fastmail or any other IMAP account into a mailbox, in the background, keeping flags and dates and skipping messages that are already there. |
-| **Rules and sharing** | Mail rules and automatic replies compiled to Sieve, so they run on the server for every client. Shared mailboxes with full or read-only access for members of the organization. |
+| **Rules and sharing** | Mail rules and automatic replies compiled to Sieve, so they run on the server for every client. Shared mailboxes that nobody signs in as, with full or read-only members who may send as the address or on its behalf, shown under the member's own folders in Aether Mail and as `Shared/<address>/` in mail apps. Delegated access to a person's mailbox. |
 | **Calendar and contacts** | CalDAV and CardDAV at `/dav/`, calendars with repeating events and ICS import and export, meeting invitations that work with Gmail, Outlook and Apple Calendar, shared and organization calendars, free/busy while you schedule, a personal address book and the organization directory. |
 | **Sign-in** | Local accounts with Argon2id password hashes, or any OpenID Connect provider with PKCE. Halo gets a setup wizard, group-to-role mapping, suspension webhooks and SCIM provisioning. Profile pictures are uploaded or imported from the identity provider. Mail and calendar apps use app passwords scoped to one mailbox, or an OIDC access token. |
 | **Administration** | An admin console with organizations, domains and their DNS status, mailboxes, aliases, members, identity providers, DMARC reports, API keys, signed webhooks and an audit log. |
@@ -250,6 +250,7 @@ The Go API is the only component that writes application data. It keeps organiza
 
 - [Installation](documentation/installation.md): requirements, a production install, running behind a reverse proxy, outbound relays, MTA-STS, DANE, monitoring, antivirus, upgrades, and backups with restore.
 - [Authentication](documentation/authentication.md): local accounts, Halo, other OpenID Connect providers, app passwords, and setting up mail, calendar and contacts apps.
+- [Shared mailboxes](documentation/shared-mailboxes.md): team addresses with members, access levels, Send as and Send on behalf, and what they need from Dovecot.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.
@@ -261,9 +262,14 @@ The Go API is the only component that writes application data. It keeps organiza
 Bug reports, fixes, documentation and features are welcome. Report bugs and propose features in [GitHub issues](https://github.com/ScalaStudios/Aether/issues), and open an issue before starting anything large, such as a new feature, a new dependency or a schema change. [CONTRIBUTING.md](CONTRIBUTING.md) covers the development setup, the checks a pull request must pass and the code style. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). The integration tests run against the real Postfix, Dovecot, Rspamd and PostgreSQL containers:
 
 ```bash
+AETHER_IMAP_ADDR=toxiproxy:1143 AETHER_DOVECOT_API_URL=http://toxiproxy:18089 \
+  docker compose --profile test up -d --wait toxiproxy api
 AETHER_TEST_ADMIN_EMAIL=admin@aether.test AETHER_TEST_ADMIN_PASSWORD=choose-a-long-password \
   docker compose --profile test run --rm --no-deps integration-tests
+docker compose up -d api
 ```
+
+The first command routes the API's Dovecot connections through toxiproxy so that the tests can cut and delay them, and the last one puts the API back on the direct addresses.
 
 ## Security
 

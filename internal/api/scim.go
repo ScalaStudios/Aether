@@ -190,8 +190,8 @@ func decodeSCIMUser(w http.ResponseWriter, r *http.Request) (*scimUser, string, 
 			email = strings.ToLower(strings.TrimSpace(e.Value))
 		}
 	}
-	if !strings.Contains(email, "@") || len(email) > 254 {
-		scimError(w, http.StatusBadRequest, "invalidValue", "userName must be an email address.")
+	if !strings.Contains(email, "@") || len(email) > 254 || strings.ContainsAny(email, "*?") {
+		scimError(w, http.StatusBadRequest, "invalidValue", "userName must be an email address without * or ?.")
 		return nil, "", false
 	}
 	return &in, email, true
@@ -232,6 +232,10 @@ func (s *Server) scimCreateUser(w http.ResponseWriter, r *http.Request) {
 	})
 	if errors.Is(err, errSCIMConflict) {
 		scimError(w, http.StatusConflict, "uniqueness", "A user with this userName already exists.")
+		return
+	}
+	if errors.Is(err, errSharedAddress) {
+		scimError(w, http.StatusBadRequest, "invalidValue", "This address belongs to a shared mailbox and cannot sign in.")
 		return
 	}
 	if err != nil {
@@ -281,6 +285,10 @@ func (s *Server) scimReplaceUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return s.scimLink(r.Context(), tx, p, u.ID, email, in.ExternalID)
 	})
+	if errors.Is(err, errSharedAddress) {
+		scimError(w, http.StatusBadRequest, "invalidValue", "This address belongs to a shared mailbox and cannot sign in.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return

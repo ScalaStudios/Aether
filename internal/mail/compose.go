@@ -24,6 +24,7 @@ type OutgoingAttachment struct {
 
 type Outgoing struct {
 	From        Address
+	Sender      *Address
 	To          []Address
 	Cc          []Address
 	Bcc         []Address
@@ -72,6 +73,9 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	}
 	h.SetDate(date)
 	h.SetAddressList("From", mailAddresses([]Address{o.From}))
+	if o.Sender != nil {
+		h.SetAddressList("Sender", mailAddresses([]Address{*o.Sender}))
+	}
 	if len(o.To) > 0 {
 		h.SetAddressList("To", mailAddresses(o.To))
 	}

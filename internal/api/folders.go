@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 
 func folderPath(parent, name string) (string, bool) {
 	name = strings.TrimSpace(name)
-	if name == "" || utf8.RuneCountInString(name) > 100 || strings.ContainsAny(name, "./*%") || strings.HasPrefix(name, "~") || strings.ContainsFunc(name, unicode.IsControl) {
+	if name == "" || utf8.RuneCountInString(name) > 100 || strings.ContainsAny(name, "./*%") || strings.HasPrefix(name, "~") || strings.ContainsFunc(name, unicode.IsControl) || mailpkg.SharedFolder(cmp.Or(parent, name)) {
 		return "", false
 	}
 	if parent == "" {

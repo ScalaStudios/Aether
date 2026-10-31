@@ -204,7 +204,7 @@ function AppPasswords() {
   const [profiling, setProfiling] = useState(false)
   const [profileMailbox, setProfileMailbox] = useState("")
   const form = useForm<CreateValues>({ resolver: zodResolver(createSchema), defaultValues: { name: "", mailboxId: "" } })
-  const writable = mailboxes.data?.filter((m) => m.access !== "read") ?? []
+  const writable = mailboxes.data?.filter((m) => m.kind !== "shared" && (m.access === "owner" || (m.access === "full" && m.sendAs))) ?? []
 
   const create = useMutation({
     mutationFn: (values: CreateValues) => api<CreatedAppPassword>("/me/app-passwords", { method: "POST", body: values }),
@@ -252,7 +252,7 @@ function AppPasswords() {
     <section id="app-passwords" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
         title="App passwords"
-        description="Use an app password instead of your sign-in password in IMAP and SMTP mail clients. Each one works for a single mailbox."
+        description="Use an app password instead of your sign-in password in IMAP and SMTP mail clients. Each one works for a single mailbox. Shared mailboxes appear in your mail app automatically under Shared; they never need their own password."
         actions={
           <>
             <Button

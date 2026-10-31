@@ -242,7 +242,7 @@ export function ReadingPane({
   selected: boolean
   earlier: number[]
   onBack: () => void
-  onReply: (mode: ComposeMode) => void
+  onReply?: (mode: ComposeMode) => void
   onFlags: (flags: { seen?: boolean; flagged?: boolean }) => void
   onMove: (folder: Folder, mailbox?: Mailbox) => void
   onCopy: (folder: Folder, mailbox?: Mailbox) => void
@@ -268,7 +268,7 @@ export function ReadingPane({
         <IconButton label="Back to messages" className="md:hidden" onClick={onBack}>
           <ArrowLeft />
         </IconButton>
-        {!readOnly && (
+        {onReply && (
           <>
             <IconButton label="Reply" disabled={!m} onClick={() => onReply("reply")}>
               <Reply />
@@ -279,7 +279,11 @@ export function ReadingPane({
             <IconButton label="Forward" disabled={!m} onClick={() => onReply("forward")}>
               <Forward />
             </IconButton>
-            <span className="mx-1 h-6 w-px bg-border" />
+          </>
+        )}
+        {!readOnly && (
+          <>
+            {onReply && <span className="mx-1 h-6 w-px bg-border" />}
             <IconButton label={m?.seen ? "Mark as unread" : "Mark as read"} disabled={!m} onClick={() => m && onFlags({ seen: !m.seen })}>
               {m?.seen ? <Mail /> : <MailOpen />}
             </IconButton>

@@ -33,6 +33,19 @@ func imapAuthenticate(t *testing.T, client sasl.Client) error {
 	return err
 }
 
+func imapTokenLogin(t *testing.T, user, token string) (*imapclient.Client, error) {
+	t.Helper()
+	c, err := imapclient.DialStartTLS(env(t, "AETHER_TEST_IMAP", "dovecot:143"), &imapclient.Options{TLSConfig: mailTLS(t)})
+	if err != nil {
+		t.Fatalf("imap dial: %v", err)
+	}
+	if err := c.Authenticate(xoauth2{user, token}); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
 func TestMailLoginWithAccessToken(t *testing.T) {
 	w := setupWorld(t)
 	f := startFakeIssuer(t)

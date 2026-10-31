@@ -10,6 +10,7 @@ spec:
     - { name: lmtp, port: 24, targetPort: 24 }
     - { name: sasl, port: 12345, targetPort: 12345 }
     - { name: sieve, port: 4190, targetPort: 4190 }
+    - { name: doveadm, port: 8089, targetPort: 8089 }
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -39,6 +40,7 @@ spec:
             - { name: AETHER_DOVECOT_MASTER_ALLOW_NETS, value: {{ .Values.dovecotMasterAllowNets | quote }} }
             {{- include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) | nindent 12 }}
+            {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_API_KEY" "key" "dovecotApiKey" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) | nindent 12 }}
           ports:
             - { name: imap, containerPort: 143 }
@@ -46,6 +48,7 @@ spec:
             - { name: lmtp, containerPort: 24 }
             - { name: sasl, containerPort: 12345 }
             - { name: sieve, containerPort: 4190 }
+            - { name: doveadm, containerPort: 8089 }
           readinessProbe:
             tcpSocket: { port: 143 }
             initialDelaySeconds: 5

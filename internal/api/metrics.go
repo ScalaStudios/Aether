@@ -18,10 +18,12 @@ var (
 	mailSends       = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_mail_send_total", Help: "Messages submitted from Aether Mail by result."}, []string{"result"})
 	mailBackendErrs = prometheus.NewCounter(prometheus.CounterOpts{Name: "aether_mail_backend_errors_total", Help: "Failed requests to the IMAP, submission, or ManageSieve services."})
 	webhookEvents   = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_identity_webhook_events_total", Help: "Identity provider webhook events by result."}, []string{"result"})
+	kickBacklog     = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_kick_backlog_seconds", Help: "Age in seconds of the oldest IMAP session kick still waiting for a successful doveadm call; 0 when none is pending."})
+	aclBacklog      = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_acl_backlog_seconds", Help: "Age in seconds of the oldest active mailbox whose Dovecot rights are still waiting for a successful reconciliation; 0 when none is pending."})
 )
 
 func init() {
-	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents,
+	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 }
 

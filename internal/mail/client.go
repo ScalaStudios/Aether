@@ -3,13 +3,16 @@ package mail
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -34,9 +37,12 @@ type Client struct {
 	masterUser     string
 	masterPassword string
 	hostname       string
+	doveadmURL     string
+	doveadmKey     string
+	http           *http.Client
 }
 
-func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser, masterPassword string) (*Client, error) {
+func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser, masterPassword, doveadmURL, doveadmKey string) (*Client, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil {
 		roots = x509.NewCertPool()
@@ -54,7 +60,40 @@ func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser
 		imapAddr: imapAddr, submissionAddr: submissionAddr, sieveAddr: sieveAddr, hostname: hostname,
 		tls:        &tls.Config{ServerName: hostname, RootCAs: roots, MinVersion: tls.VersionTLS12},
 		masterUser: masterUser, masterPassword: masterPassword,
+		doveadmURL: doveadmURL, doveadmKey: doveadmKey, http: &http.Client{Timeout: 10 * time.Second},
 	}, nil
+}
+
+func (c *Client) KickSessions(ctx context.Context, user string) error {
+	body, err := json.Marshal([]any{[]any{"kick", map[string][]string{"mask": {user}}, "kick"}})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.doveadmURL+"/doveadm/v1", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "X-Dovecot-API "+base64.StdEncoding.EncodeToString([]byte(c.doveadmKey)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("doveadm kick: %w", err)
+	}
+	defer resp.Body.Close()
+	var out [][]json.RawMessage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil || len(out) != 1 || len(out[0]) < 2 {
+		return fmt.Errorf("doveadm kick: unexpected response with HTTP status %d", resp.StatusCode)
+	}
+	var kind string
+	var failure struct {
+		ExitCode int `json:"exitCode"`
+	}
+	json.Unmarshal(out[0][0], &kind)
+	json.Unmarshal(out[0][1], &failure)
+	if (kind == "doveadmResponse" && resp.StatusCode == http.StatusOK) || (kind == "error" && failure.ExitCode == 68) {
+		return nil
+	}
+	return fmt.Errorf("doveadm kick: HTTP status %d: %s", resp.StatusCode, out[0][1])
 }
 
 func (c *Client) masterLogin(address string) string {
@@ -66,6 +105,10 @@ func (c *Client) open(address string) (*imapclient.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("imap connect: %w", err)
 	}
+	return c.login(ic, address)
+}
+
+func (c *Client) login(ic *imapclient.Client, address string) (*imapclient.Client, error) {
 	if err := ic.Login(c.masterLogin(address), c.masterPassword).Wait(); err != nil {
 		ic.Close()
 		return nil, fmt.Errorf("imap login for %s: %w", address, err)
@@ -121,7 +164,7 @@ func (c *Client) Folders(address string) ([]Folder, error) {
 			return err
 		}
 		for _, l := range list {
-			if slices.Contains(l.Attrs, imap.MailboxAttrNoSelect) {
+			if slices.Contains(l.Attrs, imap.MailboxAttrNoSelect) || SharedFolder(l.Mailbox) {
 				continue
 			}
 			f := Folder{Name: l.Mailbox, SpecialUse: specialUse(l), Subscribed: slices.Contains(l.Attrs, imap.MailboxAttrSubscribed)}
@@ -150,6 +193,9 @@ func (c *Client) specialFolder(ic *imapclient.Client, use string) (string, error
 		return "", err
 	}
 	for _, l := range list {
+		if SharedFolder(l.Mailbox) {
+			continue
+		}
 		for _, a := range l.Attrs {
 			if specialUses[a] == use {
 				return l.Mailbox, nil
@@ -360,6 +406,9 @@ func pageCursor(offset int, anchor uint32) *string {
 }
 
 func (c *Client) List(address, folder string, o ListOptions) (*Page, error) {
+	if SharedFolder(folder) {
+		return nil, ErrNotFound
+	}
 	page := &Page{Messages: []Summary{}}
 	err := c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
@@ -475,6 +524,9 @@ func partString(path []int) string {
 const maxInlineBody = 8 << 20
 
 func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
+	if SharedFolder(folder) {
+		return nil, ErrNotFound
+	}
 	var out *Message
 	err := c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
@@ -590,6 +642,9 @@ func anyOf(list []imap.SearchCriteria) imap.SearchCriteria {
 }
 
 func (c *Client) Related(address, folder string, m *Message) ([]Related, error) {
+	if SharedFolder(folder) {
+		return nil, ErrNotFound
+	}
 	var ids []string
 	for _, id := range append([]string{m.MessageID, m.InReplyTo}, m.References...) {
 		if id != "" && !slices.Contains(ids, id) {
@@ -712,6 +767,9 @@ type AttachmentData struct {
 }
 
 func (c *Client) Attachment(address, folder string, uid uint32, part []int) (*AttachmentData, error) {
+	if SharedFolder(folder) {
+		return nil, ErrNotFound
+	}
 	var out *AttachmentData
 	err := c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
@@ -743,6 +801,9 @@ func (c *Client) Attachment(address, folder string, uid uint32, part []int) (*At
 }
 
 func (c *Client) SetFlags(address, folder string, uid uint32, seen, flagged *bool) error {
+	if SharedFolder(folder) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(folder, nil).Wait(); err != nil {
 			return ErrNotFound
@@ -768,6 +829,9 @@ func (c *Client) SetFlags(address, folder string, uid uint32, seen, flagged *boo
 }
 
 func (c *Client) Move(address, folder string, uids []uint32, to string, keep bool) error {
+	if SharedFolder(folder, to) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Status(to, &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
 			return ErrNotFound
@@ -785,6 +849,9 @@ func (c *Client) Move(address, folder string, uids []uint32, to string, keep boo
 }
 
 func (c *Client) Transfer(from, folder string, uids []uint32, to, target string, keep bool) (int, error) {
+	if SharedFolder(folder, target) {
+		return 0, ErrNotFound
+	}
 	var n int
 	err := c.with(from, func(src *imapclient.Client) error {
 		return c.with(to, func(dst *imapclient.Client) error {
@@ -832,6 +899,9 @@ func transfer(src, dst *imapclient.Client, folder string, uids []uint32, target 
 const SnoozedFolder = "Snoozed"
 
 func (c *Client) Snooze(address, folder string, uid uint32) (uidValidity, snoozedUID uint32, err error) {
+	if SharedFolder(folder) {
+		return 0, 0, ErrNotFound
+	}
 	err = c.with(address, func(ic *imapclient.Client) error {
 		if folder == SnoozedFolder {
 			return ErrNotFound
@@ -882,6 +952,9 @@ func (c *Client) Wake(address string, uidValidity, uid uint32, to string) error 
 }
 
 func (c *Client) Delete(address, folder string, uid uint32) error {
+	if SharedFolder(folder) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error {
 		trash, err := c.specialFolder(ic, "trash")
 		if err != nil {

@@ -179,7 +179,13 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 	if !ok {
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `DELETE FROM domains WHERE id = $1`, d.ID); err != nil {
+	_, err := s.db.Exec(r.Context(), `DELETE FROM domains WHERE id = $1`, d.ID)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		writeError(w, http.StatusConflict, "domain_not_empty", "This domain still has mailboxes. Delete them first; the domain and its aliases are unchanged.")
+		return
+	}
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}

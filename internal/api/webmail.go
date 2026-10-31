@@ -17,20 +17,21 @@ import (
 )
 
 type ownedMailbox struct {
-	ID          string
-	OrgID       string
-	Address     string
-	DisplayName string
+	ID                   string
+	OrgID                string
+	Address              string
+	DisplayName          string
+	Kind, Access         string
+	SendAs, SendOnBehalf bool
 }
 
 func (s *Server) accessibleMailbox(ctx context.Context, id, userID string) (*ownedMailbox, string, error) {
 	m := &ownedMailbox{}
-	var access string
 	err := s.db.QueryRow(ctx, `
-		SELECT m.id, m.org_id, m.address, m.display_name, `+mailboxAccessLevel("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		SELECT m.id, m.org_id, m.address, m.display_name, m.kind, `+mailboxAccessLevel("$2")+`, `+mailboxSendAs("$2")+`, `+mailboxSendOnBehalf("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
 		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, userID).
-		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &access)
-	return m, access, err
+		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &m.Kind, &m.Access, &m.SendAs, &m.SendOnBehalf)
+	return m, m.Access, err
 }
 
 func (s *Server) ownedMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {
@@ -45,6 +46,23 @@ func (s *Server) ownedMailbox(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	if access == "read" && r.Method != http.MethodGet {
 		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to this mailbox.")
+		return nil, false
+	}
+	return m, true
+}
+
+func (s *Server) sendingMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {
+	id, ok := pathID(w, r, "mailboxId")
+	if !ok {
+		return nil, false
+	}
+	m, _, err := s.accessibleMailbox(r.Context(), id, p.User.ID)
+	if err != nil {
+		notFound(w)
+		return nil, false
+	}
+	if !m.SendAs && !m.SendOnBehalf {
+		writeError(w, http.StatusForbidden, "cannot_send", "You can read this mailbox but not send from it. Ask an administrator for Send as or Send on behalf.")
 		return nil, false
 	}
 	return m, true
@@ -418,7 +436,7 @@ func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedM
 }
 
 func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.sendingMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -434,8 +452,11 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if !ok {
 		return
 	}
+	if !m.SendAs {
+		out.Sender = &mailpkg.Address{Name: p.User.DisplayName, Address: p.User.Email}
+	}
 	if in.SendAt != nil {
-		s.scheduleMessage(w, r, m, &in, out)
+		s.scheduleMessage(w, r, p, m, &in, out)
 		return
 	}
 	raw, messageID, err := out.Build(s.cfg.MailHostname)
@@ -452,6 +473,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	mailSends.WithLabelValues("accepted").Inc()
 	if err := s.mail.SaveSent(m.Address, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", m.ID, "err", err)
+	}
+	if m.Access == "read" {
+		writeJSON(w, http.StatusAccepted, map[string]string{"messageId": messageID})
+		return
 	}
 	if out.InReplyTo != "" {
 		s.mail.MarkAnswered(m.Address, out.InReplyTo)

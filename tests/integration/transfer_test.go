@@ -33,7 +33,7 @@ func TestMoveAndCopyAcrossMailboxes(t *testing.T) {
 	var shared idOnly
 	w.admin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": "hello", "displayName": "Hello"}, &shared, 201)
 	delegates := "/mailboxes/" + shared.ID + "/delegates"
-	w.admin.must("POST", delegates, map[string]string{"email": alice}, nil, 200)
+	w.admin.must("POST", delegates, map[string]any{"email": alice, "sendAs": true}, nil, 200)
 	hello, err := imapLogin(t, "hello@"+w.domain, createAppPassword(t, w.alice, shared.ID))
 	if err != nil {
 		t.Fatalf("shared mailbox imap login: %v", err)

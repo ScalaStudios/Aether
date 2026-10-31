@@ -18,17 +18,36 @@ import (
 
 func (s *Server) setUserStatus(ctx context.Context, userID, status, by string) (bool, error) {
 	var changed bool
+	var ids []string
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE users SET status = $2, suspended_by = CASE WHEN $2 = 'active' THEN '' ELSE $3 END, updated_at = now() WHERE id = $1 AND status <> $2`, userID, status, by)
+		tag, err := tx.Exec(ctx, `UPDATE users SET status = $2, suspended_by = CASE WHEN $2 = 'active' THEN '' ELSE $3 END, updated_at = now() WHERE id = $1 AND status <> $2 AND suspended_by <> 'mailbox-conversion'`, userID, status, by)
 		if err != nil {
 			return err
 		}
 		changed = tag.RowsAffected() > 0
-		if status != "active" {
-			_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
+		if !changed {
+			return nil
 		}
+		if ids, err = userMailboxIDs(ctx, tx, userID); err != nil {
+			return err
+		}
+		if err := s.revokeMailAccess(ctx, tx, userID, ids); err != nil {
+			return err
+		}
+		if status == "active" {
+			return nil
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
 		return err
 	})
+	if err == nil && changed {
+		for _, id := range ids {
+			if err := s.syncMailboxACL(ctx, id); err != nil {
+				s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", id, "err", err)
+			}
+		}
+		wake(s.kickWake)
+	}
 	return changed, err
 }
 
@@ -54,13 +73,18 @@ func (s *Server) updateUserStatus(w http.ResponseWriter, r *http.Request, p *pri
 		writeError(w, http.StatusUnprocessableEntity, "self_suspend", "You cannot change the status of your own account.")
 		return
 	}
-	var exists bool
-	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, id).Scan(&exists); err != nil {
+	var suspendedBy string
+	err := s.db.QueryRow(r.Context(), `SELECT suspended_by FROM users WHERE id = $1`, id).Scan(&suspendedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFound(w)
+		return
+	}
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	if !exists {
-		notFound(w)
+	if suspendedBy == "mailbox-conversion" {
+		writeError(w, http.StatusConflict, "mailbox_converted", "This account's mailbox was converted to a shared mailbox. Convert it back to a user mailbox to restore the account.")
 		return
 	}
 	changed, err := s.setUserStatus(r.Context(), id, in.Status, "admin")

@@ -72,7 +72,7 @@ func (s *Server) verifyMailToken(w http.ResponseWriter, r *http.Request) {
 	var allowed bool
 	err = s.db.QueryRow(r.Context(), `
 		SELECT EXISTS (SELECT 1 FROM mailboxes m JOIN domains d ON d.id = m.domain_id JOIN users u ON u.id = $2
-		WHERE m.address = $1 AND m.active AND d.active AND d.verified_at IS NOT NULL AND u.status = 'active' AND `+fullMailboxAccess("$2")+`)`,
+		WHERE m.address = $1 AND m.active AND d.active AND d.verified_at IS NOT NULL AND u.status = 'active' AND `+signInAsMailbox("$2")+`)`,
 		address, userID).Scan(&allowed)
 	if err != nil {
 		s.log.Warn("mail token check failed", "err", err)

@@ -78,6 +78,8 @@ export interface DMARCSummary {
   sources: DMARCSource[]
 }
 
+export type MailboxKind = "user" | "shared"
+
 export interface Mailbox {
   id: string
   orgId: string
@@ -89,7 +91,10 @@ export interface Mailbox {
   quotaBytes: number
   active: boolean
   createdAt: string
+  kind: MailboxKind
   access?: "owner" | DelegateAccess
+  sendAs?: boolean
+  sendOnBehalf?: boolean
 }
 
 export type DelegateAccess = "read" | "full"
@@ -99,6 +104,8 @@ export interface Delegate {
   email: string
   displayName: string
   access: DelegateAccess
+  sendAs: boolean
+  sendOnBehalf: boolean
   createdAt: string
 }
 

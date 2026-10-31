@@ -16,6 +16,7 @@ import { LaterMenu } from "@/components/mail/later-menu"
 import { RecipientInput } from "@/components/recipient-input"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { api } from "@/lib/api"
 import { signaturesQuery } from "@/lib/queries"
@@ -81,8 +82,9 @@ function flyAway(icon: SVGElement | null) {
     .finished.finally(() => plane.remove())
 }
 
-export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft: Draft; onClose: () => void }) {
+export function Composer({ identities, initial, draft, onClose }: { identities: Mailbox[]; initial: Mailbox; draft: Draft; onClose: () => void }) {
   const qc = useQueryClient()
+  const [mailbox, setMailbox] = useState(initial)
   const [showCopies, setShowCopies] = useState(draft.cc.length > 0)
   const [files, setFiles] = useState<File[]>([])
   const [forwarded, setForwarded] = useState<Attachment[]>(draft.forwardFrom?.attachments ?? [])
@@ -182,14 +184,15 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
     placingSignature.current = false
   }, [editor, signatures.data, draft.mode])
 
+  const readOnly = mailbox.access === "read"
   const save = useCallback(() => {
-    if (pendingSave.current || !dirty.current) return pendingSave.current
+    if (readOnly || pendingSave.current || !dirty.current) return pendingSave.current
     dirty.current = false
     pendingSave.current = saveDraft.mutateAsync(files).catch(() => undefined).finally(() => {
       pendingSave.current = null
     })
     return pendingSave.current
-  }, [files, saveDraft])
+  }, [files, saveDraft, readOnly])
 
   useEffect(() => form.subscribe({ formState: { values: true }, callback: touch }), [form, touch])
 
@@ -217,10 +220,10 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
   const discard = useMutation({
     mutationFn: async () => {
       await pendingSave.current
-      if (draftUid) await api(`/mailboxes/${mailbox.id}/drafts/${draftUid}`, { method: "DELETE" })
+      if (draftUid && !readOnly) await api(`/mailboxes/${mailbox.id}/drafts/${draftUid}`, { method: "DELETE" })
     },
     onSuccess: () => {
-      if (draftUid) toast.success("Draft discarded")
+      if (draftUid && !readOnly) toast.success("Draft discarded")
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
       onClose()
@@ -230,8 +233,17 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
   async function close() {
     dirty.current = dirty.current || files.length > 0
     await save()
-    if (draftUid || savedAt || saveDraft.data) toast.success("Saved to Drafts")
+    if (!readOnly && (draftUid || savedAt || saveDraft.data)) toast.success("Saved to Drafts")
     onClose()
+  }
+
+  function changeFrom(id: string) {
+    const next = identities.find((m) => m.id === id) ?? mailbox
+    if (forwarded.length) toast.info(`Forwarded attachments can't be sent from ${next.address}, so they were left out.`)
+    setMailbox(next)
+    setDraftUid(undefined)
+    setSource(null)
+    setForwarded([])
   }
 
   const submit = (sendAt?: Date) =>
@@ -254,10 +266,38 @@ export function Composer({ mailbox, draft, onClose }: { mailbox: Mailbox; draft:
 
   return (
     <Sheet open onOpenChange={(open) => !open && close()}>
-      <SheetContent side="right" className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[800px]">
+      <SheetContent
+        side="right"
+        className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[800px]"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          document.getElementById("compose-to")?.focus()
+        }}
+      >
         <SheetHeader className="border-b border-border p-6">
           <SheetTitle>{titles[draft.mode]}</SheetTitle>
-          <SheetDescription>From {formatAddress({ name: mailbox.displayName, address: mailbox.address })}</SheetDescription>
+          {identities.length > 1 ? (
+            <SheetDescription asChild>
+              <div className="flex items-center gap-2">
+                From
+                <Select value={mailbox.id} onValueChange={changeFrom} disabled={saveDraft.isPending}>
+                  <SelectTrigger aria-label="From" size="sm" className="min-w-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {identities.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {formatAddress({ name: m.displayName, address: m.address })}
+                        {!m.sendAs && m.sendOnBehalf && <span className="text-fg-tertiary">· on behalf</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </SheetDescription>
+          ) : (
+            <SheetDescription>From {formatAddress({ name: mailbox.displayName, address: mailbox.address })}</SheetDescription>
+          )}
         </SheetHeader>
         <form
           onSubmit={submit()}

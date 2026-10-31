@@ -391,9 +391,12 @@ paths:
               schema: { $ref: "#/components/schemas/Domain" }
     delete:
       tags: [domains]
+      summary: Delete a domain and its aliases
+      description: Refused with 409 domain_not_empty while any mailbox, active or not, still belongs to the domain; delete those mailboxes first. Aliases, DMARC reports and signature templates of the domain are deleted with it.
       parameters: [{ $ref: "#/components/parameters/domainId" }]
       responses:
-        "204": { description: "Deleted, including its mailboxes and aliases" }
+        "204": { description: "Deleted, including its aliases" }
+        "409": { $ref: "#/components/responses/Error" }
   /domains/{domainId}/dns:
     get:
       tags: [domains]
@@ -433,7 +436,8 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/Mailbox" } }
     post:
       tags: [mailboxes]
-      summary: Create a mailbox. A user account with the mailbox address is created or linked as its owner.
+      summary: Create a mailbox. A user mailbox gets a user account with the mailbox address, created or linked, as its owner. A shared mailbox gets no account.
+      description: A shared mailbox has no sign-in, so a password is refused with 422 shared_no_password, and an address an account already signs in with is refused with 409 address_is_account. Add members to a shared mailbox through its delegates.
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -447,16 +451,21 @@ paths:
                 localPart: { type: string }
                 displayName: { type: string }
                 quotaBytes: { type: integer, minimum: 0 }
-                password: { type: string, minLength: 12, description: Optional web sign-in password for the owner account }
+                password: { type: string, minLength: 12, description: Optional web sign-in password for the owner account. Not allowed for shared mailboxes. }
+                kind: { type: string, enum: [user, shared], default: user }
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Mailbox" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}:
     patch:
       tags: [mailboxes]
+      summary: Change a mailbox's display name, quota or active state
+      description: Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -474,11 +483,37 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Mailbox" }
+        "503": { $ref: "#/components/responses/Error" }
     delete:
       tags: [mailboxes]
+      summary: Delete a mailbox
+      description: For a shared mailbox, removes every member's rights from Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Then deletes the mailbox and ends every IMAP session signed in as it and, for a shared mailbox, every member's sessions; the session ends are retried until Dovecot confirms them.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       responses:
         "204": { description: Deleted. Stored mail on disk is retained for manual removal. }
+        "503": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/convert:
+    post:
+      tags: [mailboxes]
+      summary: Convert a user mailbox to a shared mailbox, or a shared mailbox back to a user mailbox
+      description: Converting to shared clears the owner, revokes every app password for the mailbox and ends every IMAP session of the former owner, including sessions opened as a delegate of other mailboxes with an app password or an access token; their other shared memberships are reconciled. When the owner account signs in with the mailbox address, that account is deprovisioned, its web sessions end and every app password it holds is revoked; this is refused with 422 owner_is_admin for a platform administrator. Delegates stay as members with their rights. Converting back restores an account that a conversion deprovisioned as the owner, without the revoked app passwords; members stay delegates but lose the shared folders in their mail apps, and their sessions end. A mailbox that already has the requested kind is refused with 422 same_kind.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [user, shared] }
+      responses:
+        "200":
+          description: The converted mailbox
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/aliases:
     get:
       tags: [aliases]
@@ -585,7 +620,7 @@ paths:
     delete:
       tags: [members]
       summary: Remove a person from the organization
-      description: Also removes their delegated access to the organization's mailboxes and their list ownerships. Removing an owner requires the owner role, and the last owner cannot be removed.
+      description: Also removes their delegated access to the organization's mailboxes and their list ownerships, revokes the app passwords they held for those mailboxes, ends their IMAP sessions, and records one mailbox.delegate_remove audit event per mailbox. Removing an owner requires the owner role, and the last owner cannot be removed.
       parameters:
         - { $ref: "#/components/parameters/orgId" }
         - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -860,6 +895,7 @@ paths:
     post:
       tags: [app-passwords]
       summary: Create an IMAP/SMTP app password. The secret is returned once.
+      description: Only for an active user mailbox the caller owns, or has full access with Send as on; anything else is refused with 422 invalid_mailbox. Shared mailboxes never need an app password; they appear under Shared in each member's own mail account.
       requestBody:
         required: true
         content:
@@ -882,10 +918,12 @@ paths:
                     required: [password]
                     properties:
                       password: { type: string }
+        "422": { $ref: "#/components/responses/Error" }
   /me/apple-profile:
     post:
       tags: [app-passwords]
       summary: Create an app password for a mailbox and return it inside an Apple configuration profile with mail, CalDAV and CardDAV accounts
+      description: The same mailbox rule as for app passwords applies; anything else is refused with 422 invalid_mailbox.
       requestBody:
         required: true
         content:
@@ -901,9 +939,12 @@ paths:
           content:
             application/x-apple-aspen-config:
               schema: { type: string, format: binary }
+        "422": { $ref: "#/components/responses/Error" }
   /me/app-passwords/{id}:
     delete:
       tags: [app-passwords]
+      summary: Revoke an app password
+      description: Also ends every IMAP session signed in as the app password's mailbox, because Dovecot cannot tell which credential opened a session. The session end is retried until Dovecot confirms it.
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "204": { description: Revoked }
@@ -1197,6 +1238,7 @@ paths:
       description: |
         accepted, tentative, and declined answer an invitation. Accepting adds the event to the personal calendar, declining removes it, and each sends a reply to the organizer.
         apply updates the sender's response on an event you organize. remove takes a cancelled event out of the calendar.
+        Every response needs the same right as /send: owning the mailbox, Send as, or Send on behalf. Anyone else is refused with 403 cannot_send. Without Send as, a reply names the caller in its Sender header.
       parameters:
         - { $ref: "#/components/parameters/mailboxId" }
         - { $ref: "#/components/parameters/uid" }
@@ -1216,6 +1258,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Invitation" }
+        "403": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}/attachments/{part}:
@@ -1242,7 +1285,7 @@ paths:
     post:
       tags: [mailboxes]
       summary: Give an organization member access to this mailbox, or change their access
-      description: Full access covers reading, organizing, sending as the mailbox, and app passwords for it. Read access only allows reading in Aether Mail; the API refuses every other request, and changing a delegate to read revokes their app passwords for the mailbox.
+      description: Full access covers reading and organizing the mailbox. Read access only allows reading in Aether Mail; the API refuses every other request except sending when a send right is granted. Send as and Send on behalf are separate from access; full access alone does not allow sending. Send as sends from the mailbox address and, with full access on a user mailbox, allows app passwords for it. Send on behalf sends from the mailbox address with the delegate named in the Sender header. An omitted sendAs or sendOnBehalf keeps its current value, or is false for a new delegate. Members of a shared mailbox see it under Shared in their own mail apps. Lowering access or a send right revokes app passwords that no longer qualify and ends the delegate's open mail app sessions, including sessions opened with an access token; the session end is retried until Dovecot confirms it.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -1254,6 +1297,8 @@ paths:
               properties:
                 email: { type: string, format: email }
                 access: { type: string, enum: [full, read], default: full }
+                sendAs: { type: boolean }
+                sendOnBehalf: { type: boolean }
       responses:
         "200":
           description: The delegate
@@ -1265,6 +1310,7 @@ paths:
     delete:
       tags: [mailboxes]
       summary: Remove a delegate and revoke the app passwords they created for this mailbox
+      description: Ends the delegate's open mail app sessions, including sessions opened with an access token; the session end is retried until Dovecot confirms it.
       parameters:
         - { $ref: "#/components/parameters/mailboxId" }
         - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1275,6 +1321,7 @@ paths:
     post:
       tags: [mail]
       summary: Submit a message through the SMTP submission service and save it to Sent, or schedule it when sendAt is set
+      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -1292,6 +1339,7 @@ paths:
                     properties:
                       messageId: { type: string }
                   - { $ref: "#/components/schemas/ScheduledMessage" }
+        "403": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/scheduled:
     get:
       tags: [mail]
@@ -1428,6 +1476,7 @@ paths:
   /mailboxes/{mailboxId}/auto-reply:
     get:
       tags: [mail]
+      description: The automatic reply is sent from the mailbox's address, so reading or changing it needs Send as on the mailbox, which owners have, or the organization administrator role. Anyone else is refused with 403 cannot_send.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       responses:
         "200":
@@ -1435,6 +1484,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AutoReply" }
+        "403": { $ref: "#/components/responses/Error" }
     put:
       tags: [mail]
       summary: Set the automatic reply. Each sender receives it at most once a day; lists and automated mail are skipped.
@@ -1450,6 +1500,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AutoReply" }
+        "403": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
   /contacts:
     get:
@@ -1708,6 +1759,7 @@ paths:
       parameters: [{ name: slug, in: path, required: true, schema: { type: string } }]
       responses:
         "201": { description: SCIM User }
+        "400": { description: "userName is not an email address, contains * or ?, or is a shared mailbox address (scimType invalidValue)" }
         "409": { description: An account with this userName exists }
   /scim/{slug}/Users/{id}:
     get:
@@ -1725,6 +1777,7 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "200": { description: SCIM User }
+        "400": { description: "userName is not an email address, contains * or ?, or is a shared mailbox address (scimType invalidValue)" }
     patch:
       tags: [scim]
       summary: Apply replace operations on active and displayName
@@ -1786,7 +1839,8 @@ paths:
   /admin/users/{id}:
     patch:
       tags: [members]
-      summary: Suspend or restore an account everywhere (platform administrators only). Suspension ends all sessions and blocks app passwords.
+      summary: Suspend or restore an account everywhere (platform administrators only). Suspension ends all sessions, including IMAP sessions, and blocks app passwords.
+      description: An account deprovisioned by converting its mailbox to a shared mailbox cannot be restored here and answers 409 mailbox_converted; convert the mailbox back to a user mailbox instead.
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1799,6 +1853,7 @@ paths:
                 status: { type: string, enum: [active, suspended] }
       responses:
         "204": { description: Saved }
+        "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
   /hooks/identity-providers/{slug}:
     post:
@@ -2008,7 +2063,7 @@ components:
         found: { type: array, items: { type: string } }
     Mailbox:
       type: object
-      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt]
+      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt, kind]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -2020,6 +2075,10 @@ components:
         quotaBytes: { type: integer }
         active: { type: boolean }
         createdAt: { type: string, format: date-time }
+        kind: { type: string, enum: [user, shared], description: A user mailbox has an owner account that signs in with the address. A shared mailbox has no sign-in; its members open it with their own accounts. }
+        access: { type: string, enum: [owner, full, read], description: The caller's access. Only in GET /me/mailboxes. }
+        sendAs: { type: boolean, description: The caller may send from the address. Only in GET /me/mailboxes. }
+        sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }
     Alias:
       type: object
       required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners]
@@ -2311,11 +2370,14 @@ components:
         size: { type: integer }
     Delegate:
       type: object
+      required: [sendAs, sendOnBehalf]
       properties:
         userId: { type: string, format: uuid }
         email: { type: string }
         displayName: { type: string }
         access: { type: string, enum: [full, read] }
+        sendAs: { type: boolean }
+        sendOnBehalf: { type: boolean }
         createdAt: { type: string, format: date-time }
     APIKey:
       type: object
@@ -2343,7 +2405,7 @@ components:
         sendAt: { type: string, format: date-time }
         subject: { type: string }
         to: { type: array, items: { $ref: "#/components/schemas/Address" } }
-        error: { type: [string, "null"], description: Set when sending failed after five attempts }
+        error: { type: [string, "null"], description: "Set when sending failed after five attempts, when the sender no longer has the right the message was scheduled with or their account is no longer active, or for a message scheduled before the upgrade that added sender tracking. Cancel it and schedule it again." }
     SnoozedMessage:
       type: object
       required: [uid, until, returnFolder]

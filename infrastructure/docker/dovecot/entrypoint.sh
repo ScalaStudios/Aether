@@ -4,6 +4,7 @@ set -eu
 : "${AETHER_MAIL_DB_PASSWORD:?required}"
 : "${AETHER_DOVECOT_MASTER_PASSWORD:?required}"
 : "${AETHER_SIEVE_RELAY_PASSWORD:?required}"
+: "${AETHER_DOVECOT_API_KEY:?required}"
 DB_HOST="${AETHER_DB_HOST:-postgres}"
 DB_NAME="${AETHER_DB_NAME:-aether}"
 MASTER_USER="${AETHER_DOVECOT_MASTER_USER:-aether-webmail}"
@@ -42,6 +43,7 @@ password ${AETHER_SIEVE_RELAY_PASSWORD}
 MSMTP
 chown vmail:vmail /run/aether-msmtp/msmtprc
 chmod 0600 /run/aether-msmtp/msmtprc
+printf 'doveadm_api_key = %s\n' "$AETHER_DOVECOT_API_KEY" > /run/dovecot-secrets/doveadm.conf
 chgrp dovecot /run/dovecot-secrets/*
 chmod 0640 /run/dovecot-secrets/*
 

@@ -112,3 +112,42 @@ func TestImportCopiesFoldersAndSkipsDuplicates(t *testing.T) {
 		t.Errorf("Work = %v, want three@example.com flagged", work)
 	}
 }
+
+func TestImportNeverTouchesSharedFolders(t *testing.T) {
+	from, to := memIMAP(t), memIMAP(t)
+	support := SharedPrefix + "support@example.com"
+	for _, f := range []string{support, support + "/Sent", SharedPrefix + "other@example.com"} {
+		if err := from.Create(f, nil).Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := to.Create(support, nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	appendMessage(t, from, "INBOX", "own@example.com")
+	appendMessage(t, from, support, "known@example.com")
+	appendMessage(t, from, support, "injected@example.com")
+	appendMessage(t, from, support+"/Sent", "sub@example.com")
+	appendMessage(t, from, SharedPrefix+"other@example.com", "created@example.com")
+	appendMessage(t, to, support, "known@example.com")
+
+	var p ImportProgress
+	if err := importFolders(context.Background(), from, to, "source", func(last ImportProgress) { p = last }); err != nil {
+		t.Fatal(err)
+	}
+	if p.FoldersDone != 4 || p.FoldersTotal != 4 || p.Copied != 1 || p.Skipped != 0 {
+		t.Errorf("progress = %+v, want 4 folders done, 1 copied, 0 skipped", p)
+	}
+	if _, known := folderMessages(t, to, support)["known@example.com"]; !known || len(folderMessages(t, to, support)) != 1 {
+		t.Errorf("%s changed, want only known@example.com", support)
+	}
+	list, err := to.List("", "*", nil).Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range list {
+		if SharedFolder(l.Mailbox) && l.Mailbox != support {
+			t.Errorf("import created %s", l.Mailbox)
+		}
+	}
+}

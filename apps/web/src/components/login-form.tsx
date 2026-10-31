@@ -27,6 +27,7 @@ const loginErrors: Record<string, string> = {
   email_unverified: "Your identity provider has not verified your email address. Verify it there, then try again.",
   not_provisioned: "Your account does not have access to Aether yet. Ask your administrator to add you.",
   account_disabled: "This account is suspended. Contact your administrator.",
+  shared_mailbox: "This address is a shared mailbox and cannot sign in. Sign in with your own account; the shared mailbox appears in your sidebar once an administrator adds you.",
 }
 
 const schema = z.object({

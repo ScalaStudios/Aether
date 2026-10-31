@@ -12,6 +12,7 @@ secrets:
   secretKey: ""
   mailDbPassword: ""
   dovecotMasterPassword: ""
+  dovecotApiKey: ""
   sieveRelayPassword: ""
   valkeyPassword: ""
   postgresPassword: ""

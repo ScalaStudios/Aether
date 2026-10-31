@@ -2,9 +2,9 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, Trash2, Upload, Users } from "lucide-react"
+import { ArrowRightLeft, CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
-import { Controller, useForm } from "react-hook-form"
+import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -18,9 +18,11 @@ import { SegmentedControl } from "@/components/segmented-control"
 import { MailboxRules } from "@/components/settings/mail-rules"
 import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
+import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
@@ -39,21 +41,34 @@ const imports = {
 
 type ImportKind = keyof typeof imports
 
-const schema = z.object({
-  domainId: z.string().min(1, "Choose a domain."),
-  localPart: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(/^[a-z0-9]([a-z0-9._+-]*[a-z0-9])?$/, "Use letters, digits, dots, hyphens, plus signs or underscores."),
-  displayName: z.string().trim(),
-  password: z.union([z.literal(""), z.string().min(12, "Use at least 12 characters, or leave it empty.")]),
-  quotaMb: z.string().regex(/^\d*$/, "Enter a whole number of megabytes."),
-})
+const schema = z
+  .object({
+    kind: z.enum(["user", "shared"]),
+    domainId: z.string().min(1, "Choose a domain."),
+    localPart: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^[a-z0-9]([a-z0-9._+-]*[a-z0-9])?$/, "Use letters, digits, dots, hyphens, plus signs or underscores."),
+    displayName: z.string().trim(),
+    password: z.union([z.literal(""), z.string().min(12, "Use at least 12 characters, or leave it empty.")]),
+    quotaMb: z.string().regex(/^\d*$/, "Enter a whole number of megabytes."),
+  })
+  .refine((v) => v.kind === "user" || v.password === "", { message: "Shared mailboxes have no password.", path: ["password"] })
 
 type Values = z.infer<typeof schema>
 
-const delegateSchema = z.object({ email: z.email("Enter a valid email address."), access: z.enum(["full", "read"]) })
+const kinds = [
+  { value: "user" as const, label: "User mailbox" },
+  { value: "shared" as const, label: "Shared mailbox" },
+]
+
+const delegateSchema = z.object({
+  email: z.email("Enter a valid email address."),
+  access: z.enum(["full", "read"]),
+  sendAs: z.boolean(),
+  sendOnBehalf: z.boolean(),
+})
 
 const accessOptions = [
   { value: "full" as const, label: "Full access" },
@@ -62,24 +77,37 @@ const accessOptions = [
 
 type DelegateValues = z.infer<typeof delegateSchema>
 
+const rights = ({ email, access, sendAs, sendOnBehalf }: DelegateValues): DelegateValues => ({ email, access, sendAs, sendOnBehalf })
+
+const rightsLabel = (d: DelegateValues) => [d.access === "read" ? "read only" : "full access", d.sendAs && "send as", d.sendOnBehalf && "send on behalf"].filter(Boolean).join(", ")
+
 function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient()
   const key = ["delegates", mailbox?.id]
+  const shared = mailbox?.kind === "shared"
   const delegates = useQuery({ queryKey: key, queryFn: () => api<Delegate[]>(`/mailboxes/${mailbox?.id}/delegates`), enabled: !!mailbox })
   const [removing, setRemoving] = useState<Delegate | null>(null)
-  const form = useForm<DelegateValues>({ resolver: zodResolver(delegateSchema), defaultValues: { email: "", access: "full" } })
+  const form = useForm<DelegateValues>({ resolver: zodResolver(delegateSchema), defaultValues: { email: "", access: "full", sendAs: false, sendOnBehalf: false } })
+  const post = (values: DelegateValues) => api<Delegate>(`/mailboxes/${mailbox?.id}/delegates`, { method: "POST", body: values })
 
   const add = useMutation({
-    mutationFn: (values: DelegateValues) => api<Delegate>(`/mailboxes/${mailbox?.id}/delegates`, { method: "POST", body: values }),
+    mutationFn: post,
     meta: { silent: true },
     onSuccess: (d) => {
-      toast.success(`${d.email} has ${d.access === "read" ? "read-only" : "full"} access`)
+      toast.success(`${d.email}: ${rightsLabel(d)}`)
       form.reset()
       qc.invalidateQueries({ queryKey: key })
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 422) form.setError("email", { message: error.message })
       else toast.error(errorMessage(error))
+    },
+  })
+  const change = useMutation({
+    mutationFn: post,
+    onSuccess: (d) => {
+      toast.success(`${d.email}: ${rightsLabel(d)}`)
+      return qc.invalidateQueries({ queryKey: key })
     },
   })
   const remove = useMutation({
@@ -99,39 +127,70 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
           onOpenChange(open)
           if (!open) form.reset()
         }}
-        title={`Delegates for ${mailbox?.address}`}
-        description="Full access lets a delegate read, organize, and send as this mailbox, and create app passwords for it. Read only allows reading in Aether Mail and nothing else."
-        submitLabel="Add delegate"
+        title={shared ? `Members of ${mailbox?.address}` : `Delegates for ${mailbox?.address}`}
+        description={
+          shared
+            ? "Full access lets a member read, organize and file mail. Send as and Send on behalf are separate: Send as sends from this address; Send on behalf shows the member's name as the sender."
+            : "Full access lets a delegate read and organize this mailbox; Send as additionally allows sending from the address and creating app passwords for it. Read only allows reading in Aether Mail and nothing else."
+        }
+        submitLabel={shared ? "Add member" : "Add delegate"}
         cancelLabel="Done"
         pending={add.isPending}
         onSubmit={form.handleSubmit((v) => add.mutate(v))}
       >
-        <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">No delegates yet.</p>}>
+        <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">{shared ? "No members yet." : "No delegates yet."}</p>}>
           {(items) => (
             <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
-              {items.map((d) => (
-                <li key={d.userId} className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate">{d.displayName || d.email}</span>
-                    {d.displayName && <span className="truncate font-mono text-sm text-fg-tertiary">{d.email}</span>}
-                  </div>
-                  <Select value={d.access} onValueChange={(access) => add.mutate({ email: d.email, access: access as DelegateAccess })}>
-                    <SelectTrigger aria-label={`Access for ${d.email}`} className="w-36">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accessOptions.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {o.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <IconButton type="button" label={`Remove ${d.email}`} size="icon-sm" onClick={() => setRemoving(d)}>
-                    <Trash2 />
-                  </IconButton>
-                </li>
-              ))}
+              {items.map((d) => {
+                const shown = change.isPending && change.variables.email === d.email ? change.variables : d
+                return (
+                  <li key={d.userId} className="flex flex-col gap-3 px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate">{d.displayName || d.email}</span>
+                        {d.displayName && <span className="truncate font-mono text-sm text-fg-tertiary">{d.email}</span>}
+                      </div>
+                      <Select value={shown.access} disabled={change.isPending} onValueChange={(access) => change.mutate({ ...rights(d), access: access as DelegateAccess })}>
+                        <SelectTrigger aria-label={`Access for ${d.email}`} className="w-36">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {accessOptions.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <IconButton type="button" label={`Remove ${d.email}`} size="icon-sm" onClick={() => setRemoving(d)}>
+                        <Trash2 />
+                      </IconButton>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id={`send-as-${d.userId}`}
+                          checked={shown.sendAs}
+                          disabled={change.isPending}
+                          onCheckedChange={(sendAs) => change.mutate({ ...rights(d), sendAs })}
+                          aria-label={`Send as for ${d.email}`}
+                        />
+                        <Label htmlFor={`send-as-${d.userId}`}>Send as</Label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id={`send-on-behalf-${d.userId}`}
+                          checked={shown.sendOnBehalf}
+                          disabled={change.isPending}
+                          onCheckedChange={(sendOnBehalf) => change.mutate({ ...rights(d), sendOnBehalf })}
+                          aria-label={`Send on behalf for ${d.email}`}
+                        />
+                        <Label htmlFor={`send-on-behalf-${d.userId}`}>Send on behalf</Label>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </QueryView>
@@ -143,14 +202,20 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
           name="access"
           render={({ field }) => <SegmentedControl label="Access" options={accessOptions} value={field.value} onChange={field.onChange} />}
         />
+        <SwitchField control={form.control} name="sendAs" id="delegate-send-as" label="Send as" />
+        <SwitchField control={form.control} name="sendOnBehalf" id="delegate-send-on-behalf" label="Send on behalf" />
       </FormDialog>
 
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(open) => !open && setRemoving(null)}
         title={`Remove ${removing?.email}?`}
-        description={`They lose access to ${mailbox?.address}, and the app passwords they created for it stop working.`}
-        confirmLabel="Remove delegate"
+        description={
+          shared
+            ? `They lose access to ${mailbox?.address} in Aether Mail and in their mail apps right away.`
+            : `They lose access to ${mailbox?.address}, and the app passwords they created for it stop working.`
+        }
+        confirmLabel={shared ? "Remove member" : "Remove delegate"}
         pending={remove.isPending}
         onConfirm={() => removing && remove.mutate(removing)}
       />
@@ -165,13 +230,15 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
   const [managing, setManaging] = useState<Mailbox | null>(null)
+  const [converting, setConverting] = useState<Mailbox | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const importTarget = useRef<{ mailbox: Mailbox; kind: ImportKind } | null>(null)
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { domainId: "", localPart: "", displayName: "", password: "", quotaMb: "" },
+    defaultValues: { kind: "user", domainId: "", localPart: "", displayName: "", password: "", quotaMb: "" },
   })
   const errors = form.formState.errors
+  const kind = useWatch({ control: form.control, name: "kind" })
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["mailboxes", orgId] })
@@ -216,6 +283,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       refresh()
     },
   })
+  const convert = useMutation({
+    mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}/convert`, { method: "POST", body: { kind: m.kind === "shared" ? "user" : "shared" } }),
+    onSuccess: (m) => {
+      toast.success(`${m.address} is now a ${m.kind} mailbox`)
+      setConverting(null)
+      refresh()
+    },
+  })
 
   function pick(mailbox: Mailbox, kind: ImportKind) {
     importTarget.current = { mailbox, kind }
@@ -228,7 +303,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
     <section className="flex flex-col gap-6">
       <SectionHeader
         title="Mailboxes"
-        description="Each mailbox has an owner account that can sign in with the mailbox address."
+        description="User mailboxes have an owner account that signs in with the address. Shared mailboxes have members instead."
         actions={
           <Button onClick={() => setCreating(true)}>
             <Plus aria-hidden />
@@ -242,6 +317,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Address</TableHead>
+                <TableHead>Type</TableHead>
                 <TableHead>Display name</TableHead>
                 <TableHead>Quota</TableHead>
                 <TableHead>Status</TableHead>
@@ -254,6 +330,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
               {items.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell className="font-mono text-sm">{m.address}</TableCell>
+                  <TableCell>{m.kind === "shared" ? <StatusBadge tone="neutral">Shared</StatusBadge> : "User"}</TableCell>
                   <TableCell>{m.displayName || "—"}</TableCell>
                   <TableCell>{m.quotaBytes ? formatBytes(m.quotaBytes) : "No limit"}</TableCell>
                   <TableCell>
@@ -269,7 +346,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <IconButton label={`Delegates for ${m.address}`} size="icon-sm" onClick={() => setDelegating(m)}>
+                      <IconButton label={m.kind === "shared" ? `Members of ${m.address}` : `Delegates for ${m.address}`} size="icon-sm" onClick={() => setDelegating(m)}>
                         <Users />
                       </IconButton>
                       <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => setDeleting(m)}>
@@ -300,6 +377,11 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                               <Upload aria-hidden />
                               Import contacts (.vcf)
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onSelect={() => setConverting(m)}>
+                              <ArrowRightLeft aria-hidden />
+                              {m.kind === "shared" ? "Convert to user mailbox…" : "Convert to shared mailbox…"}
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -319,11 +401,29 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
           if (!open) form.reset()
         }}
         title="Create mailbox"
-        description="Aether creates or links an owner account with the mailbox address."
+        description={kind === "shared" ? "A shared mailbox has no sign-in. Add members after creating it." : "Aether creates or links an owner account with the mailbox address."}
         submitLabel="Create mailbox"
         pending={create.isPending}
         onSubmit={form.handleSubmit((v) => create.mutate(v))}
       >
+        <Controller
+          control={form.control}
+          name="kind"
+          render={({ field }) => (
+            <fieldset className="flex flex-col items-start gap-2">
+              <legend className="mb-2 text-label text-fg-secondary">Type</legend>
+              <SegmentedControl
+                label="Type"
+                options={kinds}
+                value={field.value}
+                onChange={(value) => {
+                  field.onChange(value)
+                  if (value === "shared") form.setValue("password", "")
+                }}
+              />
+            </fieldset>
+          )}
+        />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id="mb-local" label="Local part" error={errors.localPart?.message}>
             <Input id="mb-local" placeholder="jane" autoComplete="off" spellCheck={false} aria-invalid={!!errors.localPart} {...form.register("localPart")} />
@@ -333,9 +433,11 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         <Field id="mb-name" label="Display name" hint="Shown as the sender name. Optional.">
           <Input id="mb-name" autoComplete="off" {...form.register("displayName")} />
         </Field>
-        <Field id="mb-password" label="Password" hint="Optional web sign-in password for the owner, at least 12 characters, or empty for single sign-on. Leave the password empty for a shared mailbox, then add delegates." error={errors.password?.message}>
-          <Input id="mb-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} {...form.register("password")} />
-        </Field>
+        {kind !== "shared" && (
+          <Field id="mb-password" label="Password" hint="Optional web sign-in password for the owner, at least 12 characters, or empty for single sign-on." error={errors.password?.message}>
+            <Input id="mb-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} {...form.register("password")} />
+          </Field>
+        )}
         <Field id="mb-quota" label="Quota in MB" hint="Leave empty for no limit." error={errors.quotaMb?.message}>
           <Input id="mb-quota" inputMode="numeric" autoComplete="off" aria-invalid={!!errors.quotaMb} {...form.register("quotaMb")} />
         </Field>
@@ -372,6 +474,20 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         confirmLabel="Delete mailbox"
         pending={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting.id)}
+      />
+
+      <ConfirmDialog
+        open={!!converting}
+        onOpenChange={(open) => !open && setConverting(null)}
+        title={`Convert ${converting?.address} to a ${converting?.kind === "shared" ? "user" : "shared"} mailbox?`}
+        description={
+          converting?.kind === "shared"
+            ? "If the address had an owner account before, it is restored as the owner. Members keep their access as delegates but lose the shared folders in their mail apps."
+            : "The owner account stops signing in and its sessions end. Every app password for this mailbox stops working. Mail stays in place and members you add can open it."
+        }
+        confirmLabel={`Convert to ${converting?.kind === "shared" ? "user" : "shared"} mailbox`}
+        pending={convert.isPending}
+        onConfirm={() => converting && convert.mutate(converting)}
       />
     </section>
   )

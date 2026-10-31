@@ -121,14 +121,23 @@ func (c *Client) CreateFolder(address, name string) error {
 }
 
 func (c *Client) RenameFolder(address, from, to string) error {
+	if SharedFolder(from, to) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error { return renameFolder(ic, from, to) })
 }
 
 func (c *Client) DeleteFolder(address, name, moveTo string) error {
+	if SharedFolder(name, moveTo) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error { return deleteFolder(ic, name, moveTo) })
 }
 
 func (c *Client) EmptyFolder(address, name string) error {
+	if SharedFolder(name) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error {
 		list, err := ic.List("", name, &imap.ListOptions{ReturnSpecialUse: true}).Collect()
 		if err != nil {
@@ -161,6 +170,9 @@ func (c *Client) EmptyFolder(address, name string) error {
 }
 
 func (c *Client) MarkFolderRead(address, name string) error {
+	if SharedFolder(name) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Select(name, nil).Wait(); err != nil {
 			return ErrNotFound
@@ -170,6 +182,9 @@ func (c *Client) MarkFolderRead(address, name string) error {
 }
 
 func (c *Client) SetSubscribed(address, name string, subscribed bool) error {
+	if SharedFolder(name) {
+		return ErrNotFound
+	}
 	return c.with(address, func(ic *imapclient.Client) error {
 		if _, err := ic.Status(name, &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
 			return ErrNotFound

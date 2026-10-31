@@ -148,7 +148,7 @@ func describeEvent(comp *ical.Component) string {
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
-func (s *Server) sendITIP(from *ownedMailbox, to []mailpkg.Address, subject, method string, comps ...*ical.Component) error {
+func (s *Server) sendITIP(from *ownedMailbox, sender *mailpkg.Address, to []mailpkg.Address, subject, method string, comps ...*ical.Component) error {
 	if len(to) == 0 {
 		return nil
 	}
@@ -161,6 +161,7 @@ func (s *Server) sendITIP(from *ownedMailbox, to []mailpkg.Address, subject, met
 	}
 	out := &mailpkg.Outgoing{
 		From:     mailpkg.Address{Name: from.DisplayName, Address: from.Address},
+		Sender:   sender,
 		To:       to,
 		Subject:  subject,
 		Text:     describeEvent(comps[0]),
@@ -336,7 +337,7 @@ func (s *Server) describeInvitation(ctx context.Context, user User, mailbox *own
 }
 
 func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.sendingMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -419,7 +420,11 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 			}
 		}
 		title, _ := comp.Props.Text(ical.PropSummary)
-		if err := s.sendITIP(m, []mailpkg.Address{organizer}, replyVerbs[partStat]+": "+title, "REPLY", replyCopy(comp, me, partStat)); err != nil {
+		var onBehalf *mailpkg.Address
+		if !m.SendAs {
+			onBehalf = &mailpkg.Address{Name: p.User.DisplayName, Address: p.User.Email}
+		}
+		if err := s.sendITIP(m, onBehalf, []mailpkg.Address{organizer}, replyVerbs[partStat]+": "+title, "REPLY", replyCopy(comp, me, partStat)); err != nil {
 			s.log.Warn("invitation reply rejected", "mailbox", m.ID, "err", err)
 			writeError(w, http.StatusBadGateway, "send_failed", "Your calendar was updated, but the reply to the organizer could not be sent: "+err.Error())
 			return
@@ -498,7 +503,7 @@ func (s *Server) notifyDeletedEvent(ctx context.Context, user User, data string)
 		if status := attendeeStatus(comp, me); status == "" || status == "declined" {
 			return nil
 		}
-		return s.sendITIP(m, []mailpkg.Address{organizer}, "Declined: "+title, "REPLY", replyCopy(comp, mailpkg.Address{Name: m.DisplayName, Address: me}, "DECLINED"))
+		return s.sendITIP(m, nil, []mailpkg.Address{organizer}, "Declined: "+title, "REPLY", replyCopy(comp, mailpkg.Address{Name: m.DisplayName, Address: me}, "DECLINED"))
 	}
 	var attendees []mailpkg.Address
 	for _, a := range eventAttendees(comp) {
@@ -506,5 +511,5 @@ func (s *Server) notifyDeletedEvent(ctx context.Context, user User, data string)
 			attendees = append(attendees, mailpkg.Address{Name: a.Name, Address: a.Address})
 		}
 	}
-	return s.sendITIP(m, attendees, "Cancelled: "+title, "CANCEL", cancelledCopy(comp, attendees, eventSequence(comp)+1))
+	return s.sendITIP(m, nil, attendees, "Cancelled: "+title, "CANCEL", cancelledCopy(comp, attendees, eventSequence(comp)+1))
 }

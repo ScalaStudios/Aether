@@ -213,9 +213,9 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 	if !ok {
 		return
 	}
-	var role string
+	var role, email string
 	var owners int
-	err := s.db.QueryRow(r.Context(), `SELECT role, (SELECT count(*) FROM organization_members WHERE org_id = $1 AND role = 'owner') FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&role, &owners)
+	err := s.db.QueryRow(r.Context(), `SELECT om.role, (SELECT count(*) FROM organization_members WHERE org_id = $1 AND role = 'owner'), u.email FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.org_id = $1 AND om.user_id = $2`, orgID, userID).Scan(&role, &owners, &email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -232,14 +232,27 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
 		return
 	}
+	type removed struct{ ID, Address string }
+	var mailboxes []removed
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(r.Context(), `DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(r.Context(), `DELETE FROM mailbox_delegates WHERE user_id = $2 AND mailbox_id IN (SELECT id FROM mailboxes WHERE org_id = $1)`, orgID, userID); err != nil {
+		rows, err := tx.Query(r.Context(), `DELETE FROM mailbox_delegates md USING mailboxes m WHERE m.id = md.mailbox_id AND m.org_id = $1 AND md.user_id = $2 RETURNING m.id, m.address`, orgID, userID)
+		if err != nil {
 			return err
 		}
-		_, err := tx.Exec(r.Context(), `DELETE FROM alias_owners WHERE user_id = $2 AND alias_id IN (SELECT id FROM aliases WHERE org_id = $1)`, orgID, userID)
+		if mailboxes, err = pgx.CollectRows(rows, pgx.RowToStructByPos[removed]); err != nil {
+			return err
+		}
+		var ids []string
+		for _, m := range mailboxes {
+			ids = append(ids, m.ID)
+		}
+		if err := s.revokeMailAccess(r.Context(), tx, userID, ids); err != nil {
+			return err
+		}
+		_, err = tx.Exec(r.Context(), `DELETE FROM alias_owners WHERE user_id = $2 AND alias_id IN (SELECT id FROM aliases WHERE org_id = $1)`, orgID, userID)
 		return err
 	})
 	if err != nil {
@@ -247,5 +260,14 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	s.audit(r.Context(), r, p, &orgID, "member.remove", "user", userID, map[string]any{"role": role})
+	for _, m := range mailboxes {
+		s.audit(r.Context(), r, p, &orgID, "mailbox.delegate_remove", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": email})
+	}
+	for _, m := range mailboxes {
+		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
+			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)
+		}
+	}
+	wake(s.kickWake)
 	w.WriteHeader(http.StatusNoContent)
 }
