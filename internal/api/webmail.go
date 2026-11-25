@@ -97,6 +97,7 @@ var mailErrors = []struct {
 	code, message string
 }{
 	{mailpkg.ErrNotFound, http.StatusNotFound, "not_found", "The folder or message no longer exists. It may have been moved or deleted from another client."},
+	{mailpkg.ErrTooLarge, http.StatusUnprocessableEntity, "message_too_large", "This message is too large to open here."},
 	{mailpkg.ErrInvalidCursor, http.StatusUnprocessableEntity, "invalid_cursor", "The page cursor is not valid. Load the list again from the first page."},
 	{mailpkg.ErrFolderExists, http.StatusConflict, "folder_exists", "A folder with this name already exists."},
 	{mailpkg.ErrProtectedFolder, http.StatusUnprocessableEntity, "protected_folder", "Inbox, Drafts, Sent, Archive, Junk, Trash, and Snoozed cannot be renamed, moved, or deleted."},
@@ -358,6 +359,27 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request, p *princi
 	w.Write(a.Body)
 }
 
+func (s *Server) messageSource(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.ownedMailbox(w, r, p)
+	if !ok {
+		return
+	}
+	uid, ok := uidParam(w, r)
+	if !ok {
+		return
+	}
+	raw, err := s.mail.Source(m.Address, folderParam(r), uid)
+	if err != nil {
+		s.mailError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "message/rfc822")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"message.eml\"")
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+	w.Write(raw)
+}
+
 func cleanAddresses(in []mailpkg.Address) ([]mailpkg.Address, bool) {
 	out := make([]mailpkg.Address, 0, len(in))
 	for _, a := range in {
@@ -392,6 +414,11 @@ type outgoingRequest struct {
 	} `json:"forwardFrom"`
 	DraftUID uint32     `json:"draftUid"`
 	SendAt   *time.Time `json:"sendAt"`
+	Sealed   *struct {
+		ContentType string `json:"contentType"`
+		Body        []byte `json:"body"`
+	} `json:"sealed"`
+	Autocrypt string `json:"autocrypt"`
 }
 
 func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedMailbox, from mailpkg.Address, in *outgoingRequest, requireRecipients bool) (*mailpkg.Outgoing, bool) {
@@ -418,6 +445,27 @@ func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedM
 		if validMessageID(ref) {
 			out.References = append(out.References, ref)
 		}
+	}
+	if in.Autocrypt != "" {
+		header, err := mailpkg.NormalizeAutocrypt(in.Autocrypt, m.Address)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_autocrypt", "The OpenPGP key for this sender could not be attached.")
+			return nil, false
+		}
+		out.Autocrypt = header
+	}
+	if in.Sealed != nil {
+		if in.Text != "" || in.HTML != "" || len(in.Attachments) > 0 || in.ForwardFrom != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_encryption", "An encrypted or signed message cannot also include an unprotected copy.")
+			return nil, false
+		}
+		sealed, err := mailpkg.ClassifySealed(in.Sealed.ContentType, in.Sealed.Body)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_encryption", "This message is not valid S/MIME or OpenPGP.")
+			return nil, false
+		}
+		out.Sealed = sealed
+		return out, true
 	}
 	if in.HTML != "" {
 		out.HTML = mailpkg.SanitizeHTML(in.HTML)
@@ -474,6 +522,13 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	out, ok := s.buildOutgoing(w, r, m, from, &in, true)
 	if !ok {
+		return
+	}
+	method, encrypted := "", false
+	if out.Sealed != nil {
+		method, encrypted = out.Sealed.Protocol, out.Sealed.Encrypted
+	}
+	if !s.allowEncryption(w, r, m.OrgID, method, encrypted, out.Autocrypt != "", out.Recipients()) {
 		return
 	}
 	if !m.SendAs {

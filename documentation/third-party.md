@@ -29,7 +29,7 @@ Aether's own code is AGPL-3.0-or-later. The components below are either Go or np
 
 ## Web
 
-Next.js, React, TanStack Query, React Hook Form, Zod, Radix UI, shadcn/ui, lucide-react, sonner, and next-themes are MIT licensed. Tiptap's core packages are also MIT.
+Next.js, React, TanStack Query, React Hook Form, Zod, Radix UI, shadcn/ui, lucide-react, sonner, and next-themes are MIT licensed. Tiptap's core packages are also MIT. `node-forge` (S/MIME in the browser) is BSD-3-Clause. `openpgp` (OpenPGP in the browser) is LGPL-3.0-or-later; Aether itself is AGPL-3.0-or-later, which can combine with that license. Neither library is used to decrypt mail on the server.
 
 The fonts Archivo, Inter, and JetBrains Mono are licensed under the SIL Open Font License 1.1. Their licence files are shipped in `brand/fonts/`.
 

@@ -33,7 +33,7 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *prin
 		return
 	}
 	var pending int
-	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM scheduled_messages WHERE mailbox_id = $1`, m.ID).Scan(&pending); err != nil {
+	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM scheduled_messages WHERE mailbox_id = $1 AND protected_reply_id IS NULL`, m.ID).Scan(&pending); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -82,7 +82,8 @@ func (s *Server) listScheduled(w http.ResponseWriter, r *http.Request, p *princi
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT id, send_at, subject, to_addresses, error FROM scheduled_messages WHERE mailbox_id = $1 ORDER BY send_at`, m.ID)
+	rows, err := s.db.Query(r.Context(), `SELECT id, send_at, subject, to_addresses, error FROM scheduled_messages
+		WHERE mailbox_id = $1 AND protected_reply_id IS NULL ORDER BY send_at`, m.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -115,7 +116,8 @@ func (s *Server) cancelScheduled(w http.ResponseWriter, r *http.Request, p *prin
 	defer tx.Rollback(r.Context())
 	var raw []byte
 	var bcc []string
-	err = tx.QueryRow(r.Context(), `DELETE FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 RETURNING raw, bcc`, id, m.ID).Scan(&raw, &bcc)
+	err = tx.QueryRow(r.Context(), `DELETE FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 AND protected_reply_id IS NULL
+		RETURNING raw, bcc`, id, m.ID).Scan(&raw, &bcc)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -237,6 +239,10 @@ func (s *Server) RunScheduler(ctx context.Context) {
 	defer ticker.Stop()
 	var cleaned time.Time
 	for {
+		if _, err := s.db.Exec(ctx, `DELETE FROM protected_messages WHERE id IN (
+			SELECT id FROM protected_messages WHERE expires_at <= now() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`); err != nil && ctx.Err() == nil {
+			s.log.Error("expiring protected messages failed", "err", err)
+		}
 		for s.sendNextScheduled(ctx) {
 		}
 		s.wakeSnoozed(ctx)
@@ -266,22 +272,25 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		return false
 	}
 	defer tx.Rollback(ctx)
-	var id, mailboxID, address, fromAddress, sentAddress, inReplyTo, subject, mode string
+	var id, mailboxID, orgID, address, fromAddress, sentAddress, inReplyTo, subject, mode string
 	var senderID *string
 	var recipients []string
 	var raw []byte
 	var attempts int
-	var usable, permitted, writable bool
+	var usable, permitted, writable, protectedReply bool
 	err = tx.QueryRow(ctx, `
-		SELECT s.id, s.mailbox_id, m.address, coalesce(s.from_address, m.address), coalesce(i.sent_address, m.address), s.recipients, s.raw, s.in_reply_to, s.attempts, s.subject, s.sender_mode, s.sender_user_id,
+		SELECT s.id, s.mailbox_id, m.org_id, m.address, coalesce(s.from_address, m.address), coalesce(i.sent_address, m.address), s.recipients, s.raw, s.in_reply_to, s.attempts, s.subject, s.sender_mode, s.sender_user_id,
 		       m.active AND 'webmail' = ANY(m.protocols) AND d.active AND d.verified_at IS NOT NULL,
 		       coalesce(i.address IS NOT NULL AND u.status = 'active' AND CASE s.sender_mode WHEN 'send_as' THEN `+mailboxSendAs("s.sender_user_id")+` ELSE `+mailboxSendOnBehalf("s.sender_user_id")+` END, false),
-		       `+mailboxAccessLevel("s.sender_user_id")+` IN ('owner', 'full')
+		       `+mailboxAccessLevel("s.sender_user_id")+` IN ('owner', 'full'),
+		       s.protected_reply_id IS NOT NULL
 		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id LEFT JOIN users u ON u.id = s.sender_user_id
 		LEFT JOIN LATERAL (`+sendableAddresses("s.sender_user_id")+`) i ON i.address = coalesce(s.from_address, m.address)
 		WHERE s.error IS NULL AND s.send_at <= now()
+		  AND (s.protected_reply_id IS NULL OR EXISTS (
+		    SELECT 1 FROM protected_messages p WHERE p.id = s.protected_reply_id AND p.expires_at > now()))
 		ORDER BY s.send_at LIMIT 1 FOR UPDATE OF s SKIP LOCKED`).
-		Scan(&id, &mailboxID, &address, &fromAddress, &sentAddress, &recipients, &raw, &inReplyTo, &attempts, &subject, &mode, &senderID, &usable, &permitted, &writable)
+		Scan(&id, &mailboxID, &orgID, &address, &fromAddress, &sentAddress, &recipients, &raw, &inReplyTo, &attempts, &subject, &mode, &senderID, &usable, &permitted, &writable, &protectedReply)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.log.Error("loading scheduled messages failed", "err", err)
@@ -295,6 +304,18 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	if !permitted {
 		tx.Exec(ctx, `UPDATE scheduled_messages SET error = 'You no longer have permission to send from this mailbox.' WHERE id = $1`, id)
 		return tx.Commit(ctx) == nil
+	}
+	if !protectedReply {
+		protocol, encrypted := mailpkg.ClassifyRaw(raw)
+		denial, err := s.encryptionBlock(ctx, orgID, protocol, encrypted, recipients)
+		if err != nil {
+			s.log.Error("checking encryption policy failed", "err", err)
+			return false
+		}
+		if denial != "" {
+			tx.Exec(ctx, `UPDATE scheduled_messages SET error = $2 WHERE id = $1`, id, denial)
+			return tx.Commit(ctx) == nil
+		}
 	}
 	if err := s.mail.Send(address, fromAddress, recipients, raw); err != nil {
 		mailSends.WithLabelValues("rejected").Inc()
@@ -315,8 +336,10 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		s.log.Error("scheduled message sent but not removed", "id", id, "err", err)
 		return false
 	}
-	if err := s.mail.SaveSent(sentAddress, raw); err != nil {
-		s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
+	if !protectedReply {
+		if err := s.mail.SaveSent(sentAddress, raw); err != nil {
+			s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
+		}
 	}
 	if senderID != nil {
 		s.recordScheduledSend(ctx, mailboxID, *senderID, mode, subject, raw, len(recipients))

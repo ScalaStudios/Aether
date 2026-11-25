@@ -1679,6 +1679,148 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MessageTraceDetail" }
         "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/encryption:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [organizations]
+      summary: Encryption policy for the organization
+      description: Any member may read it. domains lists verified domain names, which decide whether a recipient is outside the organization.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EncryptionPolicy" }
+    put:
+      tags: [organizations]
+      summary: Set whether S/MIME, OpenPGP and password-protected mail are off, allowed or required
+      description: Owners and administrators only. Recorded as organization.encryption. When more than one method is required, any one of them satisfies the rule. A password requirement applies to recipients outside verified domains; mail encrypted to their key satisfies it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EncryptionPolicy" }
+      responses:
+        "200":
+          description: The saved policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EncryptionPolicy" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/encryption-keys:
+    get:
+      tags: [mail]
+      summary: Encryption keys saved for the caller
+      description: privateKey is encrypted in the browser before upload. The server cannot decrypt it.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EncryptionKey" } }
+    put:
+      tags: [mail]
+      summary: Save an encrypted private key and its public certificate or key
+      description: The address must be one the caller can send as, and the public material must include that address. The private key must start with the byte 0xA1. Recorded as encryption_key.save.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EncryptionKeyInput" }
+      responses:
+        "200":
+          description: The stored key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EncryptionKey" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/encryption-keys/{keyId}:
+    delete:
+      tags: [mail]
+      parameters: [{ name: keyId, in: path, required: true, schema: { type: string, format: uuid } }]
+      summary: Delete one of the caller's encryption keys
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /me/recipient-keys:
+    get:
+      tags: [mail]
+      summary: Public keys Aether already knows for an address
+      parameters: [{ name: address, in: query, required: true, schema: { type: string, format: email } }]
+      responses:
+        "200":
+          description: Directory keys from the caller's organizations, then keys saved from mail
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RecipientKey" } }
+    post:
+      tags: [mail]
+      summary: Remember a recipient's public key from a message, Autocrypt or Web Key Directory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecipientKeyInput" }
+      responses:
+        "204": { description: Saved }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/wkd:
+    get:
+      tags: [mail]
+      summary: Look up an OpenPGP key in the recipient's Web Key Directory
+      description: The advanced openpgpkey host is tried first. The direct URL is used only when that host name does not exist. Redirects are not followed.
+      parameters: [{ name: address, in: query, required: true, schema: { type: string, format: email } }]
+      responses:
+        "200":
+          description: An armored public key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecipientKey" }
+        "404": { $ref: "#/components/responses/Error" }
+  /protected/{messageId}/open:
+    post:
+      tags: [mail]
+      security: []
+      summary: Fetch a password-protected message for its recipient
+      description: The access token is the part of the emailed link after the dot in the fragment. The response is ciphertext. The password is not sent.
+      parameters: [{ name: messageId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [access]
+              properties:
+                access: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: Ciphertext. reply is omitted for the recipient.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedMessage" }
+        "404": { $ref: "#/components/responses/Error" }
+  /protected/{messageId}/reply:
+    post:
+      tags: [mail]
+      security: []
+      summary: Store one encrypted reply to a password-protected message
+      description: proof is the replyProof from the decrypted message. The server stores only the ciphertext.
+      parameters: [{ name: messageId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [access, proof, reply]
+              properties:
+                access: { type: string, pattern: "^[0-9a-f]{64}$" }
+                proof: { type: string, pattern: "^[0-9a-f]{64}$" }
+                reply: { type: string, format: byte }
+      responses:
+        "204": { description: Accepted }
+        "409": { $ref: "#/components/responses/Error" }
   /me/mailboxes:
     get:
       tags: [mail]
@@ -2277,7 +2419,7 @@ paths:
         - { $ref: "#/components/parameters/folder" }
       responses:
         "200":
-          description: Message with sanitized HTML. Remote resources are stripped.
+          description: Message with sanitized HTML. Remote resources are stripped. protection says when the body is S/MIME or OpenPGP and still needs the browser to decrypt or verify it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
@@ -2466,11 +2608,64 @@ paths:
       responses:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/messages/{uid}/source:
+    get:
+      tags: [mail]
+      summary: The raw RFC 822 message, for decrypting or verifying it in the browser
+      description: At most 25 MB. The response is the message bytes, not JSON.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      responses:
+        "200":
+          description: The message
+          content:
+            message/rfc822:
+              schema: { type: string, format: binary }
+        "413": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/protected:
+    post:
+      tags: [mail]
+      summary: Store a password-protected message and email the recipient a link
+      description: The caller must own the mailbox. The body is ciphertext produced in the browser. The password is not uploaded. The link in the email carries the access token in the URL fragment.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProtectedMessageInput" }
+      responses:
+        "202":
+          description: The sender's link, which does not contain the access token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expiresAt]
+                properties:
+                  url: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/protected/{messageId}:
+    get:
+      tags: [mail]
+      summary: Read a password-protected message the caller sent, including an encrypted reply
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Ciphertext for the sender
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProtectedMessage" }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/send:
     post:
       tags: [mail]
       summary: Submit a message through the SMTP submission service and save it to Sent, or schedule it when sendAt is set
-      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error.
+      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error. sealed replaces the text, HTML and attachments with ciphertext built in the browser. The organization encryption policy is checked again when a scheduled message is sent.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -3829,6 +4024,7 @@ components:
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
             invitation: { $ref: "#/components/schemas/Invitation" }
+            protection: { $ref: "#/components/schemas/MessageProtection" }
             related:
               type: array
               description: Messages from the same conversation in Sent, or in the Inbox when reading from Sent
@@ -4212,6 +4408,90 @@ components:
             oldestArrival: { type: string, format: date-time, description: Arrival of the oldest message that is not on hold }
         matched: { type: integer }
         messages: { type: array, items: { $ref: "#/components/schemas/QueuedMessage" } }
+        sealed:
+          type: object
+          description: S/MIME or OpenPGP body built in the browser. Do not also send text, html, attachments or forwardFrom.
+          required: [contentType, body]
+          properties:
+            contentType: { type: string }
+            body: { type: string, format: byte }
+        autocrypt: { type: string, description: One Autocrypt header for the From address. The keydata is a public key. }
+    EncryptionPolicy:
+      type: object
+      required: [smime, openpgp, password]
+      properties:
+        smime: { type: string, enum: [off, allow, require] }
+        openpgp: { type: string, enum: [off, allow, require] }
+        password: { type: string, enum: [off, allow, require] }
+        domains: { type: array, items: { type: string }, description: Verified domains. Present on read. }
+    EncryptionKey:
+      type: object
+      required: [id, address, protocol, fingerprint, publicKey, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        address: { type: string, format: email }
+        protocol: { type: string, enum: [smime, openpgp] }
+        fingerprint: { type: string }
+        publicKey: { type: string, description: PEM certificate or armored public key }
+        privateKey: { type: string, format: byte, description: Encrypted private key. Byte 0 is 0xA1. }
+        salt: { type: string, format: byte }
+        iterations: { type: integer }
+        createdAt: { type: string, format: date-time }
+    EncryptionKeyInput:
+      type: object
+      required: [address, protocol, publicKey, privateKey, salt, iterations]
+      properties:
+        address: { type: string, format: email }
+        protocol: { type: string, enum: [smime, openpgp] }
+        publicKey: { type: string }
+        privateKey: { type: string, format: byte }
+        salt: { type: string, format: byte }
+        iterations: { type: integer, minimum: 200000, maximum: 600000 }
+    RecipientKey:
+      type: object
+      required: [protocol, fingerprint, publicKey, source]
+      properties:
+        protocol: { type: string, enum: [smime, openpgp] }
+        fingerprint: { type: string }
+        publicKey: { type: string }
+        source: { type: string, enum: [directory, message, autocrypt, wkd] }
+    RecipientKeyInput:
+      type: object
+      required: [address, protocol, publicKey, source]
+      properties:
+        address: { type: string, format: email }
+        protocol: { type: string, enum: [smime, openpgp] }
+        publicKey: { type: string }
+        source: { type: string, enum: [message, autocrypt, wkd] }
+    MessageProtection:
+      type: object
+      properties:
+        protocol: { type: string, enum: [smime, openpgp] }
+        encrypted: { type: boolean }
+        signed: { type: boolean }
+        autocrypt: { type: string }
+    ProtectedMessage:
+      type: object
+      required: [sender, recipient, salt, message, replied, expiresAt]
+      properties:
+        sender: { type: string }
+        recipient: { type: string }
+        salt: { type: string, format: byte }
+        message: { type: string, format: byte, description: Version byte 0x01, a 12-byte nonce, then AES-256-GCM ciphertext }
+        reply: { type: string, format: byte }
+        replied: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+    ProtectedMessageInput:
+      type: object
+      required: [id, to, access, replyHash, salt, message, hours]
+      properties:
+        id: { type: string, format: uuid }
+        to: { $ref: "#/components/schemas/Address" }
+        access: { type: string, pattern: "^[0-9a-f]{64}$" }
+        replyHash: { type: string, format: byte, description: SHA-256 of the reply proof }
+        salt: { type: string, format: byte }
+        message: { type: string, format: byte }
+        hours: { type: integer, enum: [24, 72, 168] }
     IdentityProvider:
       type: object
       required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]

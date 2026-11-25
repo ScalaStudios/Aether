@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"mime"
 	"regexp"
 	"slices"
 	"strings"
@@ -37,6 +38,8 @@ type Outgoing struct {
 	IncludeBcc  bool
 	Date        time.Time
 	Calendar    *CalendarPart
+	Sealed      *Sealed
+	Autocrypt   string
 }
 
 type CalendarPart struct {
@@ -96,7 +99,13 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 		h.Set("References", strings.Join(refs, " "))
 	}
 	h.Set("User-Agent", "Aether")
+	if o.Autocrypt != "" {
+		h.Set("Autocrypt", o.Autocrypt)
+	}
 	var buf bytes.Buffer
+	if o.Sealed != nil {
+		return writeSealed(&buf, h, o.Sealed, messageID)
+	}
 	if len(o.Attachments) == 0 && o.HTML == "" && o.Calendar == nil {
 		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 		w, err := mail.CreateSingleInlineWriter(&buf, h)
@@ -156,6 +165,28 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 		if err := writePart(w, a.ContentType, "attachment", a.Filename, "", a.Data); err != nil {
 			return nil, "", err
 		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+	return buf.Bytes(), messageID, nil
+}
+
+func writeSealed(buf *bytes.Buffer, h mail.Header, sealed *Sealed, messageID string) ([]byte, string, error) {
+	mediaType, params, err := mime.ParseMediaType(sealed.ContentType)
+	if err != nil {
+		return nil, "", err
+	}
+	h.SetContentType(mediaType, params)
+	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+		h.Set("Content-Transfer-Encoding", "base64")
+	}
+	w, err := message.CreateWriter(buf, h.Header)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := w.Write(sealed.Body); err != nil {
+		return nil, "", err
 	}
 	if err := w.Close(); err != nil {
 		return nil, "", err

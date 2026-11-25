@@ -16,6 +16,7 @@ import { BrandingTab } from "@/components/admin/branding-tab"
 import { ContactsTab } from "@/components/admin/contacts-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
 import { ForwardingTab } from "@/components/admin/forwarding-tab"
+import { EncryptionTab } from "@/components/admin/encryption-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailQueueTab } from "@/components/admin/mail-queue-tab"
@@ -76,6 +77,7 @@ const orgTabs = [
   { value: "retention", label: "Retention", Component: RetentionTab },
   { value: "sender-warnings", label: "Sender warnings", Component: SenderWarningsTab },
   { value: "attachments", label: "Attachments", Component: AttachmentsTab },
+  { value: "encryption", label: "Encryption", Component: EncryptionTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

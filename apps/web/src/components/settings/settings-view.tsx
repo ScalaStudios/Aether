@@ -25,6 +25,7 @@ import { SenderLists } from "@/components/settings/sender-lists"
 import { Security } from "@/components/settings/security"
 import { ActiveSessions } from "@/components/settings/sessions"
 import { PersonalAliases } from "@/components/settings/personal-aliases"
+import { Encryption } from "@/components/settings/encryption"
 import { Signatures } from "@/components/settings/signatures"
 import { Storage } from "@/components/settings/storage"
 import { PageHeader, SectionHeader } from "@/components/page-header"
@@ -50,7 +51,7 @@ export function SettingsView() {
     <PageContainer>
       <PageHeader
         title="Settings"
-        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
+        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, encryption keys, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
       />
       {session && !setup && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
@@ -92,6 +93,7 @@ export function SettingsView() {
         <>
           <Storage />
           <Signatures />
+          <Encryption />
           <MailRules />
           <PersonalAliases />
           <SenderLists />

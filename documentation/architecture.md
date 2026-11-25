@@ -134,13 +134,17 @@ The data model is defined in `migrations/0001_init.sql`:
 - `quarantine_messages`, one stored copy of each held message with its category, score and Rspamd symbols; `quarantine_items`, one row per mailbox it was held for, with its status and who requested or released it; `quarantine_policies` per organization; `quarantine_allowed_senders` per mailbox
 - `retention_policies`, retention policies for an organization or one mailbox, and `retention_runs`, when each mailbox is next due and the lease of the replica applying them
 - `oidc_providers`, `oidc_login_states`, `sessions`, `audit_events`
+- `organizations.smime_policy`, `openpgp_policy` and `password_policy`, each `off`, `allow` or `require`
+- `encryption_keys`, one wrapped private key and its public certificate or key per user, address and protocol; the private key is ciphertext produced in the browser
+- `peer_keys`, public keys a user saved from a message, an Autocrypt header or a Web Key Directory lookup
+- `protected_messages`, the ciphertext of a password-protected message, the salt, and the hashes of the access token and the reply proof
 
 Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data.
 
 ## Request flow: webmail send
 
 1. The browser posts JSON to `/api/v1/mailboxes/{id}/send`. The request carries the session cookie and the CSRF header.
-2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and that the chosen From address is one they may use (see [Sending from aliases and lists](#sending-from-aliases-and-lists)). It builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address.
+2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and that the chosen From address is one they may use (see [Sending from aliases and lists](#sending-from-aliases-and-lists)). It builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address. S/MIME and OpenPGP are already sealed in the browser; the API checks the organization's encryption policy and forwards that body without opening it. A password-protected message is also sealed in the browser. The API stores the ciphertext and mails a link. See [Encryption](encryption.md).
 3. The API opens SMTP with STARTTLS to Postfix on port 587. It authenticates with SASL PLAIN as `alice@example.com*aether-webmail`, the mailbox the message is sent from, and gives the chosen From address, such as `support@example.com`, as MAIL FROM.
 4. Dovecot reports the authenticated user as `alice@example.com`.
 5. Postfix applies `smtpd_sender_login_maps`, then hands the message to the API's first milter, which runs the organization's [mail flow rules](mail-flow-rules.md), and then to Rspamd. Rspamd scores it, signs it with the domain's DKIM key from Valkey, and returns it. The API's second milter runs the rules that test the spam score.

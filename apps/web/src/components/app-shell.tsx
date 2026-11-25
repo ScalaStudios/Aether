@@ -1,6 +1,7 @@
 "use client"
 
 import { useMutation } from "@tanstack/react-query"
+import { useEffect } from "react"
 import { BookUser, CalendarDays, Gavel, LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -24,6 +25,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { canAdminister, canInvestigate, useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
+import { lockKeys, rememberUser } from "@/lib/crypto/session"
 import type { User } from "@/lib/types"
 
 const nav: { href: string; label: string; icon: LucideIcon; admin?: boolean; compliance?: boolean }[] = [
@@ -41,6 +43,9 @@ const railClass =
 export function AppShell({ children }: { children: React.ReactNode }) {
   const session = useSession()
   const pathname = usePathname()
+  useEffect(() => {
+    if (session.data) rememberUser(session.data.user.id)
+  }, [session.data])
 
   if (session.isError) {
     return (
@@ -113,7 +118,10 @@ function UserMenu({ user }: { user: User }) {
   const { theme, setTheme } = useTheme()
   const logout = useMutation({
     mutationFn: () => api<{ redirect?: string }>("/auth/logout", { method: "POST" }),
-    onSuccess: (data) => window.location.assign(data?.redirect || "/login"),
+    onSuccess: (data) => {
+      lockKeys()
+      window.location.assign(data?.redirect || "/login")
+    },
   })
 
   return (

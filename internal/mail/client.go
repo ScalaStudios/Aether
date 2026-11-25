@@ -28,6 +28,7 @@ import (
 )
 
 var ErrNotFound = errors.New("message not found")
+var ErrTooLarge = errors.New("message too large")
 
 type Client struct {
 	imapAddr       string
@@ -549,17 +550,18 @@ type Attachment struct {
 
 type Message struct {
 	Summary
-	DeliveredTo string       `json:"deliveredTo,omitempty"`
-	Cc          []Address    `json:"cc"`
-	Bcc         []Address    `json:"bcc"`
-	ReplyTo     []Address    `json:"replyTo"`
-	MessageID   string       `json:"messageId"`
-	InReplyTo   string       `json:"inReplyTo"`
-	References  []string     `json:"references"`
-	Text        string       `json:"text"`
-	HTML        string       `json:"html"`
-	Attachments []Attachment `json:"attachments"`
-	Calendar    string       `json:"-"`
+	DeliveredTo string             `json:"deliveredTo,omitempty"`
+	Cc          []Address          `json:"cc"`
+	Bcc         []Address          `json:"bcc"`
+	ReplyTo     []Address          `json:"replyTo"`
+	MessageID   string             `json:"messageId"`
+	InReplyTo   string             `json:"inReplyTo"`
+	References  []string           `json:"references"`
+	Text        string             `json:"text"`
+	HTML        string             `json:"html"`
+	Attachments []Attachment       `json:"attachments"`
+	Calendar    string             `json:"-"`
+	Protection  *MessageProtection `json:"protection,omitempty"`
 
 	Authentication *Authentication `json:"-"`
 }
@@ -584,7 +586,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			return ErrNotFound
 		}
 		uidSet := imap.UIDSetNum(imap.UID(uid))
-		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader}, Peek: true}
+		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader, "Autocrypt"}, Peek: true}
 		msgs, err := ic.Fetch(uidSet, &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true}, BodySection: []*imap.FetchItemBodySection{refs},
@@ -611,8 +613,10 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 				out.References = parseMessageIDs(e.Header.Get("References"))
 				out.DeliveredTo = strings.Trim(e.Header.Get("X-Original-To"), " <>")
 				out.Authentication = ParseAuthentication(e.Header.Values(AuthenticationHeader))
+				out.Protection = WithAutocrypt(out.Protection, e.Header.Get("Autocrypt"))
 			}
 		}
+		out.Protection = mergeProtection(DescribeProtection(m.BodyStructure), out.Protection)
 		var textPart, htmlPart, calendarPart *imap.BodyStructureSinglePart
 		var textPath, htmlPath, calendarPath []int
 		var inline []inlinePart
@@ -673,6 +677,55 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 }
 
 const maxInlineImage = 2 << 20
+const maxSourceBytes = 25 << 20
+
+func mergeProtection(fromStructure, current *MessageProtection) *MessageProtection {
+	if fromStructure == nil {
+		return current
+	}
+	if current != nil {
+		fromStructure.Autocrypt = current.Autocrypt
+	}
+	if fromStructure.Protocol == "" && !fromStructure.Encrypted && !fromStructure.Signed && fromStructure.Autocrypt == "" {
+		return nil
+	}
+	return fromStructure
+}
+
+func (c *Client) Source(address, folder string, uid uint32) ([]byte, error) {
+	if SharedFolder(folder) {
+		return nil, ErrNotFound
+	}
+	var raw []byte
+	err := c.with(address, func(ic *imapclient.Client) error {
+		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+			return ErrNotFound
+		}
+		section := &imap.FetchItemBodySection{Peek: true}
+		msgs, err := ic.Fetch(imap.UIDSetNum(imap.UID(uid)), &imap.FetchOptions{
+			UID: true, RFC822Size: true, BodySection: []*imap.FetchItemBodySection{section},
+		}).Collect()
+		if err != nil {
+			return err
+		}
+		if len(msgs) == 0 {
+			return ErrNotFound
+		}
+		if msgs[0].RFC822Size > maxSourceBytes {
+			return ErrTooLarge
+		}
+		raw = msgs[0].FindBodySection(section)
+		if len(raw) > maxSourceBytes {
+			raw = nil
+			return ErrTooLarge
+		}
+		if raw == nil {
+			return ErrNotFound
+		}
+		return nil
+	})
+	return raw, err
+}
 
 type inlinePart struct {
 	part *imap.BodyStructureSinglePart
@@ -1068,7 +1121,8 @@ func (c *Client) Send(login, from string, rcpts []string, raw []byte) error {
 	if err := sc.SendMail(from, rcpts, bytes.NewReader(raw)); err != nil {
 		return err
 	}
-	return sc.Quit()
+	_ = sc.Quit()
+	return nil
 }
 
 func appendRaw(ic *imapclient.Client, folder string, flags []imap.Flag, raw []byte) error {

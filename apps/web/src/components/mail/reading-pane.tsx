@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import { Avatar } from "@/components/avatar"
 import { IconButton } from "@/components/icon-button"
 import { InvitationCard } from "@/components/mail/invitation-card"
+import { SecureMessage } from "@/components/mail/secure-message"
 import { LaterMenu } from "@/components/mail/later-menu"
 import { senderListQuery } from "@/components/settings/sender-lists"
 import { SenderNotice, SenderVerification } from "@/components/mail/sender-notice"
@@ -46,11 +47,13 @@ export function AddressLine({ label, addresses }: { label: string; addresses: Ad
 }
 
 function MessageBody({ message: m, mailboxId, folder }: { message: Message; mailboxId: string; folder: string }) {
+  const secure = !!(m.protection?.encrypted || m.protection?.signed)
+  const attachments = m.attachments.filter((a) => !/pkcs7-signature|pgp-signature/i.test(a.contentType))
   return (
     <>
-            {m.attachments.length > 0 && (
+            {!m.protection?.encrypted && attachments.length > 0 && (
         <ul aria-label="Attachments" className="flex flex-wrap gap-2">
-          {m.attachments.map((a) => (
+          {attachments.map((a) => (
             <li key={a.part}>
               <a
                 href={apiUrl(`/mailboxes/${mailboxId}/messages/${m.uid}/attachments/${a.part}`, { folder })}
@@ -65,7 +68,9 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
           ))}
         </ul>
       )}
-      {m.html ? (
+      {secure ? (
+        <SecureMessage message={m} mailboxId={mailboxId} folder={folder} />
+      ) : m.html ? (
         <iframe
           title="Message body"
           sandbox="allow-popups allow-popups-to-escape-sandbox"

@@ -9,15 +9,17 @@ export function SegmentedControl<T extends string | number>({
   options,
   value,
   onChange,
+  className,
 }: {
   label: string
   options: { value: T; label: React.ReactNode }[]
   value: T | T[]
   onChange: (value: T) => void
+  className?: string
 }) {
   const pressed = (v: T) => (Array.isArray(value) ? value.includes(v) : value === v)
   return (
-    <div role="group" aria-label={label} className="flex flex-wrap gap-1 rounded-lg border border-strong p-1">
+    <div role="group" aria-label={label} className={cn("flex flex-wrap gap-1 rounded-lg border border-strong p-1", className)}>
       {options.map((o) => (
         <Button
           key={o.value}

@@ -470,6 +470,13 @@ export interface Attachment {
   size: number
 }
 
+export interface MessageProtection {
+  protocol?: "smime" | "openpgp" | ""
+  encrypted?: boolean
+  signed?: boolean
+  autocrypt?: string
+}
+
 export interface Message extends MessageSummary {
   deliveredTo?: string
   cc: Address[]
@@ -482,6 +489,7 @@ export interface Message extends MessageSummary {
   html: string
   attachments: Attachment[]
   invitation?: Invitation
+  protection?: MessageProtection
   related?: { folder: string; uid: number; date: string }[]
   sender?: SenderInsight | null
 }
@@ -536,6 +544,46 @@ export interface OutgoingMessage {
   forwardFrom?: { folder: string; uid: number; parts?: string[] }
   draftUid?: number
   sendAt?: string
+  sealed?: { contentType: string; body: string }
+  autocrypt?: string
+}
+
+export type EncryptionLevel = "off" | "allow" | "require"
+
+export interface EncryptionPolicy {
+  smime: EncryptionLevel
+  openpgp: EncryptionLevel
+  password: EncryptionLevel
+  domains?: string[]
+}
+
+export interface EncryptionKey {
+  id: string
+  address: string
+  protocol: "smime" | "openpgp"
+  fingerprint: string
+  publicKey: string
+  privateKey?: string
+  salt?: string
+  iterations?: number
+  createdAt: string
+}
+
+export interface RecipientKey {
+  protocol: "smime" | "openpgp"
+  fingerprint: string
+  publicKey: string
+  source: string
+}
+
+export interface ProtectedMessage {
+  sender: string
+  recipient: string
+  salt: string
+  message: string
+  reply?: string
+  replied: boolean
+  expiresAt: string
 }
 
 export interface SavedDraft {

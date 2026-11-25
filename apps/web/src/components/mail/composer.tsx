@@ -9,21 +9,29 @@ import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { CopyField } from "@/components/copy-button"
 import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"
 import { FormatToolbar, mailEditorExtensions } from "@/components/mail/format-toolbar"
 import { LaterMenu } from "@/components/mail/later-menu"
+import { ProtectionControls, type ProtectionMode, type ProtectionProtocol } from "@/components/mail/protection-controls"
 import { RecipientInput } from "@/components/recipient-input"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { api } from "@/lib/api"
+import { bytesToBase64, readableSecret } from "@/lib/crypto/bytes"
+import { autocryptHeader } from "@/lib/crypto/openpgp"
+import { sealProtected } from "@/lib/crypto/protected"
+import { keyFor } from "@/lib/crypto/session"
+import { sealOutgoing } from "@/lib/crypto/seal"
 import { signaturesQuery } from "@/lib/queries"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
 import type { Draft, SenderIdentity } from "@/lib/mail"
-import type { Attachment, OutgoingMessage, SavedDraft } from "@/lib/types"
+import type { Attachment, EncryptionKey, EncryptionPolicy, OutgoingMessage, RecipientKey, SavedDraft } from "@/lib/types"
 
 const address = z.object({ name: z.string().optional(), address: z.email() })
 
@@ -98,6 +106,15 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const sendIcon = useRef<SVGSVGElement>(null)
+  const [guard, setGuard] = useState<ProtectionMode>("standard")
+  const guardRef = useRef<ProtectionMode>("standard")
+  const [protocol, setProtocol] = useState<ProtectionProtocol>("openpgp")
+  const [secret, setSecret] = useState(readableSecret)
+  const [hours, setHours] = useState<24 | 72 | 168>(72)
+  const [autocrypt, setAutocrypt] = useState(true)
+  const [revealed, setRevealed] = useState("")
+  const policy = useQuery({ queryKey: ["encryption", mailbox.orgId], queryFn: () => api<EncryptionPolicy>(`/organizations/${mailbox.orgId}/encryption`) })
+  const ownKeys = useQuery({ queryKey: ["encryption-keys"], queryFn: () => api<EncryptionKey[]>("/me/encryption-keys") })
   const totalBytes = files.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
 
   const touch = useCallback(() => {
@@ -199,7 +216,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
 
   const readOnly = mailbox.access === "read"
   const save = useCallback(() => {
-    if (readOnly || pendingSave.current || !dirty.current) return pendingSave.current
+    if (guardRef.current !== "standard" || readOnly || pendingSave.current || !dirty.current) return pendingSave.current
     dirty.current = false
     pendingSave.current = saveDraft.mutateAsync(files).catch(() => undefined).finally(() => {
       pendingSave.current = null
@@ -215,17 +232,85 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
     return () => clearTimeout(timer)
   }, [changes, save])
 
+  const activeProtocol: ProtectionProtocol = policy.data?.openpgp === "off" && policy.data.smime !== "off" ? "smime" : policy.data?.smime === "off" ? "openpgp" : protocol
+
+  async function protectedBody(values: Values, plain: OutgoingMessage, sendAt?: Date) {
+    if (guard === "password") {
+      if (values.cc.length || values.bcc.length || values.to.length !== 1) throw new Error("A password-protected message goes to one person, with no Cc or Bcc.")
+      if (files.length || forwarded.length) throw new Error("A password-protected message can't include attachments.")
+      if (secret.trim().length < 8) throw new Error("Choose a password of at least 8 characters.")
+      const id = crypto.randomUUID()
+      const sealed = await sealProtected(secret, id, { subject: values.subject, text: plain.text ?? "", html: plain.html ?? "" })
+      await api(`/mailboxes/${mailbox.id}/protected`, {
+        method: "POST",
+        body: { id, to: values.to[0], access: sealed.access, replyHash: sealed.replyHash, salt: sealed.salt, message: sealed.message, hours },
+      })
+      return id
+    }
+    const record = ownKeys.data?.find((key) => key.protocol === activeProtocol && key.address.toLowerCase() === mailbox.address.toLowerCase())
+    const mine = keyFor(mailbox.address, activeProtocol)
+    if (!record || !mine) throw new Error("Unlock the key for this address under Settings → Encryption.")
+    let recipientKeys: string[] = []
+    if (guard === "encrypt") {
+      const people = [...values.to, ...values.cc, ...values.bcc]
+      recipientKeys = await Promise.all(people.map(async (person) => {
+        const found = await api<RecipientKey[]>("/me/recipient-keys", { query: { address: person.address } })
+        const match = found.find((key) => key.protocol === activeProtocol)
+        if (match) return match.publicKey
+        if (activeProtocol === "openpgp") {
+          try {
+            return (await api<RecipientKey>("/me/wkd", { query: { address: person.address } })).publicKey
+          } catch {
+            throw new Error(`No OpenPGP key was found for ${person.address}.`)
+          }
+        }
+        throw new Error(`No S/MIME certificate was found for ${person.address}.`)
+      }))
+    }
+    const carried = source ? await Promise.all(forwarded.map(async (file) => {
+      const blob = await api<Blob>(`/mailboxes/${mailbox.id}/messages/${source.uid}/attachments/${file.part}`, { query: { folder: source.folder }, blob: true })
+      return { filename: file.filename, contentType: file.contentType, data: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) }
+    })) : []
+    const sealed = await sealOutgoing({
+      text: plain.text ?? "",
+      html: plain.html ?? "",
+      attachments: [...(plain.attachments ?? []), ...carried],
+      protocol: activeProtocol,
+      encrypt: guard === "encrypt",
+      privateKey: mine.privateKey,
+      certificate: record.publicKey,
+      recipientKeys,
+    })
+    const header = activeProtocol === "openpgp" && autocrypt ? await autocryptHeader(mailbox.address, mine.privateKey) : undefined
+    await api(`/mailboxes/${mailbox.id}/send`, {
+      method: "POST",
+      body: { to: values.to, cc: values.cc, bcc: values.bcc, subject: values.subject, inReplyTo: plain.inReplyTo, references: plain.references, sealed, autocrypt: header, sendAt: sendAt && toRFC3339(sendAt) },
+    })
+    return ""
+  }
+
   const send = useMutation({
     mutationFn: async ({ values, sendAt }: { values: Values; sendAt?: Date }) => {
       await pendingSave.current
-      return api(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...(await payload(values, files)), sendAt: sendAt && toRFC3339(sendAt) } })
+      const plain = await payload(values, files)
+      if (guard === "standard") {
+        return api(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...plain, sendAt: sendAt && toRFC3339(sendAt) } })
+      }
+      const id = await protectedBody(values, plain, sendAt)
+      if (id) setRevealed(secret)
     },
     onSuccess: (_d, { sendAt }) => {
-      if (!sendAt) flyAway(sendIcon.current)
-      toast.success(sendAt ? `Scheduled for ${formatShortDateTime(sendAt)}` : "Message sent")
       qc.invalidateQueries({ queryKey: ["scheduled", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
+      if (guard === "password") return
+      if (guard !== "standard") {
+        toast.success(sendAt ? `Scheduled for ${formatShortDateTime(sendAt)}` : "Protected message sent")
+        onClose()
+        return
+      }
+      if (!sendAt) flyAway(sendIcon.current)
+      toast.success(sendAt ? `Scheduled for ${formatShortDateTime(sendAt)}` : "Message sent")
       onClose()
     },
   })
@@ -243,7 +328,35 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
     },
   })
 
+  async function chooseProtection(next: ProtectionMode) {
+    guardRef.current = next
+    setGuard(next)
+    if (next === "password") {
+      form.setValue("cc", [])
+      form.setValue("bcc", [])
+      setShowCopies(false)
+      if (files.length || forwarded.length) {
+        setFiles([])
+        setForwarded([])
+        toast.info("Attachments were removed. A password-protected message can't include them.")
+      }
+    }
+    if (next === "standard") return
+    dirty.current = false
+    await pendingSave.current
+    if (!draftUid || readOnly) return
+    const uid = draftUid
+    setDraftUid(undefined)
+    await api(`/mailboxes/${mailbox.id}/drafts/${uid}`, { method: "DELETE" }).catch(() => undefined)
+    qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
+  }
+
   async function close() {
+    if (revealed) return
+    if (guardRef.current !== "standard") {
+      onClose()
+      return
+    }
     dirty.current = dirty.current || files.length > 0
     await save()
     if (!readOnly && (draftUid || savedAt || saveDraft.data)) toast.success("Saved to Drafts")
@@ -323,13 +436,13 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
           onSubmit={submit()}
           noValidate
           onDragOver={(e) => {
-            if (!e.dataTransfer.types.includes("Files")) return
+            if (guard === "password" || !e.dataTransfer.types.includes("Files")) return
             e.preventDefault()
             setDragging(true)
           }}
           onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
           onDrop={(e) => {
-            if (!e.dataTransfer.files.length) return
+            if (guard === "password" || !e.dataTransfer.files.length) return
             e.preventDefault()
             setDragging(false)
             addFiles(e.dataTransfer.files)
@@ -338,7 +451,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
         >
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
             {recipientField("to", "To")}
-            {showCopies ? (
+            {guard !== "password" && (showCopies ? (
               <>
                 {recipientField("cc", "Cc")}
                 {recipientField("bcc", "Bcc")}
@@ -347,10 +460,28 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
               <Button type="button" variant="link" className="self-start" onClick={() => setShowCopies(true)}>
                 Add Cc or Bcc
               </Button>
-            )}
+            ))}
             <Field id="compose-subject" label="Subject">
               <Input id="compose-subject" autoComplete="off" {...form.register("subject")} />
             </Field>
+            <ProtectionControls
+              policy={policy.data}
+              mode={guard}
+              protocol={activeProtocol}
+              password={secret}
+              hours={hours}
+              autocrypt={autocrypt}
+              canPassword={mailbox.kind === "user" && mailbox.access === "owner"}
+              onMode={(next) => {
+                if ((next === "sign" || next === "encrypt") && policy.data?.openpgp === "off") setProtocol("smime")
+                if ((next === "sign" || next === "encrypt") && policy.data?.smime === "off") setProtocol("openpgp")
+                void chooseProtection(next)
+              }}
+              onProtocol={setProtocol}
+              onPassword={setSecret}
+              onHours={setHours}
+              onAutocrypt={setAutocrypt}
+            />
             <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">
               {editor && <FormatToolbar editor={editor} signatures={signatures.data?.signatures} />}
               <EditorContent editor={editor} />
@@ -378,32 +509,48 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
               e.target.value = ""
             }} />
             <div className="mr-auto flex items-center gap-3">
-              <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()}>
-                <Paperclip aria-hidden />
-                Attach
-              </Button>
+              {guard !== "password" && (
+                <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()}>
+                  <Paperclip aria-hidden />
+                  Attach
+                </Button>
+              )}
               {totalBytes > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{formatBytes(totalBytes)} of 20 MB</span>}
               {signatures.isError && <Button type="button" variant="link" onClick={() => signatures.refetch()}>Retry loading signature</Button>}
               <span role="status" className="text-sm whitespace-nowrap text-fg-tertiary">
-                {saveDraft.isPending ? "Saving…" : saveDraft.isError ? "Couldn't save the draft" : savedAt ? `Saved ${formatListDate(savedAt.toISOString())}` : ""}
+                {guard !== "standard" ? "Not saved as a draft" : saveDraft.isPending ? "Saving…" : saveDraft.isError ? "Couldn't save the draft" : savedAt ? `Saved ${formatListDate(savedAt.toISOString())}` : ""}
               </span>
             </div>
             <Button type="button" variant="secondary" loading={discard.isPending} onClick={() => discard.mutate()}>
               Discard
             </Button>
             <div className="flex">
-              <Button type="submit" loading={send.isPending} disabled={signatures.isPending} className="rounded-r-none hover:shadow-none">
+              <Button type="submit" loading={send.isPending} disabled={signatures.isPending} className={guard === "password" ? undefined : "rounded-r-none hover:shadow-none"}>
                 <Send ref={sendIcon} aria-hidden />
                 Send
               </Button>
-              <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending || signatures.isPending} onPick={(at) => submit(at)()}>
-                <Button type="button" size="icon" aria-label="Schedule send" className="h-auto self-stretch rounded-l-none border-l-ink/20 hover:shadow-none">
-                  <ChevronDown />
-                </Button>
-              </LaterMenu>
+              {guard !== "password" && (
+                <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending || signatures.isPending} onPick={(at) => submit(at)()}>
+                  <Button type="button" size="icon" aria-label="Schedule send" className="h-auto self-stretch rounded-l-none border-l-ink/20 hover:shadow-none">
+                    <ChevronDown />
+                  </Button>
+                </LaterMenu>
+              )}
             </div>
           </div>
         </form>
+        <Dialog open={!!revealed} onOpenChange={(open) => !open && onClose()}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Share this password separately</DialogTitle>
+              <DialogDescription>The recipient gets a link by email. It opens only with this password, and Aether cannot show it again.</DialogDescription>
+            </DialogHeader>
+            <CopyField id="shared-password" label="Password" value={revealed} copyLabel="Copy password" />
+            <DialogFooter>
+              <Button type="button" onClick={onClose}>Done</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </SheetContent>
     </Sheet>
   )
