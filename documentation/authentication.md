@@ -108,6 +108,38 @@ Any provider works if it meets all of these:
 
 Use **Add generic provider** in the same screen. Providers without a `groups` claim can still sign users in, but group mappings have no effect.
 
+## Local accounts
+
+People without an identity provider sign in with their email address and an Aether password. Everything below applies only to those password sign-ins; for accounts that sign in through Halo or another provider, the password, two-factor authentication and sign-out stay the provider's job.
+
+### Password
+
+Under **Settings → Security**, people change their own password by entering the current one and a new one of at least 12 characters. Changing it signs out every other browser; app passwords keep working.
+
+A platform administrator can set a new password for someone under **Administration → Members → More actions → Reset password**, or with `PUT /api/v1/admin/users/{id}/password`. That signs the person out everywhere. Setting a password while creating a mailbox for an existing account does the same.
+
+### Two-factor authentication
+
+Under **Settings → Security**, people can add:
+
+- **An authenticator app.** Aether shows a QR code and a setup key for apps such as 1Password, Google Authenticator or Microsoft Authenticator (TOTP, 6 digits, 30 seconds). Each code is accepted once.
+- **Security keys and passkeys.** Hardware keys, or passkeys on a computer or phone, through WebAuthn. Aether uses them as the second step after the password, not instead of it. They are bound to the host name in `AETHER_PUBLIC_URL`, so open Aether at that address to use them.
+- **Recovery codes.** Adding the first method creates 10 single-use codes, shown once. **Generate new codes** replaces them.
+
+With any method set up, signing in asks for the password, then for a code, a security key or a recovery code. The second step must follow within 5 minutes and allows 5 wrong answers before the password has to be entered again. Turning off a method, removing a key or generating new recovery codes needs the current password.
+
+App passwords for mail, calendar and contacts apps are separate credentials and are not affected by two-factor authentication. Revoke an app password if a device is lost.
+
+### Requiring two-factor authentication
+
+Under **Administration → Security**, an organization's owners and administrators choose who must use two-factor authentication: nobody, owners and administrators, or everyone. Someone who must use it and has not set it up can still sign in with their password, but sees only the setup screen until they finish. The members list shows who has it turned on.
+
+When someone has lost every method and their recovery codes, a platform administrator can remove their two-factor methods under **Administration → Members → More actions → Turn off two-factor**. If an organization requires it, the person is asked to set it up again at once.
+
+### Sessions
+
+**Settings → Where you are signed in** lists the browsers signed in to the account with their IP address and last activity, for every account, including those that sign in through a provider. People can sign out any of them, or every other one at once. Owners and administrators can do the same for a member under **Administration → Members → More actions → Sessions**; only owners can do it for an owner.
+
 ## Mail clients
 
 Create an app password in **Settings → App passwords**. Each one is bound to a single mailbox, is shown only once, and can be revoked at any time. App passwords exist only for user mailboxes: shared mailboxes you belong to appear in the mail app under `Shared/<address>/` when you sign in as yourself (see [Shared mailboxes](shared-mailboxes.md#in-mail-apps)).
@@ -177,6 +209,6 @@ On a standalone installation, create the first platform administrator from the C
 docker compose exec api aether bootstrap-admin --email you@example.com
 ```
 
-The command prints a generated password once, to your terminal only; it is never written to logs. To supply your own password, use `--password-stdin`. Running the command again for the same email resets that password and restores platform administrator rights.
+The command prints a generated password once, to your terminal only; it is never written to logs. To supply your own password, use `--password-stdin`. Running the command again for the same email resets that password, signs that account out everywhere and restores platform administrator rights. Add `--reset-two-factor` to also remove its authenticator app, security keys and recovery codes, for an administrator who lost them.
 
 To disable password sign-in entirely after Halo is configured, set `AETHER_LOCAL_LOGIN=false`.

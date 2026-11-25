@@ -22,6 +22,8 @@ import { MailRules } from "@/components/settings/mail-rules"
 import { MailboxAccess } from "@/components/settings/mailbox-access"
 import { ManagedLists } from "@/components/settings/managed-lists"
 import { SenderLists } from "@/components/settings/sender-lists"
+import { Security } from "@/components/settings/security"
+import { ActiveSessions } from "@/components/settings/sessions"
 import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
@@ -40,11 +42,15 @@ import type { AppPassword, AppPasswordScope, CreatedAppPassword, Session } from 
 
 export function SettingsView() {
   const session = useSession().data
+  const setup = session?.twoFactorSetupRequired ?? false
 
   return (
     <PageContainer>
-      <PageHeader title="Settings" description="Your account details, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes." />
-      {session && (
+      <PageHeader
+        title="Settings"
+        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
+      />
+      {session && !setup && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
           <SectionHeader title="Profile" description="Your picture shows next to mail you send to people in your organization. If your sign-in provider has a picture, Aether uses it until you upload your own. Your name and email are managed by your administrator or identity provider." />
           <ProfilePicture email={session.user.email} name={session.user.displayName} />
@@ -78,16 +84,22 @@ export function SettingsView() {
           <SignatureDetails title={session.user.title} phone={session.user.phone} />
         </section>
       )}
-      <Signatures />
-      <MailRules />
-      <SenderLists />
-      <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />
-      <HeldMessages />
-      <ManagedLists />
-      <ImportMail />
-      <MailboxAccess />
-      <AppPasswords />
-      <CalendarApps />
+      <Security setupRequired={setup} />
+      <ActiveSessions />
+      {session && !setup && (
+        <>
+          <Signatures />
+          <MailRules />
+          <SenderLists />
+          <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />
+          <HeldMessages />
+          <ManagedLists />
+          <ImportMail />
+          <MailboxAccess />
+          <AppPasswords />
+          <CalendarApps />
+        </>
+      )}
     </PageContainer>
   )
 }

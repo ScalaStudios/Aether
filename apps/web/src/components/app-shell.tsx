@@ -9,7 +9,8 @@ import { cn } from "cn"
 
 import { Avatar } from "@/components/avatar"
 import { BrandMark } from "@/components/branding"
-import { ErrorState } from "@/components/states"
+import { EmptyState, ErrorState } from "@/components/states"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -88,7 +89,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
       <main id="main" className="min-h-0 min-w-0 flex-1 overflow-hidden">
-        {children}
+        {session.data?.twoFactorSetupRequired && !pathname.startsWith("/settings") ? (
+          <EmptyState
+            icon={ShieldCheck}
+            title="Set up two-factor authentication"
+            description="Your organization requires a second step when you sign in with your password. Set up an authenticator app or a security key to keep using Aether."
+            className="h-full"
+            action={
+              <Button asChild>
+                <Link href="/settings#security">Set up two-factor authentication</Link>
+              </Button>
+            }
+          />
+        ) : (
+          children
+        )}
       </main>
     </div>
   )

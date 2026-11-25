@@ -198,7 +198,9 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 				code = "account_exists"
 				return nil
 			}
-			_, err = tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, auth.HashPassword(in.Password))
+			if _, err = tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, auth.HashPassword(in.Password)); err == nil {
+				_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, userID)
+			}
 		}
 		if err != nil {
 			return err

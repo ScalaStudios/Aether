@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Ban, Pencil, Plus, RotateCcw, UserMinus, Users } from "lucide-react"
+import { Ban, Ellipsis, KeyRound, MonitorSmartphone, Pencil, Plus, RotateCcw, ShieldOff, UserMinus, Users } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -13,10 +13,13 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
+import { SessionList } from "@/components/settings/sessions"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -41,6 +44,10 @@ export function MembersTab({ orgId }: { orgId: string }) {
   const [editing, setEditing] = useState<Member | "new" | null>(null)
   const [suspending, setSuspending] = useState<Member | null>(null)
   const [removing, setRemoving] = useState<Member | null>(null)
+  const [sessionsOf, setSessionsOf] = useState<Member | null>(null)
+  const [resettingPassword, setResettingPassword] = useState<Member | null>(null)
+  const [resettingTwoFactor, setResettingTwoFactor] = useState<Member | null>(null)
+  const [newPassword, setNewPassword] = useState("")
   const session = useSession()
   const platformAdmin = session.data?.user.isPlatformAdmin ?? false
   const owner = platformAdmin || session.data?.memberships.some((m) => m.orgId === orgId && m.role === "owner")
@@ -63,7 +70,29 @@ export function MembersTab({ orgId }: { orgId: string }) {
       setRemoving(null)
     },
   })
+  const resetPassword = useMutation({
+    mutationFn: (member: Member) => api(`/admin/users/${member.userId}/password`, { method: "PUT", body: { password: newPassword } }),
+    meta: { silent: true },
+    onSuccess: (_d, member) => {
+      toast.success(`Reset the password of ${member.email}`, { description: "They were signed out everywhere." })
+      closePasswordReset()
+    },
+  })
+  const resetTwoFactor = useMutation({
+    mutationFn: (member: Member) => api(`/admin/users/${member.userId}/two-factor`, { method: "DELETE" }),
+    onSuccess: (_d, member) => {
+      toast.success(`Turned off two-factor authentication for ${member.email}`)
+      qc.invalidateQueries({ queryKey: ["members", orgId] })
+      setResettingTwoFactor(null)
+    },
+  })
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", role: "member", compliance: false } })
+
+  function closePasswordReset() {
+    setResettingPassword(null)
+    setNewPassword("")
+    resetPassword.reset()
+  }
 
   const save = useMutation({
     mutationFn: ({ compliance, ...values }: Values) =>
@@ -112,7 +141,8 @@ export function MembersTab({ orgId }: { orgId: string }) {
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-28">
+                <TableHead>Two-factor</TableHead>
+                <TableHead className="w-36">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -130,6 +160,15 @@ export function MembersTab({ orgId }: { orgId: string }) {
                   </TableCell>
                   <TableCell>
                     <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
+                  </TableCell>
+                  <TableCell>
+                    {m.twoFactor ? (
+                      <StatusBadge tone="success">On</StatusBadge>
+                    ) : m.passwordSignIn ? (
+                      <StatusBadge tone="neutral">Off</StatusBadge>
+                    ) : (
+                      <span className="text-sm text-fg-tertiary">Identity provider</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
@@ -151,6 +190,33 @@ export function MembersTab({ orgId }: { orgId: string }) {
                         <IconButton label={`Remove ${m.email}`} size="icon-sm" onClick={() => setRemoving(m)}>
                           <UserMinus />
                         </IconButton>
+                      )}
+                      {(m.role !== "owner" || owner) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="quiet" size="icon-sm" aria-label={`More actions for ${m.email}`}>
+                              <Ellipsis />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem onSelect={() => setSessionsOf(m)}>
+                              <MonitorSmartphone aria-hidden />
+                              Sessions…
+                            </DropdownMenuItem>
+                            {platformAdmin && m.userId !== session.data?.user.id && m.passwordSignIn && (
+                              <DropdownMenuItem onSelect={() => setResettingPassword(m)}>
+                                <KeyRound aria-hidden />
+                                Reset password…
+                              </DropdownMenuItem>
+                            )}
+                            {platformAdmin && m.userId !== session.data?.user.id && m.twoFactor && (
+                              <DropdownMenuItem onSelect={() => setResettingTwoFactor(m)}>
+                                <ShieldOff aria-hidden />
+                                Turn off two-factor…
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </div>
                   </TableCell>
@@ -210,6 +276,45 @@ export function MembersTab({ orgId }: { orgId: string }) {
           />
         )}
       </FormDialog>
+      <Dialog open={!!sessionsOf} onOpenChange={(o) => !o && setSessionsOf(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Sessions of {sessionsOf?.email}</DialogTitle>
+            <DialogDescription>Browsers signed in to this account. Signing a session out ends it at once; app passwords for mail apps keep working.</DialogDescription>
+          </DialogHeader>
+          {sessionsOf && <SessionList path={`/organizations/${orgId}/members/${sessionsOf.userId}/sessions`} subject={sessionsOf.email} />}
+        </DialogContent>
+      </Dialog>
+      <FormDialog
+        open={!!resettingPassword}
+        onOpenChange={(o) => !o && closePasswordReset()}
+        title={`Reset the password of ${resettingPassword?.email}?`}
+        description="They are signed out everywhere and sign in with the new password. Tell them the password through a channel you trust. Their two-factor authentication stays on."
+        submitLabel="Reset password"
+        pending={resetPassword.isPending}
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (resettingPassword && newPassword.length >= 12) resetPassword.mutate(resettingPassword)
+        }}
+      >
+        <Field
+          id="reset-password"
+          label="New password"
+          hint="At least 12 characters."
+          error={resetPassword.error ? errorMessage(resetPassword.error) : newPassword && newPassword.length < 12 ? "Use at least 12 characters." : undefined}
+        >
+          <Input id="reset-password" type="password" autoComplete="new-password" aria-invalid={resetPassword.isError} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+        </Field>
+      </FormDialog>
+      <ConfirmDialog
+        open={!!resettingTwoFactor}
+        onOpenChange={(o) => !o && setResettingTwoFactor(null)}
+        title={`Turn off two-factor authentication for ${resettingTwoFactor?.email}?`}
+        description="Removes their authenticator app, security keys and recovery codes, for example after they lost their phone. They sign in with their password alone until they set it up again; if an organization requires it, they are asked to at their next sign-in."
+        confirmLabel="Turn off two-factor"
+        pending={resetTwoFactor.isPending}
+        onConfirm={() => resettingTwoFactor && resetTwoFactor.mutate(resettingTwoFactor)}
+      />
       <ConfirmDialog
         open={!!suspending}
         onOpenChange={(o) => !o && setSuspending(null)}

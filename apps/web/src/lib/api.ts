@@ -52,6 +52,7 @@ export async function api<T = void>(
 
   if (!res.ok) {
     const data = await res.json().catch(() => null)
+    if (data?.error?.code === "two_factor_setup_required" && window.location.pathname !== "/settings") window.location.replace("/settings#security")
     throw new ApiError(
       res.status,
       data?.error?.code ?? `http_${res.status}`,

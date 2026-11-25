@@ -1,3 +1,5 @@
+import type { SecurityKeyRequestOptions } from "@/lib/webauthn"
+
 export type Role = "owner" | "admin" | "member"
 
 export interface User {
@@ -22,7 +24,48 @@ export interface Session {
   user: User
   csrfToken: string
   memberships: Membership[]
+  twoFactorSetupRequired: boolean
 }
+
+export interface TwoFactorPrompt {
+  totp: boolean
+  securityKey: SecurityKeyRequestOptions | null
+}
+
+export type LoginResult = Session | { twoFactor: TwoFactorPrompt }
+
+export interface SecurityKey {
+  id: string
+  name: string
+  createdAt: string
+  lastUsedAt: string | null
+}
+
+export interface SecurityStatus {
+  passwordSignIn: boolean
+  twoFactorRequired: boolean
+  totp: boolean
+  recoveryCodes: number
+  securityKeys: SecurityKey[]
+}
+
+export interface TOTPSetup {
+  secret: string
+  uri: string
+  qrCode: string
+}
+
+export interface ActiveSession {
+  id: string
+  ip: string
+  userAgent: string
+  provider: string | null
+  createdAt: string
+  lastSeenAt: string
+  current: boolean
+}
+
+export type TwoFactorPolicy = "off" | "admins" | "everyone"
 
 export type ProviderKind = "halo" | "generic"
 
@@ -178,6 +221,8 @@ export interface Member {
   role: Role
   status: string
   compliance: boolean
+  passwordSignIn: boolean
+  twoFactor: boolean
 }
 
 export type ForwardingMode = "allowed" | "domains" | "blocked"

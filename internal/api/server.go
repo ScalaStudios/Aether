@@ -86,11 +86,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/autodiscover/autodiscover.xml", s.mailAutodiscover)
 	mux.HandleFunc("/Autodiscover/Autodiscover.xml", s.mailAutodiscover)
 
+	mux.HandleFunc("POST /api/v1/auth/login/two-factor", s.loginTwoFactor)
+
 	authed := func(pattern string, h func(http.ResponseWriter, *http.Request, *principal)) {
-		mux.HandleFunc(pattern, s.withPrincipal(h))
+		mux.HandleFunc(pattern, s.withPrincipal(h, false))
 	}
-	authed("POST /api/v1/auth/logout", s.logout)
-	authed("GET /api/v1/session", s.session)
+	duringSetup := func(pattern string, h func(http.ResponseWriter, *http.Request, *principal)) {
+		mux.HandleFunc(pattern, s.withPrincipal(h, true))
+	}
+	duringSetup("POST /api/v1/auth/logout", s.logout)
+	duringSetup("GET /api/v1/session", s.session)
+	duringSetup("GET /api/v1/me/security", s.securityStatus)
+	duringSetup("PUT /api/v1/me/password", s.changePassword)
+	duringSetup("POST /api/v1/me/totp", s.startTOTP)
+	duringSetup("PUT /api/v1/me/totp", s.confirmTOTP)
+	authed("DELETE /api/v1/me/totp", s.deleteTOTP)
+	duringSetup("POST /api/v1/me/security-keys/challenge", s.securityKeyChallenge)
+	duringSetup("POST /api/v1/me/security-keys", s.addSecurityKey)
+	authed("DELETE /api/v1/me/security-keys/{id}", s.deleteSecurityKey)
+	authed("POST /api/v1/me/recovery-codes", s.regenerateRecoveryCodes)
+	duringSetup("GET /api/v1/me/sessions", s.listMySessions)
+	duringSetup("DELETE /api/v1/me/sessions", s.endMySessions)
+	duringSetup("DELETE /api/v1/me/sessions/{sessionId}", s.endMySessions)
 
 	authed("GET /api/v1/organizations", s.listOrganizations)
 	authed("POST /api/v1/organizations", s.createOrganization)
@@ -126,6 +143,11 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/organizations/{orgId}/members", s.listMembers)
 	authed("POST /api/v1/organizations/{orgId}/members", s.setMember)
 	authed("DELETE /api/v1/organizations/{orgId}/members/{userId}", s.removeMember)
+	authed("GET /api/v1/organizations/{orgId}/members/{userId}/sessions", s.listMemberSessions)
+	authed("DELETE /api/v1/organizations/{orgId}/members/{userId}/sessions", s.endMemberSessions)
+	authed("DELETE /api/v1/organizations/{orgId}/members/{userId}/sessions/{sessionId}", s.endMemberSessions)
+	authed("GET /api/v1/organizations/{orgId}/security", s.getOrgSecurity)
+	authed("PUT /api/v1/organizations/{orgId}/security", s.saveOrgSecurity)
 	authed("GET /api/v1/organizations/{orgId}/audit", s.listAudit)
 	authed("GET /api/v1/organizations/{orgId}/quarantine", s.listOrgQuarantine)
 	authed("GET /api/v1/organizations/{orgId}/quarantine/{id}", s.getOrgQuarantine)
@@ -295,6 +317,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/organizations/{orgId}/journal-rules", s.listJournalRules)
 	authed("POST /api/v1/organizations/{orgId}/journal-rules", s.createJournalRule)
 	authed("DELETE /api/v1/journal-rules/{ruleId}", s.deleteJournalRule)
+	authed("PUT /api/v1/admin/users/{id}/password", s.resetUserPassword)
+	authed("DELETE /api/v1/admin/users/{id}/two-factor", s.resetUserTwoFactor)
 
 	return instrument(securityHeaders(mux))
 }
@@ -325,14 +349,15 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 type principal struct {
-	User        User
-	sessionHash []byte
-	csrf        string
-	providerID  *string
-	idToken     *string
-	roles       map[string]string
-	compliance  map[string]bool
-	apiKey      *apiKeyIdentity
+	User           User
+	sessionHash    []byte
+	csrf           string
+	providerID     *string
+	idToken        *string
+	roles          map[string]string
+	compliance     map[string]bool
+	apiKey         *apiKeyIdentity
+	twoFactorSetup bool
 }
 
 func (p *principal) orgRole(orgID string) string {
@@ -351,7 +376,7 @@ func (p *principal) canAdminOrg(orgID string) bool {
 	return role == "owner" || role == "admin"
 }
 
-func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *principal)) http.HandlerFunc {
+func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *principal), allowedDuringSetup bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && strings.HasPrefix(token, apiKeyPrefix) {
 			if p, ok := s.apiKeyPrincipal(w, r, token); ok {
@@ -370,8 +395,8 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 			UPDATE sessions s SET last_seen_at = now()
 			FROM users u
 			WHERE s.id_hash = $1 AND s.expires_at > now() AND u.id = s.user_id AND u.status = 'active'
-			RETURNING u.id, u.email, u.display_name, u.is_platform_admin, u.status, s.csrf_token, s.provider_id, s.id_token`, hash).
-			Scan(&p.User.ID, &p.User.Email, &p.User.DisplayName, &p.User.IsPlatformAdmin, &p.User.Status, &p.csrf, &p.providerID, &p.idToken)
+			RETURNING u.id, u.email, u.display_name, u.is_platform_admin, u.status, s.csrf_token, s.provider_id, s.id_token, s.provider_id IS NULL AND `+twoFactorSetupPending, hash).
+			Scan(&p.User.ID, &p.User.Email, &p.User.DisplayName, &p.User.IsPlatformAdmin, &p.User.Status, &p.csrf, &p.providerID, &p.idToken, &p.twoFactorSetup)
 		if errors.Is(err, pgx.ErrNoRows) {
 			clearCookie(w, sessionCookie, s.cfg.SecureCookies())
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "Your session has ended. Sign in again.")
@@ -386,6 +411,10 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 				writeError(w, http.StatusForbidden, "csrf", "The request is missing a valid CSRF token. Reload the page and try again.")
 				return
 			}
+		}
+		if p.twoFactorSetup && !allowedDuringSetup {
+			writeError(w, http.StatusForbidden, "two_factor_setup_required", "Your organization requires two-factor authentication. Set it up under Settings, Security to continue.")
+			return
 		}
 		rows, err := s.db.Query(r.Context(), `SELECT org_id, role, compliance FROM organization_members WHERE user_id = $1`, p.User.ID)
 		if err != nil {

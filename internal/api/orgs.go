@@ -162,14 +162,16 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	type member struct {
-		UserID      string `json:"userId"`
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
-		Role        string `json:"role"`
-		Status      string `json:"status"`
-		Compliance  bool   `json:"compliance"`
+		UserID         string `json:"userId"`
+		Email          string `json:"email"`
+		DisplayName    string `json:"displayName"`
+		Role           string `json:"role"`
+		Status         string `json:"status"`
+		Compliance     bool   `json:"compliance"`
+		PasswordSignIn bool   `json:"passwordSignIn"`
+		TwoFactor      bool   `json:"twoFactor"`
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT u.id, u.email, u.display_name, m.role, u.status, m.compliance FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY u.email`, orgID)
+	rows, err := s.db.Query(r.Context(), `SELECT u.id, u.email, u.display_name, m.role, u.status, m.compliance, u.password_hash IS NOT NULL, `+hasTwoFactor+` FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY u.email`, orgID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return

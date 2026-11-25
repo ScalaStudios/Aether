@@ -40,9 +40,10 @@ type membership struct {
 }
 
 type sessionResponse struct {
-	User        User         `json:"user"`
-	Memberships []membership `json:"memberships"`
-	CSRFToken   string       `json:"csrfToken"`
+	User                   User         `json:"user"`
+	Memberships            []membership `json:"memberships"`
+	CSRFToken              string       `json:"csrfToken"`
+	TwoFactorSetupRequired bool         `json:"twoFactorSetupRequired"`
 }
 
 func constantTimeEqual(a, b string) bool {
@@ -109,13 +110,26 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "account_disabled", "This account is suspended. Contact your administrator.")
 		return
 	}
+	prompt, err := s.twoFactorPrompt(r.Context(), w, userID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if prompt != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"twoFactor": prompt})
+		return
+	}
+	s.finishPasswordLogin(w, r, userID, "password")
+}
+
+func (s *Server) finishPasswordLogin(w http.ResponseWriter, r *http.Request, userID, method string) {
 	csrf, err := s.startSession(r.Context(), w, r, userID, nil, nil, localSessionTTL)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	authAttempts.WithLabelValues("password", "success").Inc()
-	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": "password"})
+	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": method})
 	resp, err := s.sessionFor(r.Context(), userID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -143,8 +157,8 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 
 func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionResponse, error) {
 	resp := &sessionResponse{Memberships: []membership{}}
-	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone FROM users WHERE id = $1`, userID).
-		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone)
+	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone, `+twoFactorSetupPending+` FROM users u WHERE id = $1`, userID).
+		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone, &resp.TwoFactorSetupRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +178,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request, p *principal) {
 		return
 	}
 	resp.CSRFToken = p.csrf
+	resp.TwoFactorSetupRequired = p.twoFactorSetup
 	writeJSON(w, http.StatusOK, resp)
 }
 

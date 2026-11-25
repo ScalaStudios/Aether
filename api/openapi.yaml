@@ -18,6 +18,7 @@ tags:
   - name: aliases
   - name: members
   - name: app-passwords
+  - name: security
   - name: mail
   - name: identity-providers
   - name: mail-queue
@@ -67,6 +68,44 @@ paths:
               properties:
                 email: { type: string, format: email }
                 password: { type: string }
+      description: When the account has two-factor authentication, the password alone does not sign in. The answer then holds twoFactor instead of a session and sets a short-lived aether_two_factor cookie; finish with POST /auth/login/two-factor within 5 minutes.
+      responses:
+        "200":
+          description: Signed in and the aether_session cookie set, or a second factor is needed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/Session" }
+                  - type: object
+                    required: [twoFactor]
+                    properties:
+                      twoFactor: { $ref: "#/components/schemas/TwoFactorPrompt" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/login/two-factor:
+    post:
+      tags: [auth]
+      security: []
+      summary: Finish a password sign-in with a second factor
+      description: Send exactly one of code (from the authenticator app), recoveryCode, or securityKey (a WebAuthn assertion over the challenge from the sign-in answer, with binary fields in standard base64). Needs the aether_two_factor cookie from POST /auth/login. A wrong answer returns 401 invalid_code; after 5 wrong answers, or after 5 minutes, the sign-in ends with 401 two_factor_expired and has to start again with the password. Each authenticator code and recovery code works once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string, pattern: "^[0-9]{6}$" }
+                recoveryCode: { type: string }
+                securityKey:
+                  type: object
+                  required: [id, clientDataJSON, authenticatorData, signature]
+                  properties:
+                    id: { type: string, format: byte }
+                    clientDataJSON: { type: string, format: byte }
+                    authenticatorData: { type: string, format: byte }
+                    signature: { type: string, format: byte }
       responses:
         "200":
           description: Signed in; sets the aether_session cookie
@@ -74,6 +113,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
         "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
         "429": { $ref: "#/components/responses/Error" }
   /auth/oidc/{slug}/start:
     get:
@@ -874,6 +914,73 @@ paths:
       responses:
         "204": { description: Saved }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/members/{userId}/sessions:
+    get:
+      tags: [members]
+      summary: A member's signed-in browsers
+      description: Organization owners and administrators only. Only owners can see an owner's sessions, and only platform administrators can see a platform administrator's.
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ActiveSession" } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [members]
+      summary: Sign a member out everywhere
+      description: Ends every web session of the member, except the caller's own. App passwords are not affected.
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Signed out }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/members/{userId}/sessions/{sessionId}:
+    delete:
+      tags: [members]
+      summary: End one of a member's sessions
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Signed out }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/security:
+    get:
+      tags: [security]
+      summary: The organization's two-factor requirement
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationSecurity" }
+    put:
+      tags: [security]
+      summary: Require two-factor authentication for administrators or for everyone
+      description: Applies to password sign-ins of the organization's members; people who sign in through an identity provider are not affected. A member who must use two-factor authentication and has not set it up can sign in, but every endpoint except the ones needed to set it up answers 403 two_factor_setup_required.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrganizationSecurity" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationSecurity" }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/members/{userId}:
     delete:
       tags: [members]
@@ -1313,6 +1420,187 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "204": { description: Revoked }
+  /me/security:
+    get:
+      tags: [security]
+      summary: The caller's password and two-factor status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityStatus" }
+  /me/password:
+    put:
+      tags: [security]
+      summary: Change the caller's Aether password
+      description: Needs the current password and a new one of at least 12 characters. Ends every other web session of the caller; app passwords keep working. Accounts without an Aether password get 409 no_password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12 }
+      responses:
+        "204": { description: Changed }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /me/totp:
+    post:
+      tags: [security]
+      summary: Start setting up an authenticator app
+      description: Returns a new secret, its otpauth URI and a QR code as a PNG data URL. Nothing changes at sign-in until PUT /me/totp confirms a code. Answers 409 totp_enabled when an authenticator app is already set up.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, uri, qrCode]
+                properties:
+                  secret: { type: string, description: Base32 secret for entering by hand }
+                  uri: { type: string }
+                  qrCode: { type: string }
+        "409": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [security]
+      summary: Turn on the authenticator app with a current code
+      description: When this is the caller's first two-factor method, the answer holds 10 new recovery codes, shown only once; otherwise the list is empty.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: Turned on
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [security]
+      summary: Turn off the authenticator app
+      description: Needs the current password. When no two-factor method is left, the recovery codes are deleted too.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordConfirmation" }
+      responses:
+        "204": { description: Turned off }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/security-keys/challenge:
+    post:
+      tags: [security]
+      summary: Options for navigator.credentials.create() to add a security key or passkey
+      description: Binary fields are standard base64. The challenge is valid for 5 minutes and for one POST /me/security-keys.
+      responses:
+        "200":
+          description: PublicKeyCredentialCreationOptions
+          content:
+            application/json:
+              schema: { type: object }
+        "409": { $ref: "#/components/responses/Error" }
+  /me/security-keys:
+    post:
+      tags: [security]
+      summary: Add a security key or passkey
+      description: Send the new credential's raw ID, clientDataJSON, authenticator data (getAuthenticatorData()) and SPKI public key (getPublicKey()), in standard base64. Aether asks for no attestation and accepts ES256, EdDSA and RS256 keys. When this is the first two-factor method, the answer holds 10 new recovery codes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, credential]
+              properties:
+                name: { type: string, maxLength: 100 }
+                credential:
+                  type: object
+                  required: [id, clientDataJSON, authenticatorData, publicKey]
+                  properties:
+                    id: { type: string, format: byte }
+                    clientDataJSON: { type: string, format: byte }
+                    authenticatorData: { type: string, format: byte }
+                    publicKey: { type: string, format: byte }
+                    transports: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/security-keys/{id}:
+    delete:
+      tags: [security]
+      summary: Remove a security key or passkey
+      description: Needs the current password. When no two-factor method is left, the recovery codes are deleted too.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordConfirmation" }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/recovery-codes:
+    post:
+      tags: [security]
+      summary: Replace the recovery codes with 10 new ones
+      description: Needs the current password and an active two-factor method. The old codes stop working.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordConfirmation" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/sessions:
+    get:
+      tags: [security]
+      summary: The caller's signed-in browsers, the current one first
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ActiveSession" } }
+    delete:
+      tags: [security]
+      summary: Sign out every other session
+      responses:
+        "204": { description: Signed out }
+  /me/sessions/{sessionId}:
+    delete:
+      tags: [security]
+      summary: End one of the caller's other sessions
+      description: The current session is ended with POST /auth/logout instead and answers 404 here.
+      parameters: [{ name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Signed out }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/imports:
     get:
       tags: [mail]
@@ -2328,6 +2616,36 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /admin/users/{id}/password:
+    put:
+      tags: [members]
+      summary: Set a new password for an account (platform administrators only)
+      description: Ends every web session of the account. Only for accounts that already have an Aether password; accounts that sign in through an identity provider answer 409 no_password. Your own password is changed with PUT /me/password.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 12 }
+      responses:
+        "204": { description: Saved }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/users/{id}/two-factor:
+    delete:
+      tags: [members]
+      summary: Remove an account's two-factor methods and recovery codes (platform administrators only)
+      description: For someone who lost their phone, security key and recovery codes. Your own methods are managed under /me.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /hooks/identity-providers/{slug}:
     post:
       tags: [identity-providers]
@@ -2379,7 +2697,7 @@ components:
       type: apiKey
       in: cookie
       name: aether_session
-      description: State-changing requests must also send the session csrfToken in the X-CSRF-Token header.
+      description: State-changing requests must also send the session csrfToken in the X-CSRF-Token header. When the session's twoFactorSetupRequired is true, every endpoint answers 403 two_factor_setup_required except /session, /auth/logout, GET /me/security, PUT /me/password, POST and PUT /me/totp, POST /me/security-keys/challenge, POST /me/security-keys, and /me/sessions.
     apiKey:
       type: http
       scheme: bearer
@@ -2426,10 +2744,11 @@ components:
         phone: { type: string }
     Session:
       type: object
-      required: [user, memberships, csrfToken]
+      required: [user, memberships, csrfToken, twoFactorSetupRequired]
       properties:
         user: { $ref: "#/components/schemas/User" }
         csrfToken: { type: string }
+        twoFactorSetupRequired: { type: boolean, description: An organization requires two-factor authentication for this password session and it is not set up yet }
         memberships:
           type: array
           items:
@@ -2703,13 +3022,67 @@ components:
         skipped: { type: integer }
     Member:
       type: object
-      required: [userId, email, displayName, role, status]
+      required: [userId, email, displayName, role, status, passwordSignIn, twoFactor]
       properties:
         userId: { type: string, format: uuid }
         email: { type: string }
         displayName: { type: string }
         role: { type: string, enum: [owner, admin, member] }
         status: { type: string }
+        passwordSignIn: { type: boolean, description: The account has an Aether password }
+        twoFactor: { type: boolean, description: An authenticator app or security key is set up }
+    TwoFactorPrompt:
+      type: object
+      required: [totp, securityKey]
+      properties:
+        totp: { type: boolean, description: An authenticator app code is accepted }
+        securityKey:
+          type: [object, "null"]
+          description: PublicKeyCredentialRequestOptions for navigator.credentials.get(), with binary fields in standard base64; null when no security key is registered
+    SecurityStatus:
+      type: object
+      required: [passwordSignIn, twoFactorRequired, totp, recoveryCodes, securityKeys]
+      properties:
+        passwordSignIn: { type: boolean }
+        twoFactorRequired: { type: boolean, description: One of the caller's organizations requires two-factor authentication }
+        totp: { type: boolean }
+        recoveryCodes: { type: integer, description: Unused recovery codes }
+        securityKeys:
+          type: array
+          items:
+            type: object
+            required: [id, name, createdAt, lastUsedAt]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              createdAt: { type: string, format: date-time }
+              lastUsedAt: { type: [string, "null"], format: date-time }
+    RecoveryCodes:
+      type: object
+      required: [recoveryCodes]
+      properties:
+        recoveryCodes: { type: array, items: { type: string } }
+    PasswordConfirmation:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, description: The caller's current password }
+    OrganizationSecurity:
+      type: object
+      required: [twoFactorPolicy]
+      properties:
+        twoFactorPolicy: { type: string, enum: [off, admins, everyone] }
+    ActiveSession:
+      type: object
+      required: [id, ip, userAgent, provider, createdAt, lastSeenAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        ip: { type: string }
+        userAgent: { type: string }
+        provider: { type: [string, "null"], description: Identity provider the session signed in through }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        current: { type: boolean }
     AuditEvent:
       type: object
       required: [id, createdAt, action, targetType, targetId]

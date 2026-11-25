@@ -252,6 +252,7 @@ func bootstrapAdmin(args []string) error {
 	email := fs.String("email", "", "administrator email address")
 	name := fs.String("name", "Administrator", "display name")
 	passwordStdin := fs.Bool("password-stdin", false, "read the password from standard input instead of generating one")
+	resetTwoFactor := fs.Bool("reset-two-factor", false, "remove the administrator's authenticator app, security keys and recovery codes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -290,7 +291,18 @@ func bootstrapAdmin(args []string) error {
 	if err != nil {
 		return err
 	}
-	pool.Exec(ctx, `INSERT INTO audit_events (action, target_type, target_id, metadata) VALUES ('platform_admin.bootstrap', 'user', $1, '{"source":"cli"}')`, address)
+	if _, err := pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = $1)`, address); err != nil {
+		return err
+	}
+	if *resetTwoFactor {
+		_, err := pool.Exec(ctx, `
+			WITH u AS (SELECT id FROM users WHERE email = $1), totp AS (DELETE FROM user_totp WHERE user_id IN (SELECT id FROM u)), codes AS (DELETE FROM user_recovery_codes WHERE user_id IN (SELECT id FROM u))
+			DELETE FROM user_security_keys WHERE user_id IN (SELECT id FROM u)`, address)
+		if err != nil {
+			return err
+		}
+	}
+	pool.Exec(ctx, `INSERT INTO audit_events (action, target_type, target_id, metadata) VALUES ('platform_admin.bootstrap', 'user', $1, jsonb_build_object('source', 'cli', 'resetTwoFactor', $2::boolean))`, address, *resetTwoFactor)
 	if tag.RowsAffected() == 1 {
 		fmt.Printf("Platform administrator ready: %s\n", address)
 	}

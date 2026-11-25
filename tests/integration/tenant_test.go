@@ -25,6 +25,7 @@ func TestTenantIsolation(t *testing.T) {
 	var bContact idOnly
 	outside := "partner-" + randomSuffix() + "@partner.example"
 	b.admin.must("POST", "/organizations/"+b.orgID+"/contacts", map[string]string{"name": "Partner", "email": outside}, &bContact, 201)
+	bBob := memberID(t, b, "bob@"+b.domain)
 
 	denied := []struct{ method, path string }{
 		{"GET", "/organizations/" + b.orgID},
@@ -41,6 +42,12 @@ func TestTenantIsolation(t *testing.T) {
 		{"GET", "/organizations/" + b.orgID + "/mailbox-audit"},
 		{"PUT", "/organizations/" + b.orgID + "/mailbox-audit"},
 		{"GET", "/mailboxes/" + b.bobMailbox + "/access-log"},
+		{"GET", "/organizations/" + b.orgID + "/security"},
+		{"PUT", "/organizations/" + b.orgID + "/security"},
+		{"GET", "/organizations/" + b.orgID + "/members/" + bBob + "/sessions"},
+		{"DELETE", "/organizations/" + b.orgID + "/members/" + bBob + "/sessions"},
+		{"DELETE", "/organizations/" + b.orgID + "/members/" + bBob + "/sessions/" + bBob},
+		{"GET", "/organizations/" + a.orgID + "/members/" + bBob + "/sessions"},
 		{"GET", "/domains/" + b.domainID},
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},
@@ -124,6 +131,12 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("POST", "/admin/mail-queue/delete", map[string]any{"filter": map[string]string{"queue": "deferred"}}, nil); got != 403 {
 		t.Errorf("org admin deleted queued mail: %d", got)
+	}
+	if got := orgAdmin.do("PUT", "/admin/users/"+bBob+"/password", map[string]string{"password": "taken-over-password"}, nil); got != 403 {
+		t.Errorf("org admin reset another tenant's password: %d", got)
+	}
+	if got := orgAdmin.do("DELETE", "/admin/users/"+bBob+"/two-factor", nil, nil); got != 403 {
+		t.Errorf("org admin reset another tenant's two-factor: %d", got)
 	}
 
 	member := b.bob

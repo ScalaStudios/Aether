@@ -27,6 +27,7 @@ require (
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 	golang.org/x/oauth2 v0.37.0
+	rsc.io/qr v0.2.0
 )
 
 require (
