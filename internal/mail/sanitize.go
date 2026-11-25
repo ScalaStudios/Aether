@@ -21,6 +21,7 @@ func newHTMLPolicy(links bool) *bluemonday.Policy {
 	p.AllowDataURIImages()
 	p.AllowTables()
 	p.AllowElements("center", "font", "span", "div", "section", "header", "footer")
+	p.AllowAttrs("data-aether-signature").OnElements("div")
 	p.AllowAttrs("color", "face", "size").OnElements("font")
 	p.AllowAttrs("align", "valign", "width", "height", "bgcolor", "border", "cellpadding", "cellspacing").Globally()
 	p.AllowStyles(

@@ -61,9 +61,9 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *prin
 	}
 	var item scheduledMessage
 	err = s.db.QueryRow(r.Context(), `
-		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw, sender_user_id, sender_mode)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, send_at, subject, to_addresses, error`,
-		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw, p.User.ID, mode).
+		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw, sender_user_id, sender_mode, from_address)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, send_at, subject, to_addresses, error`,
+		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw, p.User.ID, mode, out.From.Address).
 		Scan(&item.ID, &item.SendAt, &item.Subject, &item.To, &item.Error)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -265,21 +265,22 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		return false
 	}
 	defer tx.Rollback(ctx)
-	var id, mailboxID, address, name, inReplyTo, subject, mode string
+	var id, mailboxID, address, fromAddress, sentAddress, inReplyTo, subject, mode string
 	var senderID *string
 	var recipients []string
 	var raw []byte
 	var attempts int
 	var usable, permitted, writable bool
 	err = tx.QueryRow(ctx, `
-		SELECT s.id, s.mailbox_id, m.address, m.display_name, s.recipients, s.raw, s.in_reply_to, s.attempts, s.subject, s.sender_mode, s.sender_user_id,
+		SELECT s.id, s.mailbox_id, m.address, coalesce(s.from_address, m.address), coalesce(i.sent_address, m.address), s.recipients, s.raw, s.in_reply_to, s.attempts, s.subject, s.sender_mode, s.sender_user_id,
 		       m.active AND 'webmail' = ANY(m.protocols) AND d.active AND d.verified_at IS NOT NULL,
-		       coalesce(u.status = 'active' AND CASE s.sender_mode WHEN 'send_as' THEN `+mailboxSendAs("s.sender_user_id")+` ELSE `+mailboxSendOnBehalf("s.sender_user_id")+` END, false),
+		       coalesce(i.address IS NOT NULL AND u.status = 'active' AND CASE s.sender_mode WHEN 'send_as' THEN `+mailboxSendAs("s.sender_user_id")+` ELSE `+mailboxSendOnBehalf("s.sender_user_id")+` END, false),
 		       `+mailboxAccessLevel("s.sender_user_id")+` IN ('owner', 'full')
 		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id LEFT JOIN users u ON u.id = s.sender_user_id
+		LEFT JOIN LATERAL (`+sendableAddresses("s.sender_user_id")+`) i ON i.address = coalesce(s.from_address, m.address)
 		WHERE s.error IS NULL AND s.send_at <= now()
 		ORDER BY s.send_at LIMIT 1 FOR UPDATE OF s SKIP LOCKED`).
-		Scan(&id, &mailboxID, &address, &name, &recipients, &raw, &inReplyTo, &attempts, &subject, &mode, &senderID, &usable, &permitted, &writable)
+		Scan(&id, &mailboxID, &address, &fromAddress, &sentAddress, &recipients, &raw, &inReplyTo, &attempts, &subject, &mode, &senderID, &usable, &permitted, &writable)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.log.Error("loading scheduled messages failed", "err", err)
@@ -294,7 +295,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		tx.Exec(ctx, `UPDATE scheduled_messages SET error = 'You no longer have permission to send from this mailbox.' WHERE id = $1`, id)
 		return tx.Commit(ctx) == nil
 	}
-	if err := s.mail.Send(mailpkg.Address{Name: name, Address: address}, recipients, raw); err != nil {
+	if err := s.mail.Send(address, fromAddress, recipients, raw); err != nil {
 		mailSends.WithLabelValues("rejected").Inc()
 		s.log.Warn("scheduled send failed", "mailbox", mailboxID, "attempt", attempts+1, "err", err)
 		if attempts+1 >= maxSendAttempts {
@@ -313,7 +314,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		s.log.Error("scheduled message sent but not removed", "id", id, "err", err)
 		return false
 	}
-	if err := s.mail.SaveSent(address, raw); err != nil {
+	if err := s.mail.SaveSent(sentAddress, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
 	}
 	if senderID != nil {

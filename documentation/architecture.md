@@ -139,12 +139,12 @@ Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renam
 ## Request flow: webmail send
 
 1. The browser posts JSON to `/api/v1/mailboxes/{id}/send`. The request carries the session cookie and the CSRF header.
-2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address.
-3. The API opens SMTP with STARTTLS to Postfix on port 587. It authenticates with SASL PLAIN as `alice@example.com*aether-webmail`.
+2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and that the chosen From address is one they may use (see [Sending from aliases and lists](#sending-from-aliases-and-lists)). It builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address.
+3. The API opens SMTP with STARTTLS to Postfix on port 587. It authenticates with SASL PLAIN as `alice@example.com*aether-webmail`, the mailbox the message is sent from, and gives the chosen From address, such as `support@example.com`, as MAIL FROM.
 4. Dovecot reports the authenticated user as `alice@example.com`.
 5. Postfix applies `smtpd_sender_login_maps`, then hands the message to the API's first milter, which runs the organization's [mail flow rules](mail-flow-rules.md), and then to Rspamd. Rspamd scores it, signs it with the domain's DKIM key from Valkey, and returns it. The API's second milter runs the rules that test the spam score.
 6. Postfix delivers the message: through Dovecot LMTP for local recipients, or by direct MX delivery or the configured relay host for remote ones.
-7. The API appends a copy to the mailbox's Sent folder over IMAP.
+7. The API appends a copy to the mailbox's Sent folder over IMAP, or to the shared mailbox a list names for its sent copies.
 
 ## Performance targets
 
@@ -239,3 +239,13 @@ A mailbox's policy for a folder replaces the organization's policy for the same 
 The API applies the policies once a day per active mailbox on an active, verified domain. Each replica claims one due mailbox at a time with a 30-minute lease in `retention_runs`, which never locks rows in `mailboxes`, and for each folder asks Dovecot's doveadm HTTP API to `expunge` with a search query: `savedbefore` for Trash and Junk, `before` for other folders, and `before` with the keep days when a keep policy applies. A folder that does not exist is skipped. If Dovecot cannot be reached, the mailbox is tried again an hour later. A change to a policy schedules the affected mailboxes straight away.
 
 Keep for limits what retention deletes. It does not stop a person, or an IMAP client, from deleting a message themselves; those deletions are permanent until deleted mail can be recovered.
+
+## Sending from aliases and lists
+
+The From menu in Aether Mail offers each mailbox a person may send from, and with it every alias and list that `mail_senders` lets that mailbox send as: the aliases that forward to it and the lists that name it in `sendAs`. These appear only under mailboxes the person may sign in to with an app password, their own and user mailboxes where they have full access with Send as. Catch-all aliases are not offered. `GET /api/v1/me/mailboxes` lists them as `fromAddresses`, and `fromAddress` on a send, draft or scheduled message picks one; any other address answers `403 cannot_send`.
+
+Each address has its own From name and signatures, kept per mailbox in `mailbox_signatures` and read and written with `fromAddress` on `/api/v1/mailboxes/{mailboxId}/signatures`. An empty From name falls back to the name an administrator gave the alias or list, or to the mailbox's display name for its own address. The organization signature template fills in the chosen address and name, and uses the template of that address's domain.
+
+A reply starts from the address the message was delivered to, when the person may send from it, and otherwise from the first address in To, Cc or Bcc they may send from. Postfix delivers to Dovecot over the `mailbox-lmtp` transport, an `lmtp` service with `flags=O` and a recipient limit of one, so each copy carries an `X-Original-To` header with the address it was sent to before alias expansion. That finds the alias even when the sender put it in Bcc.
+
+Sent copies go to the Sent folder of the mailbox the message was sent from. A list can instead name a shared mailbox of its organization (`sentMailboxId`), so that everyone who sends as the list sees one history. A scheduled message keeps its From address and is checked again when it goes out; if its sender can no longer use that address, it is not sent and shows an error.

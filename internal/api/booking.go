@@ -554,7 +554,7 @@ func (s *Server) notifyApprovers(ctx context.Context, r *resource, organizer mai
 	if err != nil {
 		return err
 	}
-	return s.mail.Send(out.From, out.Recipients(), raw)
+	return s.mail.Send(out.From.Address, out.From.Address, out.Recipients(), raw)
 }
 
 func (s *Server) resourceKinds(ctx context.Context, addresses []string) (map[string]string, error) {

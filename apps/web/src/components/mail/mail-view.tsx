@@ -21,7 +21,7 @@ import { useListView } from "@/hooks/use-list-view"
 import { api } from "@/lib/api"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
-import { buildDraft, folderLabel, retentionNotice, snoozedFolder, type ComposeMode, type Draft } from "@/lib/mail"
+import { buildDraft, composeIdentity, folderLabel, retentionNotice, senderIdentities, snoozedFolder, type ComposeMode, type Draft, type SenderIdentity } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
 import type { Folder, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
@@ -50,8 +50,8 @@ export function MailView() {
   const mailbox = sections.find((m) => m.id === mailboxId) ?? sections[0]
   const readOnly = mailbox?.access === "read"
   const mbx = mailbox?.id ?? ""
-  const identities = mailboxes.data?.filter((m) => m.access === "owner" || m.sendAs || m.sendOnBehalf) ?? []
-  const from = identities.find((m) => m.id === mbx) ?? identities[0]
+  const identities = senderIdentities(mailboxes.data ?? [], mbx)
+  const from = identities.find((i) => i.from.address === mailbox?.address) ?? identities[0]
 
   const folderQueries = useQueries({ queries: sections.map((m) => ({ ...foldersQuery(m.id), refetchInterval: POLL })) })
   const trees = sections.map((m, i) => ({ mailbox: m, folders: folderQueries[i] }))
@@ -118,7 +118,7 @@ export function MailView() {
 
   const [selectedUid, setSelectedUid] = useState<number | null>(null)
   const [showFolders, setShowFolders] = useState(false)
-  const [compose, setCompose] = useState<{ key: number; draft: Draft } | null>(null)
+  const [compose, setCompose] = useState<{ key: number; draft: Draft; initial: SenderIdentity } | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
@@ -127,7 +127,7 @@ export function MailView() {
   const [composedTo, setComposedTo] = useState<string | null>(null)
   if (mailbox && composeTo !== composedTo) {
     setComposedTo(composeTo)
-    if (composeTo && from) setCompose({ key: (compose?.key ?? 0) + 1, draft: { ...buildDraft("new", undefined, mailbox.address, folder), to: [{ address: composeTo }] } })
+    if (composeTo && from) setCompose({ key: (compose?.key ?? 0) + 1, initial: from, draft: { ...buildDraft("new", undefined, [mailbox.address], folder), to: [{ address: composeTo }] } })
   }
   const linked = params.get("quarantine")
   const [linkedTo, setLinkedTo] = useState<string | null>(null)
@@ -220,13 +220,15 @@ export function MailView() {
   })
 
   async function openDraft(uid: number, draftFolder: string) {
-    if (!mailbox || from?.id !== mbx) return
+    if (!mailbox || from?.mailbox.id !== mbx) return
     const saved = await qc.fetchQuery({
       queryKey: ["message", mbx, draftFolder, uid],
       queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${uid}`, { query: { folder: draftFolder } }),
     })
-    const draft = buildDraft("draft", saved, mailbox.address, draftFolder)
-    setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft }))
+    const initial = composeIdentity("draft", saved, identities.filter((i) => i.mailbox.id === mbx), from)
+    if (saved.from[0] && initial.from.address !== saved.from[0].address.toLowerCase()) toast.info(`You can no longer send from ${saved.from[0].address}, so this draft now uses ${initial.from.address}.`)
+    const draft = buildDraft("draft", saved, [mailbox.address], draftFolder)
+    setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft, initial }))
   }
 
   const cancelScheduled = useMutation({
@@ -240,7 +242,7 @@ export function MailView() {
   })
 
   async function open(summary: MessageSummary) {
-    if (isDrafts && from?.id === mbx) return openDraft(summary.uid, folder)
+    if (isDrafts && from?.mailbox.id === mbx) return openDraft(summary.uid, folder)
     setSelectedUid(summary.uid)
     if (!summary.seen && !readOnly) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
   }
@@ -255,9 +257,13 @@ export function MailView() {
   function startCompose(mode: ComposeMode) {
     if (!mailbox || !from) return
     if (mode !== "new" && !message.data) return
-    const draft = buildDraft(mode, message.data, mailbox.address, folder)
-    if (from.id !== mbx && draft.forwardFrom) toast.info(`Forwarded attachments can't be sent from ${from.address}, so they were left out.`)
-    setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft }))
+    const initial = composeIdentity(mode, message.data, identities, from)
+    const draft = buildDraft(mode, message.data, [mailbox.address, initial.from.address], folder)
+    if (initial.mailbox.id !== mbx && draft.forwardFrom) {
+      toast.info(`Forwarded attachments can't be sent from ${initial.from.address}, so they were left out.`)
+      delete draft.forwardFrom
+    }
+    setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft, initial }))
   }
 
   function selectFolder(id: string, name: string) {
@@ -455,8 +461,8 @@ export function MailView() {
         <Composer
           key={compose.key}
           identities={identities}
-          initial={from}
-          draft={from.id === mbx ? compose.draft : { ...compose.draft, draftUid: undefined, forwardFrom: undefined }}
+          initial={compose.initial}
+          draft={compose.draft}
           onClose={() => setCompose(null)}
         />
       )}

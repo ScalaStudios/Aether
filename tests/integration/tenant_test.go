@@ -116,6 +116,10 @@ func TestTenantIsolation(t *testing.T) {
 	if got := orgAdmin.do("POST", "/organizations/"+a.orgID+"/domains", map[string]any{"name": "steal" + randomSuffix() + ".test", "aliasOf": b.domainID}, nil); got != 422 {
 		t.Errorf("creating an alias domain of another tenant's domain returned %d, want 422", got)
 	}
+	foreign := "alice@" + b.domain
+	orgAdmin.must("POST", "/mailboxes/"+a.aliceMailbox+"/send", map[string]string{"fromAddress": foreign}, nil, 403)
+	orgAdmin.must("PUT", "/mailboxes/"+a.aliceMailbox+"/signatures?fromAddress="+foreign, map[string]string{"displayName": "Foreign"}, nil, 403)
+	orgAdmin.must("POST", "/organizations/"+a.orgID+"/aliases", map[string]any{"domainId": a.domainID, "localPart": "team", "kind": "list", "destinations": []string{"alice@" + a.domain}, "sentMailboxId": createSharedMailbox(t, b).ID}, nil, 422)
 	if got := orgAdmin.do("POST", "/me/app-passwords", map[string]string{"name": "steal", "mailboxId": b.aliceMailbox}, nil); got != 422 {
 		t.Errorf("creating an app password for another tenant's mailbox returned %d, want 422", got)
 	}

@@ -521,6 +521,7 @@ type Attachment struct {
 
 type Message struct {
 	Summary
+	DeliveredTo string       `json:"deliveredTo,omitempty"`
 	Cc          []Address    `json:"cc"`
 	Bcc         []Address    `json:"bcc"`
 	ReplyTo     []Address    `json:"replyTo"`
@@ -553,7 +554,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			return ErrNotFound
 		}
 		uidSet := imap.UIDSetNum(imap.UID(uid))
-		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References"}, Peek: true}
+		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To"}, Peek: true}
 		msgs, err := ic.Fetch(uidSet, &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true}, BodySection: []*imap.FetchItemBodySection{refs},
@@ -578,6 +579,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 		if hdr := m.FindBodySection(refs); hdr != nil {
 			if e, err := message.Read(bytes.NewReader(append(hdr, '\r', '\n'))); err == nil {
 				out.References = parseMessageIDs(e.Header.Get("References"))
+				out.DeliveredTo = strings.Trim(e.Header.Get("X-Original-To"), " <>")
 			}
 		}
 		var textPart, htmlPart, calendarPart *imap.BodyStructureSinglePart
@@ -1023,16 +1025,16 @@ func (c *Client) Delete(address, folder string, uid uint32) error {
 	})
 }
 
-func (c *Client) Send(from Address, rcpts []string, raw []byte) error {
+func (c *Client) Send(login, from string, rcpts []string, raw []byte) error {
 	sc, err := smtp.DialStartTLS(c.submissionAddr, c.tls)
 	if err != nil {
 		return fmt.Errorf("submission connect: %w", err)
 	}
 	defer sc.Close()
-	if err := sc.Auth(sasl.NewPlainClient("", c.masterLogin(from.Address), c.masterPassword)); err != nil {
+	if err := sc.Auth(sasl.NewPlainClient("", c.masterLogin(login), c.masterPassword)); err != nil {
 		return fmt.Errorf("submission auth: %w", err)
 	}
-	if err := sc.SendMail(from.Address, rcpts, bytes.NewReader(raw)); err != nil {
+	if err := sc.SendMail(from, rcpts, bytes.NewReader(raw)); err != nil {
 		return err
 	}
 	return sc.Quit()

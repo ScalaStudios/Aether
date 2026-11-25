@@ -22,8 +22,8 @@ import { api } from "@/lib/api"
 import { signaturesQuery } from "@/lib/queries"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
-import type { Draft } from "@/lib/mail"
-import type { Attachment, Mailbox, OutgoingMessage, SavedDraft } from "@/lib/types"
+import type { Draft, SenderIdentity } from "@/lib/mail"
+import type { Attachment, OutgoingMessage, SavedDraft } from "@/lib/types"
 
 const address = z.object({ name: z.string().optional(), address: z.email() })
 
@@ -82,9 +82,10 @@ function flyAway(icon: SVGElement | null) {
     .finished.finally(() => plane.remove())
 }
 
-export function Composer({ identities, initial, draft, onClose }: { identities: Mailbox[]; initial: Mailbox; draft: Draft; onClose: () => void }) {
+export function Composer({ identities, initial, draft, onClose }: { identities: SenderIdentity[]; initial: SenderIdentity; draft: Draft; onClose: () => void }) {
   const qc = useQueryClient()
-  const [mailbox, setMailbox] = useState(initial)
+  const [identity, setIdentity] = useState(initial)
+  const { mailbox, from } = identity
   const [showCopies, setShowCopies] = useState(draft.cc.length > 0)
   const [files, setFiles] = useState<File[]>([])
   const [forwarded, setForwarded] = useState<Attachment[]>(draft.forwardFrom?.attachments ?? [])
@@ -120,7 +121,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
     defaultValues: { to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject },
   })
   const placingSignature = useRef(false)
-  const signatures = useQuery(signaturesQuery(mailbox.id))
+  const signatures = useQuery(signaturesQuery(mailbox.id, from.address))
   const editor = useEditor({
     extensions: mailEditorExtensions,
     content: draft.html,
@@ -144,6 +145,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
     const attachments = await Promise.all(uploads.map(async (f) => ({ filename: f.name, contentType: f.type || "application/octet-stream", data: await readBase64(f) })))
     return {
       ...values,
+      fromAddress: from.address,
       html: editor?.getHTML() ?? "",
       text: editor?.getText({ blockSeparator: "\n\n" }) ?? "",
       inReplyTo: draft.inReplyTo,
@@ -171,18 +173,29 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
     },
   })
 
-  const signaturePlaced = useRef(draft.mode === "draft")
+  const signaturePlaced = useRef(draft.mode === "draft" ? initial.from.address : "")
   useEffect(() => {
     const settings = signatures.data
-    if (!editor || !settings || signaturePlaced.current) return
-    signaturePlaced.current = true
-    const chosen = settings.signatures.find((sig) => sig.id === (draft.mode === "new" ? settings.newMessage : settings.replies))
-    if (!chosen) return
+    if (!editor || !settings || signaturePlaced.current === from.address) return
+    signaturePlaced.current = from.address
+    const newMessage = draft.mode === "new" || (draft.mode === "draft" && !draft.inReplyTo)
+    const chosen = settings.signatures.find((sig) => sig.id === (newMessage ? settings.newMessage : settings.replies))
+    const html = chosen && `<div data-aether-signature="true">${chosen.html}</div>`
     const doc = editor.state.doc
+    let start = -1
+    let end = -1
+    doc.forEach((node, offset) => {
+      if (node.type.name === "automaticSignature") {
+        start = offset
+        end = offset + node.nodeSize
+      }
+    })
     placingSignature.current = true
-    editor.commands.insertContentAt(draft.mode === "new" ? doc.content.size : (doc.firstChild?.nodeSize ?? 0), `<p></p>${chosen.html}${draft.mode === "new" ? "" : "<p></p>"}`, { updateSelection: false })
+    if (start >= 0 && html) editor.commands.insertContentAt({ from: start, to: end }, html, { updateSelection: false })
+    else if (start >= 0) editor.commands.deleteRange({ from: start, to: end })
+    else if (html) editor.commands.insertContentAt(newMessage ? doc.content.size : (doc.firstChild?.nodeSize ?? 0), `<p></p>${html}${newMessage ? "" : "<p></p>"}`, { updateSelection: false })
     placingSignature.current = false
-  }, [editor, signatures.data, draft.mode])
+  }, [editor, signatures.data, draft.mode, draft.inReplyTo, from.address])
 
   const readOnly = mailbox.access === "read"
   const save = useCallback(() => {
@@ -238,9 +251,12 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
   }
 
   function changeFrom(id: string) {
-    const next = identities.find((m) => m.id === id) ?? mailbox
-    if (forwarded.length) toast.info(`Forwarded attachments can't be sent from ${next.address}, so they were left out.`)
-    setMailbox(next)
+    const next = identities.find((i) => i.from.address === id)
+    if (!next) return
+    setIdentity(next)
+    touch()
+    if (next.mailbox.id === mailbox.id) return
+    if (forwarded.length) toast.info(`Forwarded attachments can't be sent from ${next.from.address}, so they were left out.`)
     setDraftUid(undefined)
     setSource(null)
     setForwarded([])
@@ -248,7 +264,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
 
   const submit = (sendAt?: Date) =>
     form.handleSubmit((values) => {
-      if (!editor) return
+      if (!editor || signatures.isPending) return
       send.mutate({ values, sendAt })
     })
 
@@ -280,15 +296,19 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
             <SheetDescription asChild>
               <div className="flex items-center gap-2">
                 From
-                <Select value={mailbox.id} onValueChange={changeFrom} disabled={saveDraft.isPending}>
+                <Select value={from.address} onValueChange={changeFrom} disabled={saveDraft.isPending || send.isPending}>
                   <SelectTrigger aria-label="From" size="sm" className="min-w-0">
-                    <SelectValue />
+                    <SelectValue>
+                      <span className="min-w-0 truncate">{formatAddress(from)}</span>
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
-                    {identities.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {formatAddress({ name: m.displayName, address: m.address })}
-                        {!m.sendAs && m.sendOnBehalf && <span className="text-fg-tertiary">· on behalf</span>}
+                  <SelectContent position="popper" align="start" className="max-w-(--radix-select-content-available-width)">
+                    {identities.map(({ mailbox: m, from }) => (
+                      <SelectItem key={from.address} value={from.address} textValue={formatAddress(from)}>
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{from.name || from.address}</span>
+                          <span className="truncate text-sm text-fg-tertiary">{[from.name && from.address, !m.sendAs && m.sendOnBehalf && "On behalf"].filter(Boolean).join(" · ")}</span>
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -296,7 +316,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
               </div>
             </SheetDescription>
           ) : (
-            <SheetDescription>From {formatAddress({ name: mailbox.displayName, address: mailbox.address })}</SheetDescription>
+            <SheetDescription>From {formatAddress(from)}</SheetDescription>
           )}
         </SheetHeader>
         <form
@@ -363,6 +383,7 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
                 Attach
               </Button>
               {totalBytes > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{formatBytes(totalBytes)} of 20 MB</span>}
+              {signatures.isError && <Button type="button" variant="link" onClick={() => signatures.refetch()}>Retry loading signature</Button>}
               <span role="status" className="text-sm whitespace-nowrap text-fg-tertiary">
                 {saveDraft.isPending ? "Saving…" : saveDraft.isError ? "Couldn't save the draft" : savedAt ? `Saved ${formatListDate(savedAt.toISOString())}` : ""}
               </span>
@@ -371,11 +392,11 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
               Discard
             </Button>
             <div className="flex">
-              <Button type="submit" loading={send.isPending} className="rounded-r-none hover:shadow-none">
+              <Button type="submit" loading={send.isPending} disabled={signatures.isPending} className="rounded-r-none hover:shadow-none">
                 <Send ref={sendIcon} aria-hidden />
                 Send
               </Button>
-              <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending} onPick={(at) => submit(at)()}>
+              <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending || signatures.isPending} onPick={(at) => submit(at)()}>
                 <Button type="button" size="icon" aria-label="Schedule send" className="h-auto self-stretch rounded-l-none border-l-ink/20 hover:shadow-none">
                   <ChevronDown />
                 </Button>

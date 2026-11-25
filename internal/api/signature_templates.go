@@ -185,7 +185,7 @@ func (s *Server) previewSignatureTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose a mailbox in this organization to preview with.")
 		return
 	}
-	out, err := s.renderSignature(r.Context(), in.MailboxID, orgID, &in.signatureTemplate)
+	out, err := s.renderSignature(r.Context(), in.MailboxID, orgID, &in.signatureTemplate, nil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose a mailbox in this organization to preview with.")
 		return
@@ -202,16 +202,20 @@ func (s *Server) mailboxSignatureTemplate(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	from, _, ok := s.resolveSender(w, r, p, m, r.URL.Query().Get("fromAddress"))
+	if !ok {
+		return
+	}
 	t := builtInSignature()
 	err := s.db.QueryRow(r.Context(), `
 		SELECT html, links, logo_width FROM signature_templates
-		WHERE org_id = $1 AND (domain_id IS NULL OR domain_id = (SELECT domain_id FROM mailboxes WHERE id = $2))
-		ORDER BY domain_id NULLS LAST LIMIT 1`, m.OrgID, m.ID).Scan(&t.HTML, &t.Links, &t.LogoWidth)
+		WHERE org_id = $1 AND (domain_id IS NULL OR domain_id = (SELECT id FROM domains WHERE name = split_part($2, '@', 2)))
+		ORDER BY domain_id NULLS LAST LIMIT 1`, m.OrgID, from.Address).Scan(&t.HTML, &t.Links, &t.LogoWidth)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		s.internalError(w, r, err)
 		return
 	}
-	out, err := s.renderSignature(r.Context(), m.ID, m.OrgID, &t)
+	out, err := s.renderSignature(r.Context(), m.ID, m.OrgID, &t, &from)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -219,7 +223,7 @@ func (s *Server) mailboxSignatureTemplate(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"html": out})
 }
 
-func (s *Server) renderSignature(ctx context.Context, mailboxID, orgID string, t *signatureTemplate) (string, error) {
+func (s *Server) renderSignature(ctx context.Context, mailboxID, orgID string, t *signatureTemplate, from *mailpkg.Address) (string, error) {
 	var address, local, display, domain, org, owner, title, phone, logoType string
 	var logo []byte
 	err := s.db.QueryRow(ctx, `
@@ -232,6 +236,10 @@ func (s *Server) renderSignature(ctx context.Context, mailboxID, orgID string, t
 		WHERE m.id = $1 AND m.org_id = $2`, mailboxID, orgID).Scan(&address, &local, &display, &domain, &org, &owner, &title, &phone, &logoType, &logo)
 	if err != nil {
 		return "", err
+	}
+	if from != nil {
+		address, display = from.Address, from.Name
+		local, domain, _ = strings.Cut(address, "@")
 	}
 	values := map[string]string{
 		"displayName":  html.EscapeString(firstNonEmpty(display, owner, local)),

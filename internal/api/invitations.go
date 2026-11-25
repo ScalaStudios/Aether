@@ -178,7 +178,7 @@ func (s *Server) sendITIP(ctx context.Context, from *ownedMailbox, sender *mailp
 	if err != nil {
 		return outcomes, err
 	}
-	return outcomes, s.mail.Send(out.From, out.Recipients(), raw)
+	return outcomes, s.mail.Send(from.Address, from.Address, out.Recipients(), raw)
 }
 
 func cancelledCopy(comp *ical.Component, attendees []mailpkg.Address, sequence int) *ical.Component {

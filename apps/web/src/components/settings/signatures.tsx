@@ -12,52 +12,77 @@ import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { FormatToolbar, mailEditorExtensions } from "@/components/mail/format-toolbar"
 import { SectionHeader } from "@/components/page-header"
-import { MailboxPicker } from "@/components/settings/mail-rules"
-import { EmptyState } from "@/components/states"
+import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useSession } from "@/hooks/use-session"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
+import { senderIdentities } from "@/lib/mail"
 import { myMailboxesQuery, signaturesQuery } from "@/lib/queries"
 import type { Signature, SignatureSettings } from "@/lib/types"
 
 export function Signatures() {
-  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read" && m.protocols.includes("webmail")) })
+  const identities = useQuery({ ...myMailboxesQuery, select: (list) => senderIdentities(list.filter((m) => m.access !== "read" && m.protocols.includes("webmail"))) })
   const [chosen, setChosen] = useState<string | null>(null)
-  const mailboxId = chosen ?? mailboxes.data?.[0]?.id ?? null
+  const identity = identities.data?.find((i) => i.from.address === chosen) ?? identities.data?.[0]
   const [editing, setEditing] = useState<Signature | null>(null)
 
   return (
     <section id="signatures" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
         title="Signatures"
-        description="Added to messages you write in Aether Mail. Mail apps on your phone or computer keep their own signature settings."
+        description="Each address you send from has its own From name and signatures in Aether Mail. Mail apps on your phone or computer keep their own settings."
         actions={
-          <>
-            <MailboxPicker mailboxes={mailboxes.data} value={mailboxId} onChange={setChosen} />
-            {mailboxId && (
-              <Button onClick={() => setEditing({ id: "", name: "", html: "" })}>
-                <Plus aria-hidden />
-                New signature
-              </Button>
-            )}
-          </>
+          identity && (
+            <Button onClick={() => setEditing({ id: "", name: "", html: "" })}>
+              <Plus aria-hidden />
+              New signature
+            </Button>
+          )
         }
       />
-      {mailboxId && <SignatureList key={mailboxId} mailboxId={mailboxId} editing={editing} setEditing={setEditing} />}
+      {identities.data && identities.data.length > 1 && (
+        <Field id="signature-address" label="Address">
+          <Select value={identity?.from.address} onValueChange={setChosen}>
+            <SelectTrigger id="signature-address" className="w-full sm:max-w-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {identities.data.map(({ from }) => (
+                <SelectItem key={from.address} value={from.address}>
+                  {from.address}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      )}
+      {identities.isError ? (
+        <ErrorState error={identities.error} onRetry={() => identities.refetch()} />
+      ) : identities.isPending ? (
+        <RowsSkeleton rows={2} />
+      ) : identity ? (
+        <SignatureList key={`${identity.mailbox.id}/${identity.from.address}`} mailboxId={identity.mailbox.id} fromAddress={identity.from.address} editing={editing} setEditing={setEditing} />
+      ) : (
+        <EmptyState icon={SignatureIcon} title="No address to send from" description="Signatures belong to the addresses you send from. Ask an administrator for a mailbox, or for Send as on a shared one." />
+      )}
     </section>
   )
 }
 
-function SignatureList({ mailboxId, editing, setEditing }: { mailboxId: string; editing: Signature | null; setEditing: (s: Signature | null) => void }) {
+function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailboxId: string; fromAddress: string; editing: Signature | null; setEditing: (s: Signature | null) => void }) {
   const qc = useQueryClient()
-  const query = useQuery(signaturesQuery(mailboxId))
+  const query = useQuery(signaturesQuery(mailboxId, fromAddress))
   const [deleting, setDeleting] = useState<Signature | null>(null)
+  const [displayName, setDisplayName] = useState<string | null>(null)
   const save = useMutation({
-    mutationFn: (next: SignatureSettings) => api<SignatureSettings>(`/mailboxes/${mailboxId}/signatures`, { method: "PUT", body: next }),
-    onSuccess: (saved) => qc.setQueryData(signaturesQuery(mailboxId).queryKey, saved),
+    mutationFn: (next: SignatureSettings) => api<SignatureSettings>(`/mailboxes/${mailboxId}/signatures`, { method: "PUT", query: { fromAddress }, body: next }),
+    onSuccess: (saved) => {
+      qc.setQueryData(signaturesQuery(mailboxId, fromAddress).queryKey, saved)
+      qc.invalidateQueries({ queryKey: myMailboxesQuery.queryKey })
+    },
   })
   const settings = query.data
 
@@ -68,7 +93,7 @@ function SignatureList({ mailboxId, editing, setEditing }: { mailboxId: string; 
     const signatures = exists ? settings.signatures.map((s) => (s.id === id ? { ...sig, id } : s)) : [...settings.signatures, { ...sig, id }]
     const first = settings.signatures.length === 0
     save.mutate(
-      { signatures, newMessage: first ? id : settings.newMessage, replies: first ? id : settings.replies },
+      { ...settings, signatures, newMessage: first ? id : settings.newMessage, replies: first ? id : settings.replies },
       {
         onSuccess: () => {
           toast.success(exists ? "Signature updated" : "Signature created")
@@ -82,7 +107,7 @@ function SignatureList({ mailboxId, editing, setEditing }: { mailboxId: string; 
     if (!settings) return
     const unset = (id: string) => (id === sig.id ? "" : id)
     save.mutate(
-      { signatures: settings.signatures.filter((s) => s.id !== sig.id), newMessage: unset(settings.newMessage), replies: unset(settings.replies) },
+      { ...settings, signatures: settings.signatures.filter((s) => s.id !== sig.id), newMessage: unset(settings.newMessage), replies: unset(settings.replies) },
       {
         onSuccess: () => {
           toast.success("Signature deleted")
@@ -92,10 +117,35 @@ function SignatureList({ mailboxId, editing, setEditing }: { mailboxId: string; 
     )
   }
 
-  if (!settings) return null
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />
+  if (!settings) return <RowsSkeleton rows={2} />
+  const name = displayName ?? settings.displayName ?? ""
 
   return (
     <>
+      <form
+        noValidate
+        className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6"
+        onSubmit={(e) => {
+          e.preventDefault()
+          save.mutate(
+            { ...settings, displayName: name.trim() },
+            {
+              onSuccess: () => {
+                setDisplayName(null)
+                toast.success("From name saved")
+              },
+            }
+          )
+        }}
+      >
+        <Field id="sender-name" label="From name" hint={`Recipients see this name next to ${fromAddress}. Leave it empty to use the name your administrator set.`}>
+          <Input id="sender-name" maxLength={200} autoComplete="off" className="sm:max-w-sm" value={name} onChange={(e) => setDisplayName(e.target.value)} />
+        </Field>
+        <Button type="submit" variant="secondary" className="self-start" loading={save.isPending && displayName !== null} disabled={name.trim() === (settings.displayName ?? "")}>
+          Save From name
+        </Button>
+      </form>
       {settings.signatures.length === 0 ? (
         <EmptyState icon={SignatureIcon} title="No signatures" description="Create one to sign new messages and replies automatically." />
       ) : (
@@ -122,7 +172,7 @@ function SignatureList({ mailboxId, editing, setEditing }: { mailboxId: string; 
           </ul>
         </div>
       )}
-      {editing && <SignatureDialog key={editing.id || "new"} mailboxId={mailboxId} signature={editing} pending={save.isPending} onSave={upsert} onClose={() => setEditing(null)} />}
+      {editing && <SignatureDialog key={editing.id || "new"} mailboxId={mailboxId} fromAddress={fromAddress} signature={editing} pending={save.isPending} onSave={upsert} onClose={() => setEditing(null)} />}
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
@@ -157,7 +207,7 @@ function DefaultPicker({ id, label, value, signatures, onChange }: { id: string;
   )
 }
 
-function SignatureDialog({ mailboxId, signature, pending, onSave, onClose }: { mailboxId: string; signature: Signature; pending: boolean; onSave: (s: Signature) => void; onClose: () => void }) {
+function SignatureDialog({ mailboxId, fromAddress, signature, pending, onSave, onClose }: { mailboxId: string; fromAddress: string; signature: Signature; pending: boolean; onSave: (s: Signature) => void; onClose: () => void }) {
   const [name, setName] = useState(signature.name)
   const [error, setError] = useState("")
   const mailbox = useQuery({ ...myMailboxesQuery, select: (list) => list.find((m) => m.id === mailboxId) }).data
@@ -169,7 +219,7 @@ function SignatureDialog({ mailboxId, signature, pending, onSave, onClose }: { m
     editorProps: { attributes: { class: "prose-editor min-h-[160px] px-4 py-3 text-base outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Signature", "data-focus-ring": "off" } },
   })
   const template = useMutation({
-    mutationFn: () => api<{ html: string }>(`/mailboxes/${mailboxId}/signature-template`),
+    mutationFn: () => api<{ html: string }>(`/mailboxes/${mailboxId}/signature-template`, { query: { fromAddress } }),
     onSuccess: ({ html }) => {
       editor?.commands.setContent(html)
       if (!name.trim()) setName(org || "Default")

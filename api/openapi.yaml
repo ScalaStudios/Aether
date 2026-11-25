@@ -509,12 +509,42 @@ paths:
       responses:
         "204": { description: Discarded }
         "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/signatures:
+    parameters: [{ $ref: "#/components/parameters/mailboxId" }, { $ref: "#/components/parameters/fromAddress" }]
+    get:
+      tags: [mail]
+      summary: Read the display name and signatures for a From address
+      responses:
+        "200":
+          description: Settings for this address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignatureSettings" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [mail]
+      summary: Save the display name and signatures for a From address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignatureSettings" }
+      responses:
+        "200":
+          description: Saved settings with sanitized signature HTML
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignatureSettings" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/signature-template:
     get:
       tags: [mail]
       summary: The organization's signature template filled in for this mailbox
       description: "Uses the template of the mailbox's domain, else the organization-wide template, else the built-in layout. The logo is the organization's light theme logo, inlined as a data: URL."
-      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }, { $ref: "#/components/parameters/fromAddress" }]
       responses:
         "200":
           description: Sanitized HTML, ready to save as a signature
@@ -2911,6 +2941,7 @@ components:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
     mailboxId: { name: mailboxId, in: path, required: true, schema: { type: string, format: uuid } }
+    fromAddress: { name: fromAddress, in: query, schema: { type: string, format: email }, description: An authorized From address. Defaults to the mailbox address. }
     uid: { name: uid, in: path, required: true, schema: { type: integer } }
     folder: { name: folder, in: query, schema: { type: string, default: INBOX } }
     traceSender: { name: sender, in: query, description: Part of the envelope sender address, schema: { type: string } }
@@ -3033,6 +3064,22 @@ components:
         logoLight: { type: [string, "null"] }
         logoDark: { type: [string, "null"] }
         favicon: { type: [string, "null"] }
+    SignatureSettings:
+      type: object
+      properties:
+        displayName: { type: string, maxLength: 200, description: An empty name uses the mailbox or list default. }
+        signatures:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            required: [id, name, html]
+            properties:
+              id: { type: string, pattern: "^[A-Za-z0-9-]{1,64}$" }
+              name: { type: string, maxLength: 100 }
+              html: { type: string }
+        newMessage: { type: string, description: Default signature ID for new mail. }
+        replies: { type: string, description: Default signature ID for replies and forwards. }
     SignatureLink:
       type: object
       required: [label, url]
@@ -3161,6 +3208,7 @@ components:
         createdAt: { type: string, format: date-time }
         kind: { type: string, enum: [user, shared], description: A user mailbox has an owner account that signs in with the address. A shared mailbox has no sign-in; its members open it with their own accounts. }
         hiddenFromDirectory: { type: boolean }
+        fromAddresses: { type: array, items: { $ref: "#/components/schemas/Address" }, description: Authorized From addresses for this mailbox. Only in GET /me/mailboxes. }
         access: { type: string, enum: [owner, full, read], description: The caller's access. Only in GET /me/mailboxes. }
         sendAs: { type: boolean, description: The caller may send from the address. Only in GET /me/mailboxes. }
         sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }
@@ -3189,6 +3237,7 @@ components:
         name: { type: string }
         acceptFrom: { type: string, enum: [anyone, organization, members, allowlist] }
         allowedSenders: { type: array, items: { type: string } }
+        sentMailboxId: { type: string, format: uuid, description: Shared mailbox for the list’s sent copies. }
         sendAs: { type: array, items: { type: string } }
         owners: { type: array, items: { type: string, format: uuid } }
         moderated: { type: boolean }
@@ -3224,6 +3273,7 @@ components:
           enum: [anyone, organization, members, allowlist]
           description: "Who may send to a list. organization: people who signed in to send from a domain of this organization. members: the list's destinations. allowlist: the addresses and @domain entries in allowedSenders. Mail from anyone else is rejected with 5.7.1."
         allowedSenders: { type: array, items: { type: string }, description: Addresses or @domain entries }
+        sentMailboxId: { type: string, description: A shared mailbox of this organization that keeps the copies of messages sent as the list from Aether Mail. An empty string files them in the Sent folder of the sender's mailbox. }
         sendAs: { type: array, items: { type: string, format: email }, description: Mailboxes of this organization that may send as the list }
         owners: { type: array, items: { type: string, format: uuid }, description: Organization members who may change the list's destinations }
         moderated: { type: boolean, description: "Hold messages to the list until a moderator approves them. Needs at least one moderator or owner, and AETHER_SIEVE_RELAY_PASSWORD on the API." }
@@ -3439,6 +3489,7 @@ components:
           properties:
             cc: { type: array, items: { $ref: "#/components/schemas/Address" } }
             bcc: { type: array, items: { $ref: "#/components/schemas/Address" }, description: Present only in drafts and sent copies that carry a Bcc header }
+            deliveredTo: { type: string, description: "The address this copy was delivered to, before alias expansion, from the X-Original-To header that Postfix adds." }
             replyTo: { type: array, items: { $ref: "#/components/schemas/Address" } }
             messageId: { type: string }
             inReplyTo: { type: string }
@@ -3710,6 +3761,7 @@ components:
       type: object
       required: [to, subject]
       properties:
+        fromAddress: { type: string, format: email, description: An address from the mailbox’s fromAddresses. Defaults to the mailbox address. }
         to: { type: array, items: { $ref: "#/components/schemas/Address" }, minItems: 1 }
         cc: { type: array, items: { $ref: "#/components/schemas/Address" } }
         bcc: { type: array, items: { $ref: "#/components/schemas/Address" } }

@@ -19,6 +19,12 @@ export const domainsQuery = (orgId: string) =>
     queryFn: () => api<Domain[]>(`/organizations/${orgId}/domains`),
   })
 
+export const mailboxesQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["mailboxes", orgId],
+    queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`),
+  })
+
 export const membersQuery = (orgId: string) =>
   queryOptions({
     queryKey: ["members", orgId],
@@ -31,10 +37,10 @@ export const foldersQuery = (mailboxId: string) =>
     queryFn: () => api<Folder[]>(`/mailboxes/${mailboxId}/folders`),
   })
 
-export const signaturesQuery = (mailboxId: string) =>
+export const signaturesQuery = (mailboxId: string, fromAddress?: string) =>
   queryOptions({
-    queryKey: ["signatures", mailboxId],
-    queryFn: () => api<SignatureSettings>(`/mailboxes/${mailboxId}/signatures`),
+    queryKey: ["signatures", mailboxId, fromAddress],
+    queryFn: () => api<SignatureSettings>(`/mailboxes/${mailboxId}/signatures`, { query: { fromAddress } }),
   })
 
 export const calendarsQuery = queryOptions({

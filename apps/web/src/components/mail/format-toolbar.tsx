@@ -6,7 +6,7 @@ import SuperscriptMark from "@tiptap/extension-superscript"
 import { TableKit } from "@tiptap/extension-table"
 import TextAlign from "@tiptap/extension-text-align"
 import { TextStyleKit } from "@tiptap/extension-text-style"
-import { Extension, useEditorState, type Editor } from "@tiptap/react"
+import { Extension, Node, useEditorState, type Editor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import {
   AlignCenter,
@@ -47,6 +47,13 @@ export const mailEditorExtensions = [
   SubscriptMark,
   SuperscriptMark,
   Image.configure({ allowBase64: true }),
+  Node.create({
+    name: "automaticSignature",
+    group: "block",
+    content: "block+",
+    parseHTML: () => [{ tag: "div[data-aether-signature]" }],
+    renderHTML: () => ["div", { "data-aether-signature": "true" }, 0],
+  }),
   TableKit.configure({ table: { resizable: false } }),
   Extension.create({
     name: "keepStyle",

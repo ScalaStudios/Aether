@@ -29,7 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { plural } from "@/lib/format"
-import { domainsQuery, membersQuery } from "@/lib/queries"
+import { domainsQuery, mailboxesQuery, membersQuery } from "@/lib/queries"
 import type { AcceptFrom, Alias, DirectoryGroup, Member, ResolvedMember } from "@/lib/types"
 
 type Kind = Alias["kind"]
@@ -51,6 +51,7 @@ const schema = z
     acceptFrom: z.enum(["anyone", "organization", "members", "allowlist"]),
     allowedSenders: addresses,
     sendAs: addresses,
+    sentMailboxId: z.string(),
     owners: addresses,
     groups: z.array(z.string()),
     memberDomains: z.array(z.string()),
@@ -69,7 +70,7 @@ const schema = z
 
 type Values = z.infer<typeof schema>
 
-const blank: Values = { kind: "alias", domainId: "", localPart: "", name: "", destinations: [], active: true, acceptFrom: "organization", allowedSenders: [], sendAs: [], owners: [], groups: [], memberDomains: [], moderated: false, moderators: [], moderationExempt: [], hidden: false }
+const blank: Values = { kind: "alias", domainId: "", localPart: "", name: "", destinations: [], active: true, acceptFrom: "organization", allowedSenders: [], sendAs: [], sentMailboxId: "", owners: [], groups: [], memberDomains: [], moderated: false, moderators: [], moderationExempt: [], hidden: false }
 
 const kinds = [
   { value: "alias" as const, label: "Alias" },
@@ -94,6 +95,7 @@ const fieldErrors: Record<string, keyof Values> = {
   invalid_domain: "domainId",
   invalid_name: "name",
   invalid_destinations: "destinations",
+  invalid_sent_mailbox: "sentMailboxId",
   invalid_send_as: "sendAs",
   invalid_owners: "owners",
   invalid_moderators: "moderators",
@@ -131,6 +133,7 @@ function toValues(target: Alias | Kind, people: Member[]): Values {
     active: target.active,
     acceptFrom: target.acceptFrom,
     allowedSenders: toAddresses(target.allowedSenders),
+    sentMailboxId: target.sentMailboxId ?? "",
     sendAs: toAddresses(target.sendAs),
     owners: toPeople(target.owners),
     groups: target.groups,
@@ -155,6 +158,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
   const [deleting, setDeleting] = useState<Alias | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: blank })
   const [kind, acceptFrom, moderated] = useWatch({ control: form.control, name: ["kind", "acceptFrom", "moderated"] })
+  const shared = useQuery({ ...mailboxesQuery(orgId), enabled: !!editing && kind === "list", select: (items) => items.filter((m) => m.kind === "shared") })
   const errors = form.formState.errors
   const existing = typeof editing === "object" ? editing : null
 
@@ -190,6 +194,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         destinations: v.destinations.map((a) => a.address),
         acceptFrom: list ? v.acceptFrom : "anyone",
         allowedSenders: list && v.acceptFrom === "allowlist" ? v.allowedSenders.map((a) => a.address) : [],
+        sentMailboxId: list ? v.sentMailboxId : "",
         sendAs: list ? v.sendAs.map((a) => a.address) : [],
         owners,
         groups: list ? v.groups : [],
@@ -513,6 +518,32 @@ export function AliasesTab({ orgId }: { orgId: string }) {
               render={({ field, fieldState }) => (
                 <Field id="alias-send-as" label="Can send as the list" hint="Mailboxes in this organization that can send from the list’s address. Members can’t unless you add them here." error={fieldState.error?.message}>
                   <RecipientInput id="alias-send-as" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" suggest />
+                </Field>
+              )}
+            />
+            <Controller
+              control={form.control}
+              name="sentMailboxId"
+              render={({ field, fieldState }) => (
+                <Field
+                  id="list-sent"
+                  label="Save sent copies in"
+                  hint="Where Aether Mail files messages sent as the list. Pick a shared mailbox so everyone who sends as the list sees one history."
+                  error={fieldState.error?.message ?? (shared.isError ? "Shared mailboxes could not be loaded. Close and reopen the list to try again." : undefined)}
+                >
+                  <Select value={shared.isPending ? "" : field.value || "personal"} disabled={shared.isPending} onValueChange={(v) => field.onChange(v === "personal" ? "" : v)}>
+                    <SelectTrigger id="list-sent" className="w-full">
+                      <SelectValue placeholder="Loading shared mailboxes…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="personal">Each sender’s own Sent folder</SelectItem>
+                      {shared.data?.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.address}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
               )}
             />

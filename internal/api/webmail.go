@@ -366,6 +366,7 @@ func cleanAddresses(in []mailpkg.Address) ([]mailpkg.Address, bool) {
 }
 
 type outgoingRequest struct {
+	FromAddress string            `json:"fromAddress"`
 	To          []mailpkg.Address `json:"to"`
 	Cc          []mailpkg.Address `json:"cc"`
 	Bcc         []mailpkg.Address `json:"bcc"`
@@ -388,8 +389,8 @@ type outgoingRequest struct {
 	SendAt   *time.Time `json:"sendAt"`
 }
 
-func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedMailbox, in *outgoingRequest, requireRecipients bool) (*mailpkg.Outgoing, bool) {
-	out := &mailpkg.Outgoing{From: mailpkg.Address{Name: m.DisplayName, Address: m.Address}, Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo}
+func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedMailbox, from mailpkg.Address, in *outgoingRequest, requireRecipients bool) (*mailpkg.Outgoing, bool) {
+	out := &mailpkg.Outgoing{From: from, Subject: in.Subject, Text: in.Text, InReplyTo: in.InReplyTo}
 	var ok1, ok2, ok3 bool
 	out.To, ok1 = cleanAddresses(in.To)
 	out.Cc, ok2 = cleanAddresses(in.Cc)
@@ -462,7 +463,11 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if !decode(w, r, 30<<20, &in) {
 		return
 	}
-	out, ok := s.buildOutgoing(w, r, m, &in, true)
+	from, sentAddress, ok := s.resolveSender(w, r, p, m, in.FromAddress)
+	if !ok {
+		return
+	}
+	out, ok := s.buildOutgoing(w, r, m, from, &in, true)
 	if !ok {
 		return
 	}
@@ -478,7 +483,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		s.internalError(w, r, err)
 		return
 	}
-	if err := s.mail.Send(out.From, out.Recipients(), raw); err != nil {
+	if err := s.mail.Send(m.Address, out.From.Address, out.Recipients(), raw); err != nil {
 		mailSends.WithLabelValues("rejected").Inc()
 		s.log.Warn("submission rejected", "mailbox", m.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "send_failed", "The mail server did not accept the message: "+err.Error())
@@ -486,7 +491,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	mailSends.WithLabelValues("accepted").Inc()
 	s.recordAccess(r, p, m, sendAction(m), "", []accessItem{{Subject: out.Subject, MessageID: messageID}}, map[string]any{"recipients": len(out.Recipients())})
-	if err := s.mail.SaveSent(m.Address, raw); err != nil {
+	if err := s.mail.SaveSent(sentAddress, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", m.ID, "err", err)
 	}
 	if m.Access == "read" {
@@ -517,7 +522,11 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, p *principal)
 	if !decode(w, r, 30<<20, &in) {
 		return
 	}
-	out, ok := s.buildOutgoing(w, r, m, &in, false)
+	from, _, ok := s.resolveSender(w, r, p, m, in.FromAddress)
+	if !ok {
+		return
+	}
+	out, ok := s.buildOutgoing(w, r, m, from, &in, false)
 	if !ok {
 		return
 	}

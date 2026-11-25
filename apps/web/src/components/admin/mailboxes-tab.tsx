@@ -30,6 +30,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { mailboxesQuery } from "@/lib/queries"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes, plural } from "@/lib/format"
 import { organizationsQuery } from "@/lib/queries"
@@ -335,11 +336,7 @@ function ProtocolsDialog({
 
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
-  const mailboxes = useQuery({
-    queryKey: ["mailboxes", orgId],
-    queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`),
-    select: (all) => all.filter((m) => m.kind !== "resource"),
-  })
+  const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)

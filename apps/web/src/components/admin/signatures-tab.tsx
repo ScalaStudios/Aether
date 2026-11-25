@@ -18,8 +18,8 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
 import { messageDocument } from "@/lib/mail"
-import { domainsQuery } from "@/lib/queries"
-import type { Domain, Mailbox, SignatureTemplate } from "@/lib/types"
+import { domainsQuery, mailboxesQuery } from "@/lib/queries"
+import type { Domain, SignatureTemplate } from "@/lib/types"
 
 const placeholders = ["displayName", "title", "phone", "organization", "domain", "address", "logo", "links"]
 
@@ -74,8 +74,7 @@ function TemplateEditor({ orgId, domain, template, builtIn, stored }: { orgId: s
   const [logoWidth, setLogoWidth] = useState(String(template.logoWidth))
   const [chosen, setChosen] = useState<string | null>(null)
   const mailboxes = useQuery({
-    queryKey: ["mailboxes", orgId],
-    queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`),
+    ...mailboxesQuery(orgId),
     select: (list) => list.filter((m) => !domain || m.domainId === domain.id),
   })
   const mailboxId = chosen ?? (mailboxes.data?.find((m) => m.address === session?.user.email) ?? mailboxes.data?.[0])?.id ?? null

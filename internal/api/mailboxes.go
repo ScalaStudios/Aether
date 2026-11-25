@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/scalastudios/aether/internal/auth"
+	mailpkg "github.com/scalastudios/aether/internal/mail"
 	"github.com/scalastudios/aether/internal/secrets"
 )
 
@@ -79,16 +80,21 @@ func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) myMailboxes(w http.ResponseWriter, r *http.Request, p *principal) {
-	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, `+mailboxAccessLevel("$1")+`, `+mailboxSendAs("$1")+`, `+mailboxSendOnBehalf("$1")+` FROM mailboxes m WHERE m.active AND `+mailboxAccess("$1")+` ORDER BY coalesce(m.owner_user_id = $1, false) DESC, address`, p.User.ID)
+	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, `+mailboxAccessLevel("$1")+`, `+mailboxSendAs("$1")+`, `+mailboxSendOnBehalf("$1")+`,
+		(SELECT coalesce(jsonb_agg(jsonb_build_object('address', i.address, 'name', i.display_name) ORDER BY (i.address = m.address) DESC, i.address), '[]')
+			FROM (`+sendableAddresses("$1")+`) i
+			WHERE EXISTS (SELECT 1 FROM mail_users mu WHERE mu.id = m.id) AND (`+mailboxSendAs("$1")+` OR `+mailboxSendOnBehalf("$1")+`))
+		FROM mailboxes m WHERE m.active AND `+mailboxAccess("$1")+` ORDER BY coalesce(m.owner_user_id = $1, false) DESC, address`, p.User.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[struct {
 		mailbox
-		Access       string `json:"access"`
-		SendAs       bool   `json:"sendAs"`
-		SendOnBehalf bool   `json:"sendOnBehalf"`
+		Access        string            `json:"access"`
+		SendAs        bool              `json:"sendAs"`
+		SendOnBehalf  bool              `json:"sendOnBehalf"`
+		FromAddresses []mailpkg.Address `json:"fromAddresses"`
 	}])
 	if err != nil {
 		s.internalError(w, r, err)

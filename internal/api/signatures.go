@@ -18,20 +18,34 @@ type signature struct {
 }
 
 type signatureSettings struct {
-	Signatures []signature `json:"signatures"`
-	NewMessage string      `json:"newMessage"`
-	Replies    string      `json:"replies"`
+	DisplayName string      `json:"displayName,omitempty"`
+	Signatures  []signature `json:"signatures"`
+	NewMessage  string      `json:"newMessage"`
+	Replies     string      `json:"replies"`
 }
 
 var signatureIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+func (s *Server) signatureAddress(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox) (string, bool) {
+	address := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("fromAddress")))
+	if address == "" || address == m.Address {
+		return "", true
+	}
+	from, _, ok := s.resolveSender(w, r, p, m, address)
+	return from.Address, ok
+}
 
 func (s *Server) getSignatures(w http.ResponseWriter, r *http.Request, p *principal) {
 	m, ok := s.managedMailbox(w, r, p)
 	if !ok {
 		return
 	}
+	address, ok := s.signatureAddress(w, r, p, m)
+	if !ok {
+		return
+	}
 	out := signatureSettings{Signatures: []signature{}}
-	err := s.db.QueryRow(r.Context(), `SELECT settings FROM mailbox_signatures WHERE mailbox_id = $1`, m.ID).Scan(&out)
+	err := s.db.QueryRow(r.Context(), `SELECT settings FROM mailbox_signatures WHERE mailbox_id = $1 AND from_address = $2`, m.ID, address).Scan(&out)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		s.internalError(w, r, err)
 		return
@@ -44,8 +58,17 @@ func (s *Server) saveSignatures(w http.ResponseWriter, r *http.Request, p *princ
 	if !ok {
 		return
 	}
+	address, ok := s.signatureAddress(w, r, p, m)
+	if !ok {
+		return
+	}
 	var in signatureSettings
 	if !decode(w, r, 512<<10, &in) {
+		return
+	}
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	if len(in.DisplayName) > 200 || strings.ContainsAny(in.DisplayName, "\r\n") {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Use a display name of up to 200 characters on one line.")
 		return
 	}
 	if len(in.Signatures) > 20 {
@@ -78,12 +101,12 @@ func (s *Server) saveSignatures(w http.ResponseWriter, r *http.Request, p *princ
 		in.Signatures = []signature{}
 	}
 	if _, err := s.db.Exec(r.Context(), `
-		INSERT INTO mailbox_signatures (mailbox_id, settings) VALUES ($1, $2)
-		ON CONFLICT (mailbox_id) DO UPDATE SET settings = excluded.settings, updated_at = now()`, m.ID, in); err != nil {
+		INSERT INTO mailbox_signatures (mailbox_id, from_address, settings) VALUES ($1, $2, $3)
+		ON CONFLICT (mailbox_id, from_address) DO UPDATE SET settings = excluded.settings, updated_at = now()`, m.ID, address, in); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.signatures.update", "mailbox", m.ID, map[string]any{"signatures": len(in.Signatures)})
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.signatures.update", "mailbox", m.ID, map[string]any{"fromAddress": firstNonEmpty(address, m.Address), "signatures": len(in.Signatures)})
 	s.recordAccess(r, p, m, "signatures.update", "", nil, map[string]any{"signatures": len(in.Signatures)})
 	writeJSON(w, http.StatusOK, in)
 }

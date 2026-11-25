@@ -149,6 +149,7 @@ export interface Mailbox {
   access?: "owner" | DelegateAccess
   sendAs?: boolean
   sendOnBehalf?: boolean
+  fromAddresses?: Address[]
 }
 
 export type DelegateAccess = "read" | "full"
@@ -183,6 +184,7 @@ export interface Alias {
   acceptFrom: AcceptFrom
   allowedSenders: string[]
   sendAs: string[]
+  sentMailboxId?: string
   owners: string[]
   groups: string[]
   memberDomains: string[]
@@ -459,6 +461,7 @@ export interface Attachment {
 }
 
 export interface Message extends MessageSummary {
+  deliveredTo?: string
   cc: Address[]
   bcc: Address[]
   replyTo: Address[]
@@ -473,6 +476,7 @@ export interface Message extends MessageSummary {
 }
 
 export interface OutgoingMessage {
+  fromAddress?: string
   to: Address[]
   cc?: Address[]
   bcc?: Address[]
@@ -645,6 +649,7 @@ export interface Signature {
 }
 
 export interface SignatureSettings {
+  displayName?: string
   signatures: Signature[]
   newMessage: string
   replies: string

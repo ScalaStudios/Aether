@@ -3,8 +3,11 @@
 package integration
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/mail"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +119,154 @@ func TestAliasUpdateAndDistributionLists(t *testing.T) {
 		t.Fatalf("removed member still owns %+v", owned)
 	}
 	w.admin.must("DELETE", "/aliases/"+list.ID, nil, nil, 204)
+}
+
+func TestWebmailSenderIdentities(t *testing.T) {
+	w := setupWorld(t)
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	path := "/mailboxes/" + w.aliceMailbox
+	shared := createSharedMailbox(t, w)
+	setDelegate(t, w.admin, shared.ID, map[string]any{"email": alice, "access": "read", "sendOnBehalf": true})
+	var alias, list aliasBody
+	aliases := "/organizations/" + w.orgID + "/aliases"
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "help", "destinations": []string{alice}}, &alias, 201)
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "staff", "kind": "list", "name": "Staff", "destinations": []string{bob}, "sendAs": []string{alice}, "sentMailboxId": shared.ID}, &list, 201)
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "", "destinations": []string{alice}}, nil, 201)
+
+	type address struct{ Name, Address string }
+	fromAddresses := func(c *apiClient, mailboxID string) []address {
+		t.Helper()
+		var boxes []struct {
+			ID            string
+			FromAddresses []address
+		}
+		c.must("GET", "/me/mailboxes", nil, &boxes, 200)
+		for _, box := range boxes {
+			if box.ID == mailboxID {
+				return box.FromAddresses
+			}
+		}
+		t.Fatalf("missing mailbox %s", mailboxID)
+		return nil
+	}
+	sigPath := path + "/signatures?fromAddress=" + alias.Address
+	settings := map[string]any{"displayName": "Help Desk", "newMessage": "team", "replies": "team", "signatures": []map[string]string{{"id": "team", "name": "Team", "html": "<p>Support team</p>"}}}
+	w.alice.must("PUT", sigPath, settings, nil, 200)
+	var profile struct {
+		DisplayName, NewMessage, Replies string
+		Signatures                       []struct{ HTML string }
+	}
+	w.alice.must("GET", sigPath, nil, &profile, 200)
+	if profile.DisplayName != "Help Desk" || profile.Replies != "team" || profile.NewMessage != "team" || len(profile.Signatures) != 1 || profile.Signatures[0].HTML != "<p>Support team</p>" {
+		t.Fatalf("alias profile: %+v", profile)
+	}
+	var primary struct {
+		DisplayName string
+		Signatures  []struct{ HTML string }
+	}
+	w.alice.must("GET", path+"/signatures", nil, &primary, 200)
+	if primary.DisplayName != "" || len(primary.Signatures) != 0 {
+		t.Fatalf("alias changed primary profile: %+v", primary)
+	}
+	var template struct{ HTML string }
+	w.alice.must("GET", path+"/signature-template?fromAddress="+alias.Address, nil, &template, 200)
+	if !strings.Contains(template.HTML, alias.Address) || !strings.Contains(template.HTML, "Help Desk") {
+		t.Fatalf("template: %s", template.HTML)
+	}
+	if got := fromAddresses(w.alice, w.aliceMailbox); !slices.Equal(got, []address{{"Alice", alice}, {"Help Desk", alias.Address}, {"Staff", list.Address}}) {
+		t.Fatalf("alice identities: %+v", got)
+	}
+	if got := fromAddresses(w.bob, w.bobMailbox); !slices.Equal(got, []address{{"Bob", bob}}) {
+		t.Fatalf("member identities: %+v", got)
+	}
+	if got := fromAddresses(w.alice, shared.ID); !slices.Equal(got, []address{{"Support", shared.Address}}) {
+		t.Fatalf("shared identities: %+v", got)
+	}
+
+	incoming := "blind to alias " + randomSuffix()
+	if err := submit(t, env(t, "AETHER_TEST_SUBMISSION", "postfix:587"), alice, w.aliceAppPassword, alice, []string{alias.Address}, rfc822(alice, bob, incoming, "question"), false); err != nil {
+		t.Fatal(err)
+	}
+	var uid uint32
+	waitFor(t, "blind delivery to alias", func() bool { uid = findInAPI(w.alice, w.aliceMailbox, "INBOX", incoming); return uid != 0 })
+	var received struct{ DeliveredTo, MessageID string }
+	w.alice.must("GET", path+"/messages/"+itoaUID(uid), nil, &received, 200)
+	if received.DeliveredTo != alias.Address {
+		t.Fatalf("blind delivery address %q, want %q", received.DeliveredTo, alias.Address)
+	}
+
+	message := map[string]any{"fromAddress": alias.Address, "to": []address{{Address: bob}}, "subject": "alias reply " + randomSuffix(), "html": "<p>Answer</p><p>Support team</p>", "inReplyTo": received.MessageID}
+	var draft struct {
+		UID    uint32
+		Folder string
+	}
+	w.alice.must("PUT", path+"/drafts", message, &draft, 200)
+	var saved struct{ From []address }
+	w.alice.must("GET", path+"/messages/"+itoaUID(draft.UID)+"?folder="+draft.Folder, nil, &saved, 200)
+	if !slices.Equal(saved.From, []address{{"Help Desk", alias.Address}}) {
+		t.Fatalf("draft from: %+v", saved.From)
+	}
+	message["draftUid"] = draft.UID
+	w.alice.must("POST", path+"/send", message, nil, 202)
+	ic, err := imapLogin(t, bob, createAppPassword(t, w.bob, w.bobMailbox))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ic.Close()
+	checkDelivery := func(subject, name, from string) {
+		t.Helper()
+		var raw []byte
+		waitFor(t, "delivery of "+subject, func() bool { raw = imapFindSubject(t, ic, "INBOX", subject); return raw != nil })
+		msg, err := mail.ReadMessage(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := mail.ParseAddress(msg.Header.Get("From"))
+		if err != nil || got.Name != name || got.Address != from || msg.Header.Get("Return-Path") != "<"+from+">" || msg.Header.Get("Sender") != "" {
+			t.Fatalf("delivered headers: %+v", msg.Header)
+		}
+	}
+	subject := message["subject"].(string)
+	checkDelivery(subject, "Help Desk", alias.Address)
+	if findInAPI(w.alice, w.aliceMailbox, "Sent", subject) == 0 || findInAPI(w.alice, w.aliceMailbox, draft.Folder, subject) != 0 {
+		t.Fatal("alias reply was not moved from Drafts to personal Sent")
+	}
+	delete(message, "draftUid")
+	message["fromAddress"] = list.Address
+	message["subject"] = "scheduled as list " + randomSuffix()
+	message["sendAt"] = time.Now().Add(8 * time.Second)
+	w.bob.must("POST", "/mailboxes/"+w.bobMailbox+"/send", message, nil, 403)
+	w.alice.must("POST", path+"/send", message, nil, 202)
+	subject = message["subject"].(string)
+	checkDelivery(subject, "Staff", list.Address)
+	waitFor(t, "list Sent copy", func() bool { return findInAPI(w.alice, shared.ID, "Sent", subject) != 0 })
+	if findInAPI(w.alice, w.aliceMailbox, "Sent", subject) != 0 {
+		t.Fatal("list Sent copy duplicated in personal Sent")
+	}
+
+	message["subject"] = "revoked alias " + randomSuffix()
+	message["fromAddress"] = alias.Address
+	message["sendAt"] = time.Now().Add(8 * time.Second)
+	w.alice.must("POST", path+"/send", message, nil, 202)
+	w.admin.must("PATCH", "/aliases/"+alias.ID, map[string]bool{"active": false}, nil, 200)
+	w.alice.must("GET", sigPath, nil, nil, 403)
+	delete(message, "sendAt")
+	w.alice.must("POST", path+"/send", message, nil, 403)
+	w.alice.must("PUT", path+"/drafts", message, nil, 403)
+	if slices.Contains(fromAddresses(w.alice, w.aliceMailbox), address{"Help Desk", alias.Address}) {
+		t.Fatal("disabled alias remains selectable")
+	}
+	waitFor(t, "revoked scheduled sender", func() bool {
+		var pending []struct {
+			Error   string
+			Subject string
+		}
+		w.alice.must("GET", path+"/scheduled", nil, &pending, 200)
+		return len(pending) == 1 && pending[0].Subject == message["subject"] && strings.Contains(pending[0].Error, "permission")
+	})
+	if findInAPI(w.bob, w.bobMailbox, "INBOX", message["subject"].(string)) != 0 {
+		t.Fatal("revoked scheduled sender delivered mail")
+	}
 }
 
 func TestAPIKeyMailboxManagement(t *testing.T) {

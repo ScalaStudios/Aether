@@ -1,7 +1,7 @@
 import { Archive, File, Folder as FolderIcon, Inbox, OctagonAlert, Send, Trash2, type LucideIcon } from "lucide-react"
 
 import { formatAddress, formatDateTime, plural } from "@/lib/format"
-import type { Address, Attachment, Folder, MailboxRetention, Message, SpecialUse } from "@/lib/types"
+import type { Address, Attachment, Folder, Mailbox, MailboxRetention, Message, SpecialUse } from "@/lib/types"
 
 export const folderIcons: Record<SpecialUse, LucideIcon> = {
   inbox: Inbox,
@@ -69,6 +69,31 @@ export function senderLabel(addresses: Address[], empty = "Unknown sender") {
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward" | "draft"
 
+export interface SenderIdentity {
+  mailbox: Mailbox
+  from: Address
+}
+
+export function senderIdentities(mailboxes: Mailbox[], preferredId?: string) {
+  const identities = new Map<string, SenderIdentity>()
+  for (const mailbox of mailboxes) {
+    for (const from of mailbox.fromAddresses ?? []) {
+      if (!identities.has(from.address) || mailbox.id === preferredId) identities.set(from.address, { mailbox, from })
+    }
+  }
+  return [...identities.values()]
+}
+
+export function composeIdentity(mode: ComposeMode, source: Message | undefined, identities: SenderIdentity[], fallback: SenderIdentity) {
+  if (!source || (mode !== "draft" && mode !== "reply" && mode !== "replyAll")) return fallback
+  const addresses = mode === "draft" ? source.from : [{ address: source.deliveredTo ?? "" }, ...source.to, ...source.cc, ...source.bcc]
+  for (const address of addresses) {
+    const match = identities.find((i) => i.from.address === address.address.toLowerCase())
+    if (match) return match
+  }
+  return fallback
+}
+
 export interface Draft {
   mode: ComposeMode
   to: Address[]
@@ -103,8 +128,8 @@ function prefixed(prefix: string, subject: string) {
   return new RegExp(`^${prefix}:`, "i").test(subject.trim()) ? subject : `${prefix}: ${subject}`
 }
 
-function withoutSelf(addresses: Address[], self: string) {
-  const seen = new Set([self.toLowerCase()])
+function withoutSelf(addresses: Address[], self: string[]) {
+  const seen = new Set(self.map((address) => address.toLowerCase()))
   return addresses.filter((a) => {
     const key = a.address.toLowerCase()
     if (seen.has(key)) return false
@@ -113,7 +138,7 @@ function withoutSelf(addresses: Address[], self: string) {
   })
 }
 
-export function buildDraft(mode: ComposeMode, source: Message | undefined, self: string, folder: string): Draft {
+export function buildDraft(mode: ComposeMode, source: Message | undefined, self: string[], folder: string): Draft {
   const empty: Draft = { mode, to: [], cc: [], bcc: [], subject: "", html: "" }
   if (mode === "new" || !source) return { ...empty, mode: "new" }
 

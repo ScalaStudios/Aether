@@ -26,6 +26,7 @@ type alias struct {
 	AcceptFrom       string     `json:"acceptFrom"`
 	AllowedSenders   []string   `json:"allowedSenders"`
 	SendAs           []string   `json:"sendAs"`
+	SentMailboxID    string     `json:"sentMailboxId,omitempty"`
 	Owners           []string   `json:"owners"`
 	Groups           []string   `json:"groups"`
 	MemberDomains    []string   `json:"memberDomains"`
@@ -38,7 +39,7 @@ type alias struct {
 	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
 }
 
-const aliasColumns = `a.id, a.org_id, a.domain_id, a.address, a.local_part, a.destinations, a.active, a.kind, a.name, a.accept_from, a.allowed_senders, a.send_as,
+const aliasColumns = `a.id, a.org_id, a.domain_id, a.address, a.local_part, a.destinations, a.active, a.kind, a.name, a.accept_from, a.allowed_senders, a.send_as, coalesce(a.sent_mailbox_id::text, ''),
 	coalesce((SELECT array_agg(o.user_id::text ORDER BY o.user_id) FROM alias_owners o WHERE o.alias_id = a.id), '{}'),
 	coalesce((SELECT array_agg(g.group_id::text ORDER BY g.group_id) FROM alias_groups g WHERE g.alias_id = a.id), '{}'), a.member_domains::text[],
 	a.moderated, coalesce((SELECT array_agg(m.user_id::text ORDER BY m.user_id) FROM alias_moderators m WHERE m.alias_id = a.id), '{}'), a.moderation_exempt, a.hidden_from_directory, a.personal_owner_id, a.note, a.expires_at`
@@ -55,6 +56,7 @@ type aliasInput struct {
 	AcceptFrom         *string   `json:"acceptFrom"`
 	AllowedSenders     *[]string `json:"allowedSenders"`
 	SendAs             *[]string `json:"sendAs"`
+	SentMailboxID      *string   `json:"sentMailboxId"`
 	Owners             *[]string `json:"owners"`
 	Groups             *[]string `json:"groups"`
 	MemberDomains      *[]string `json:"memberDomains"`
@@ -228,6 +230,25 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 			return false
 		}
 	}
+	if in.SentMailboxID != nil {
+		a.SentMailboxID = *in.SentMailboxID
+	}
+	if a.Kind == "alias" && in.SentMailboxID == nil {
+		a.SentMailboxID = ""
+	}
+	if a.SentMailboxID != "" {
+		var valid bool
+		if a.Kind == "list" && uuidPattern.MatchString(a.SentMailboxID) {
+			if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE id = $1 AND org_id = $2 AND kind = 'shared')`, a.SentMailboxID, a.OrgID).Scan(&valid); err != nil {
+				s.internalError(w, r, err)
+				return false
+			}
+		}
+		if !valid {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_sent_mailbox", "Choose a shared mailbox in this organization for the list's sent copies.")
+			return false
+		}
+	}
 	if in.Owners != nil {
 		if a.Owners, ok = s.orgUsers(w, r, a.OrgID, *in.Owners, "invalid_owners", "Owners must be members of this organization."); !ok {
 			return false
@@ -286,12 +307,12 @@ func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
 	}
 	defer tx.Rollback(ctx)
 	if create {
-		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as, member_domains, moderated, moderation_exempt, hidden_from_directory)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
-			a.OrgID, a.DomainID, a.LocalPart, a.Address, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt, a.Hidden).Scan(&a.ID)
+		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as, member_domains, moderated, moderation_exempt, hidden_from_directory, sent_mailbox_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, nullif($16, '')::uuid) RETURNING id`,
+			a.OrgID, a.DomainID, a.LocalPart, a.Address, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt, a.Hidden, a.SentMailboxID).Scan(&a.ID)
 	} else {
-		_, err = tx.Exec(ctx, `UPDATE aliases SET destinations = $2, active = $3, kind = $4, name = $5, accept_from = $6, allowed_senders = $7, send_as = $8, member_domains = $9, moderated = $10, moderation_exempt = $11, hidden_from_directory = $12, updated_at = now() WHERE id = $1`,
-			a.ID, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt, a.Hidden)
+		_, err = tx.Exec(ctx, `UPDATE aliases SET destinations = $2, active = $3, kind = $4, name = $5, accept_from = $6, allowed_senders = $7, send_as = $8, member_domains = $9, moderated = $10, moderation_exempt = $11, hidden_from_directory = $12, sent_mailbox_id = nullif($13, '')::uuid, updated_at = now() WHERE id = $1`,
+			a.ID, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt, a.Hidden, a.SentMailboxID)
 	}
 	if err != nil {
 		return err
@@ -419,7 +440,7 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	if !p.canAdminOrg(a.OrgID) {
 		membershipOnly := in.Kind == nil && in.Name == nil && in.Active == nil && in.AcceptFrom == nil && in.AllowedSenders == nil && in.SendAs == nil && in.Owners == nil && in.Groups == nil && in.MemberDomains == nil &&
-			in.Moderated == nil && in.Moderators == nil && in.ModerationExempt == nil && in.Hidden == nil
+			in.Moderated == nil && in.Moderators == nil && in.ModerationExempt == nil && in.Hidden == nil && in.SentMailboxID == nil
 		if !slices.Contains(a.Owners, p.User.ID) || !membershipOnly {
 			forbidden(w)
 			return
@@ -439,7 +460,7 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 
 func aliasAuditFields(a *alias) map[string]any {
 	return map[string]any{"kind": a.Kind, "name": a.Name, "active": a.Active, "destinations": a.Destinations, "acceptFrom": a.AcceptFrom, "allowedSenders": a.AllowedSenders, "sendAs": a.SendAs, "owners": a.Owners, "groups": a.Groups, "memberDomains": a.MemberDomains,
-		"moderated": a.Moderated, "moderators": a.Moderators, "moderationExempt": a.ModerationExempt, "hiddenFromDirectory": a.Hidden}
+		"moderated": a.Moderated, "moderators": a.Moderators, "moderationExempt": a.ModerationExempt, "hiddenFromDirectory": a.Hidden, "sentMailboxId": a.SentMailboxID}
 }
 
 func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principal) {
