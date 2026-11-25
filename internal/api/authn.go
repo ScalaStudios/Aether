@@ -111,6 +111,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		auth.BurnPasswordCheck(in.Password)
 		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
 		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", email, nil)
+		if userID != "" && status == "active" {
+			s.recordFailedSignIn(r.Context(), r, userID)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
 		return
 	}
@@ -119,6 +122,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		authAttempts.WithLabelValues("password", "failure").Inc()
 		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
 		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", userID, nil)
+		if status == "active" {
+			s.recordFailedSignIn(r.Context(), r, userID)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
 		return
 	}
@@ -139,13 +145,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) finishPasswordLogin(w http.ResponseWriter, r *http.Request, userID, method string) {
-	csrf, err := s.startSession(r.Context(), w, r, userID, nil, nil, localSessionTTL)
+	csrf, sessionHash, err := s.startSession(r.Context(), w, r, userID, nil, nil, localSessionTTL)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	authAttempts.WithLabelValues("password", "success").Inc()
 	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": method})
+	s.checkSignInNotification(r.Context(), r, userID, method, "", sessionHash)
 	resp, err := s.sessionFor(r.Context(), userID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -155,20 +162,21 @@ func (s *Server) finishPasswordLogin(w http.ResponseWriter, r *http.Request, use
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, providerID, idToken *string, ttl time.Duration) (string, error) {
+func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, providerID, idToken *string, ttl time.Duration) (string, []byte, error) {
 	token := secrets.Token(32)
 	csrf := secrets.Token(32)
 	expires := time.Now().Add(ttl)
+	sessionHash := secrets.SHA256(token)
 	_, err := s.db.Exec(ctx, `INSERT INTO sessions (id_hash, user_id, csrf_token, provider_id, id_token, ip, user_agent, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		secrets.SHA256(token), userID, csrf, providerID, idToken, s.clientIP(r), truncate(r.UserAgent(), 300), expires)
+		sessionHash, userID, csrf, providerID, idToken, s.clientIP(r), truncate(r.UserAgent(), 300), expires)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/", Expires: expires,
 		HttpOnly: true, Secure: s.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode,
 	})
-	return csrf, nil
+	return csrf, sessionHash, nil
 }
 
 func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionResponse, error) {

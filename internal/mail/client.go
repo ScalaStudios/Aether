@@ -1266,6 +1266,20 @@ func (c *Client) Deliver(address string, raw []byte) error {
 	})
 }
 
+func (c *Client) DeliverInbox(address string, raw []byte) error {
+	return c.with(address, func(ic *imapclient.Client) error {
+		cmd := ic.Append("INBOX", int64(len(raw)), &imap.AppendOptions{Time: time.Now()})
+		if _, err := cmd.Write(raw); err != nil {
+			return err
+		}
+		if err := cmd.Close(); err != nil {
+			return err
+		}
+		_, err := cmd.Wait()
+		return err
+	})
+}
+
 func (c *Client) SaveDraft(address string, raw []byte, replaceUID uint32) (uint32, string, error) {
 	var uid uint32
 	var drafts string

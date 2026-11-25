@@ -104,13 +104,13 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		writeError(w, http.StatusUnprocessableEntity, "already_owner", "This person already owns the mailbox.")
 		return
 	}
-	var lowered bool
+	var existed, lowered, elevated bool
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
 		var prevAccess string
 		var prevSendAs, prevSendOnBehalf bool
 		err := tx.QueryRow(r.Context(), `SELECT access, send_as, send_on_behalf FROM mailbox_delegates WHERE mailbox_id = $1 AND user_id = $2`, m.ID, d.UserID).
 			Scan(&prevAccess, &prevSendAs, &prevSendOnBehalf)
-		existed := err == nil
+		existed = err == nil
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
@@ -121,6 +121,7 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 			return err
 		}
 		lowered = existed && ((prevAccess == "full" && d.Access == "read") || (prevSendAs && !d.SendAs) || (prevSendOnBehalf && !d.SendOnBehalf))
+		elevated = !existed || (prevAccess == "read" && d.Access == "full") || (!prevSendAs && d.SendAs) || (!prevSendOnBehalf && d.SendOnBehalf)
 		if lowered {
 			return s.revokeMailAccess(r.Context(), tx, d.UserID, []string{m.ID})
 		}
@@ -132,6 +133,9 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delegate_add", "mailbox", m.ID, map[string]any{"address": m.Address, "delegate": d.Email, "access": d.Access, "sendAs": d.SendAs, "sendOnBehalf": d.SendOnBehalf})
+	if m.OwnerUserID != nil && elevated {
+		s.notifyDelegateAdded(r.Context(), r, p, m, d, existed)
+	}
 	if m.Kind == "shared" {
 		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
 			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)

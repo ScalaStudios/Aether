@@ -155,7 +155,7 @@ export function MailRules() {
   const mailboxId = chosen ?? mailboxes.data?.[0]?.id ?? null
 
   return (
-    <section className="flex flex-col gap-6">
+    <section id="mail-rules" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
         title="Mail rules and automatic replies"
         description="These run on the mail server as messages arrive, so they apply in Aether Mail and in every other mail client. Rules run in order, after spam filtering."
@@ -199,6 +199,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
     mutationFn: (next: MailRule[]) => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`, { method: "PUT", body: next }),
     onSuccess: (saved) => {
       qc.setQueryData(key, saved)
+      qc.invalidateQueries({ queryKey: ["security-notifications"] })
       setEditing(null)
       setDeleting(null)
       toast.success("Rules saved")

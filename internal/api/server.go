@@ -27,38 +27,39 @@ import (
 const sessionCookie = "aether_session"
 
 type Server struct {
-	cfg           *config.Config
-	db            *pgxpool.Pool
-	box           *secrets.Box
-	kv            *redis.Client
-	mail          *mail.Client
-	queue         *queue.Client
-	log           *slog.Logger
-	oidc          *oidcCache
-	resolve       resolver
-	webhookClient *http.Client
-	imports       sync.Map
-	importSlots   chan struct{}
-	kickWake      chan struct{}
-	origin        string
-	hub           *liveHub
-	notifyWake    chan struct{}
-	watchesMu     sync.Mutex
-	watches       map[string]context.CancelFunc
-	vapidMu       sync.Mutex
-	vapidPublic   string
-	vapidPrivate  string
-	apnsMu        sync.Mutex
-	apnsKey       string
-	apns          *apnsClient
-	scheduleWake  chan struct{}
-	imageClient   *http.Client
-	exportWake    chan struct{}
+	cfg                *config.Config
+	db                 *pgxpool.Pool
+	box                *secrets.Box
+	kv                 *redis.Client
+	mail               *mail.Client
+	queue              *queue.Client
+	log                *slog.Logger
+	oidc               *oidcCache
+	resolve            resolver
+	webhookClient      *http.Client
+	imports            sync.Map
+	importSlots        chan struct{}
+	kickWake           chan struct{}
+	origin             string
+	hub                *liveHub
+	notifyWake         chan struct{}
+	watchesMu          sync.Mutex
+	watches            map[string]context.CancelFunc
+	vapidMu            sync.Mutex
+	vapidPublic        string
+	vapidPrivate       string
+	apnsMu             sync.Mutex
+	apnsKey            string
+	apns               *apnsClient
+	scheduleWake       chan struct{}
+	imageClient        *http.Client
+	exportWake         chan struct{}
+	securityNotifyWake chan struct{}
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
 	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
-		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(), exportWake: make(chan struct{}, 1),
+		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(), exportWake: make(chan struct{}, 1), securityNotifyWake: make(chan struct{}, 1),
 	}
 }
 
@@ -197,6 +198,8 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/organizations/{orgId}/retention-policies", s.createRetentionPolicy)
 	authed("PATCH /api/v1/retention-policies/{policyId}", s.updateRetentionPolicy)
 	authed("DELETE /api/v1/retention-policies/{policyId}", s.deleteRetentionPolicy)
+	authed("GET /api/v1/organizations/{orgId}/security-notifications", s.getOrgSecurityNotifications)
+	authed("PUT /api/v1/organizations/{orgId}/security-notifications", s.saveOrgSecurityNotifications)
 	authed("GET /api/v1/organizations/{orgId}/members", s.listMembers)
 	authed("POST /api/v1/organizations/{orgId}/members", s.setMember)
 	authed("DELETE /api/v1/organizations/{orgId}/members/{userId}", s.removeMember)
@@ -303,6 +306,11 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/me/app-passwords", s.listAppPasswords)
 	authed("POST /api/v1/me/app-passwords", s.createAppPassword)
 	authed("DELETE /api/v1/me/app-passwords/{id}", s.revokeAppPassword)
+	authed("GET /api/v1/me/security-notifications", s.listSecurityNotifications)
+	authed("POST /api/v1/me/security-notifications/read-all", s.markAllSecurityNotificationsRead)
+	authed("POST /api/v1/me/security-notifications/{id}/read", s.markSecurityNotificationRead)
+	authed("POST /api/v1/me/security-notifications/{id}/undo", s.undoSecurityNotification)
+	authed("POST /api/v1/me/security-notifications/{id}/report", s.reportSecurityNotification)
 	authed("POST /api/v1/me/apple-profile", s.appleProfile)
 	authed("GET /api/v1/mailboxes/{mailboxId}/imports", s.listImports)
 	authed("POST /api/v1/mailboxes/{mailboxId}/imports", s.startImport)

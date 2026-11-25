@@ -235,3 +235,18 @@ docker compose exec api aether bootstrap-admin --email you@example.com
 The command prints a generated password once, to your terminal only; it is never written to logs. To supply your own password, use `--password-stdin`. Running the command again for the same email resets that password, signs that account out everywhere and restores platform administrator rights. Add `--reset-two-factor` to also remove its authenticator app, security keys and recovery codes, for an administrator who lost them.
 
 To disable password sign-in entirely after Halo is configured, set `AETHER_LOCAL_LOGIN=false`.
+
+## Account security notifications
+
+Aether notifies people by email (delivered straight to their Inbox so mail rules cannot hide or forward the alert) and in **Settings → Security** when security-sensitive changes happen to their account or mailbox:
+
+- **App password created:** an app password or Apple device profile is created for their mailbox.
+- **External forwarding rule added:** an enabled mail rule begins forwarding messages to an address outside the organization's verified domains.
+- **Delegate access granted:** someone is granted delegate access to their mailbox, or an existing delegate's permissions are increased.
+- **New device or country sign-in:** their account signs in from a previously unseen browser/OS combination or a new country (country detection reads standard reverse-proxy GeoIP headers such as `CF-IPCountry` or `X-Country-Code` when `AETHER_TRUST_PROXY=true`).
+- **Repeated failed sign-ins:** password sign-in fails at least the configured number of times within 15 minutes (default 5).
+
+Each alert includes links and in-app actions to review or undo the change (revoking the app password, removing the external forwarding address, removing the delegate, or signing out the other session) and to report suspicious activity. Reporting an alert records `security.notification.report` in the organization audit log (which also delivers to webhooks) and emails the organization's owners and administrators.
+
+Organization owners and administrators can choose which events send notifications, adjust the failed sign-in threshold (3 to 50), and opt in to receiving administrator email copies under **Administration → Security** (`GET` and `PUT /api/v1/organizations/{orgId}/security-notifications`).
+

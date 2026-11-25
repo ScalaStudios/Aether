@@ -29,6 +29,7 @@ import { Security } from "@/components/settings/security"
 import { ActiveSessions } from "@/components/settings/sessions"
 import { PersonalAliases } from "@/components/settings/personal-aliases"
 import { Encryption } from "@/components/settings/encryption"
+import { SecurityNotifications } from "@/components/settings/security-notifications"
 import { Signatures } from "@/components/settings/signatures"
 import { Storage } from "@/components/settings/storage"
 import { PageHeader, SectionHeader } from "@/components/page-header"
@@ -54,7 +55,7 @@ export function SettingsView() {
     <PageContainer>
       <PageHeader
         title="Settings"
-        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, encryption keys, undo send, mail rules, notifications, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
+        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, security alerts, encryption keys, undo send, mail rules, notifications, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
       />
       {session && !setup && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
@@ -94,6 +95,7 @@ export function SettingsView() {
       <ActiveSessions />
       {session && !setup && (
         <>
+          <SecurityNotifications />
           <Sending title={session.user.title} phone={session.user.phone} seconds={session.user.undoSendSeconds ?? 0} />
           <Storage />
           <Signatures />
@@ -298,6 +300,7 @@ function AppPasswords() {
       setCreated(data)
       form.reset()
       qc.invalidateQueries({ queryKey: ["app-passwords"] })
+      qc.invalidateQueries({ queryKey: ["security-notifications"] })
     },
   })
   const profile = useMutation({
@@ -313,6 +316,7 @@ function AppPasswords() {
       toast.success("Profile downloaded", { description: "Open it on your iPhone, iPad or Mac to install it." })
       setProfiling(false)
       qc.invalidateQueries({ queryKey: ["app-passwords"] })
+      qc.invalidateQueries({ queryKey: ["security-notifications"] })
     },
   })
   const revoke = useMutation({

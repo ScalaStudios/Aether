@@ -65,12 +65,20 @@ func setupWorld(t *testing.T) *world {
 	w.alice.login("alice@"+w.domain, "alice-integration-pw")
 	w.bob = newClient(t)
 	w.bob.login("bob@"+w.domain, "bob-integration-pw")
+	w.admin.must("PUT", "/organizations/"+w.orgID+"/security-notifications", map[string]any{
+		"appPasswordCreated": false, "externalForwardingRule": true, "delegateAdded": true,
+		"newDeviceSignIn": true, "failedSignIns": true, "failedSignInThreshold": 5, "notifyAdmins": false,
+	}, nil, 200)
 	var ap struct {
 		ID       string `json:"id"`
 		Password string `json:"password"`
 	}
 	w.alice.must("POST", "/me/app-passwords", map[string]string{"name": "integration", "mailboxId": w.aliceMailbox}, &ap, 201)
 	w.aliceAppPassword, w.aliceAppPasswordID = ap.Password, ap.ID
+	w.admin.must("PUT", "/organizations/"+w.orgID+"/security-notifications", map[string]any{
+		"appPasswordCreated": true, "externalForwardingRule": true, "delegateAdded": true,
+		"newDeviceSignIn": true, "failedSignIns": true, "failedSignInThreshold": 5, "notifyAdmins": false,
+	}, nil, 200)
 	return w
 }
 

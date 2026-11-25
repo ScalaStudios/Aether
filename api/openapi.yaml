@@ -622,6 +622,33 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/security-notifications:
+    get:
+      tags: [organizations]
+      summary: Security notification settings for this organization
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgSecuritySettings" }
+    put:
+      tags: [organizations]
+      summary: Update which security events notify people and whether administrators are also notified
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrgSecuritySettings" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgSecuritySettings" }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/signature-template:
     get:
       tags: [mail]
@@ -2427,6 +2454,84 @@ paths:
       responses:
         "204": { description: Signed out }
         "404": { $ref: "#/components/responses/Error" }
+  /me/security-notifications:
+    get:
+      tags: [auth]
+      summary: Recent security notifications for the signed-in account
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unreadCount, notifications]
+                properties:
+                  unreadCount: { type: integer }
+                  notifications:
+                    type: array
+                    items: { $ref: "#/components/schemas/SecurityNotification" }
+  /me/security-notifications/read-all:
+    post:
+      tags: [auth]
+      summary: Mark all of the signed-in account's security notifications as read
+      responses:
+        "204": { description: Marked as read }
+  /me/security-notifications/{id}/read:
+    post:
+      tags: [auth]
+      summary: Mark a single security notification as read
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Marked as read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityNotification" }
+        "404": { $ref: "#/components/responses/Error" }
+  /me/security-notifications/{id}/undo:
+    post:
+      tags: [auth]
+      summary: Undo the change described by a security notification
+      description: Revokes the created app password, removes the external forwarding address from the mail rule, removes the added delegate, or ends the new session.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Undone
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notification, message]
+                properties:
+                  notification: { $ref: "#/components/schemas/SecurityNotification" }
+                  message: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /me/security-notifications/{id}/report:
+    post:
+      tags: [auth]
+      summary: Report a security notification as suspicious activity to organization administrators
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: Reported
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityNotification" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/imports:
     get:
       tags: [mail]
@@ -6157,3 +6262,33 @@ components:
         group: { type: string }
         orgId: { type: string, format: uuid }
         role: { type: string, enum: [owner, admin, member] }
+    OrgSecuritySettings:
+      type: object
+      required: [appPasswordCreated, externalForwardingRule, delegateAdded, newDeviceSignIn, failedSignIns, notifyAdmins, failedSignInThreshold]
+      properties:
+        appPasswordCreated: { type: boolean }
+        externalForwardingRule: { type: boolean }
+        delegateAdded: { type: boolean }
+        newDeviceSignIn: { type: boolean }
+        failedSignIns: { type: boolean }
+        notifyAdmins: { type: boolean }
+        failedSignInThreshold: { type: integer, minimum: 3, maximum: 50 }
+    SecurityNotification:
+      type: object
+      required: [id, eventType, title, summary, mailboxAddress, details, actionUrl, canUndo, undoLabel, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { type: string, enum: [app_password_created, external_forwarding_rule, delegate_added, new_device_sign_in, failed_sign_ins] }
+        title: { type: string }
+        summary: { type: string }
+        mailboxId: { type: [string, "null"], format: uuid }
+        mailboxAddress: { type: string }
+        details: { type: object, additionalProperties: true }
+        actionUrl: { type: string }
+        canUndo: { type: boolean }
+        undoLabel: { type: string }
+        readAt: { type: [string, "null"], format: date-time }
+        undoneAt: { type: [string, "null"], format: date-time }
+        reportedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+

@@ -1519,3 +1519,42 @@ export interface RestrictedSender {
   restrictedAt: string
   reason: SendingLimitKey
 }
+
+export type SecurityEventType =
+  | "app_password_created"
+  | "external_forwarding_rule"
+  | "delegate_added"
+  | "new_device_sign_in"
+  | "failed_sign_ins"
+
+export interface SecurityNotification {
+  id: string
+  eventType: SecurityEventType
+  title: string
+  summary: string
+  mailboxId: string | null
+  mailboxAddress: string
+  details: Record<string, unknown>
+  actionUrl: string
+  canUndo: boolean
+  undoLabel: string
+  readAt: string | null
+  undoneAt: string | null
+  reportedAt: string | null
+  createdAt: string
+}
+
+export interface SecurityNotificationsResponse {
+  notifications: SecurityNotification[]
+  unreadCount: number
+}
+
+export interface OrgSecuritySettings {
+  appPasswordCreated: boolean
+  externalForwardingRule: boolean
+  delegateAdded: boolean
+  newDeviceSignIn: boolean
+  failedSignIns: boolean
+  notifyAdmins: boolean
+  failedSignInThreshold: number
+}

@@ -24,23 +24,24 @@ type OutgoingAttachment struct {
 }
 
 type Outgoing struct {
-	From        Address
-	Sender      *Address
-	To          []Address
-	Cc          []Address
-	Bcc         []Address
-	Subject     string
-	Text        string
-	HTML        string
-	InReplyTo   string
-	References  []string
-	Attachments []OutgoingAttachment
-	FileLinkIDs []string
-	IncludeBcc  bool
-	Date        time.Time
-	Calendar    *CalendarPart
-	Sealed      *Sealed
-	Autocrypt   string
+	From          Address
+	Sender        *Address
+	To            []Address
+	Cc            []Address
+	Bcc           []Address
+	Subject       string
+	Text          string
+	HTML          string
+	InReplyTo     string
+	References    []string
+	Attachments   []OutgoingAttachment
+	FileLinkIDs   []string
+	IncludeBcc    bool
+	Date          time.Time
+	Calendar      *CalendarPart
+	Sealed        *Sealed
+	Autocrypt     string
+	AutoSubmitted string
 }
 
 const FileLinkHeader = "X-Aether-File-Links"
@@ -100,6 +101,10 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 			refs = append(refs, o.InReplyTo)
 		}
 		h.Set("References", strings.Join(refs, " "))
+	}
+	if o.AutoSubmitted != "" {
+		h.Set("Auto-Submitted", o.AutoSubmitted)
+		h.Set("X-Auto-Response-Suppress", "All")
 	}
 	h.Set("User-Agent", "Aether")
 	if o.Autocrypt != "" {

@@ -238,13 +238,15 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.loginRedirect(w, r, code)
 		return
 	}
-	if _, err := s.startSession(r.Context(), w, r, userID, &p.ID, &rawID, oidcSessionTTL); err != nil {
+	_, sessionHash, err := s.startSession(r.Context(), w, r, userID, &p.ID, &rawID, oidcSessionTTL)
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	go s.syncProviderAvatar(userID, p.Issuer, claims.Picture, token)
 	authAttempts.WithLabelValues("oidc", "success").Inc()
 	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": "oidc", "provider": p.Slug})
+	s.checkSignInNotification(r.Context(), r, userID, "oidc", p.Slug, sessionHash)
 	http.Redirect(w, r, safeReturnTo(returnTo), http.StatusFound)
 }
 

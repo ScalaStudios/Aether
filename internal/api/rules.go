@@ -152,6 +152,7 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 	if !s.installSieve(w, r, p, m, rules, reply, nonNil(rules)) {
 		return
 	}
+	s.notifyExternalForwardingRules(r.Context(), r, p, m, before, rules)
 	old, next := forwardDestinations(before), forwardDestinations(rules)
 	for addr, rule := range next {
 		if _, ok := old[addr]; !ok {

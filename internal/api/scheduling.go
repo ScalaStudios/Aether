@@ -334,9 +334,11 @@ func (s *Server) RunScheduler(ctx context.Context) {
 				earlyC = early.C
 			}
 		}
+		s.deliverSecurityEmails(ctx)
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.securityNotifyWake:
 		case <-ticker.C:
 		case <-s.scheduleWake:
 		case <-earlyC:

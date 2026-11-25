@@ -598,13 +598,14 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, p *pr
 func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *principal, mailboxID, name, scope string) (*createdAppPassword, bool) {
 	var out createdAppPassword
 	var orgID string
+	var ownerUserID *string
 	out.Password = secrets.Token(20)
 	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO app_passwords (user_id, mailbox_id, name, token_hash, scope)
 		SELECT $1, m.id, $3, $4, $5 FROM mailboxes m WHERE m.id = $2 AND m.active AND `+signInAsMailbox("$1")+`
-		RETURNING id, name, mailbox_id, created_at, scope, (SELECT address FROM mailboxes WHERE id = $2), (SELECT org_id FROM mailboxes WHERE id = $2)`,
+		RETURNING id, name, mailbox_id, created_at, scope, (SELECT address FROM mailboxes WHERE id = $2), (SELECT org_id FROM mailboxes WHERE id = $2), (SELECT owner_user_id FROM mailboxes WHERE id = $2)`,
 		p.User.ID, mailboxID, name, secrets.SHA256Hex(out.Password), scope).
-		Scan(&out.ID, &out.Name, &out.MailboxID, &out.CreatedAt, &out.Scope, &out.MailboxAddress, &orgID)
+		Scan(&out.ID, &out.Name, &out.MailboxID, &out.CreatedAt, &out.Scope, &out.MailboxAddress, &orgID, &ownerUserID)
 	if errors.Is(err, pgx.ErrNoRows) || (err != nil && !uuidPattern.MatchString(mailboxID)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose one of your own active mailboxes.")
 		return nil, false
@@ -614,6 +615,9 @@ func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *pri
 		return nil, false
 	}
 	s.audit(r.Context(), r, p, &orgID, "app_password.create", "app_password", out.ID, map[string]any{"mailbox": out.MailboxAddress, "scope": out.Scope})
+	if ownerUserID != nil {
+		s.notifyAppPasswordCreated(r.Context(), r, p, orgID, *ownerUserID, out.MailboxID, out.MailboxAddress, out.ID, out.Name)
+	}
 	return &out, true
 }
 
