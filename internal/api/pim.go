@@ -365,6 +365,7 @@ type calendarEvent struct {
 	Attendees   []eventAttendee `json:"attendees"`
 	CalendarID  string          `json:"calendarId,omitempty"`
 	ReadOnly    bool            `json:"readOnly,omitempty"`
+	Reminder    *int            `json:"reminderMinutes,omitempty"`
 	transparent bool
 }
 
@@ -400,6 +401,7 @@ func eventFromComponent(id string, comp *ical.Component) (calendarEvent, *ical.E
 			out.End = out.Start.AddDate(0, 0, 1)
 		}
 	}
+	out.Reminder = eventReminder(comp, out.Start)
 	return out, ev, nil
 }
 
@@ -524,6 +526,7 @@ type eventInput struct {
 	Repeat      string    `json:"repeat"`
 	Attendees   []string  `json:"attendees"`
 	CalendarID  string    `json:"calendarId"`
+	Reminder    *int      `json:"reminderMinutes"`
 }
 
 func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -549,6 +552,9 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	case len(in.Location) > 500 || len(in.Description) > 10000:
 		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "The location or description is too long.")
+		return
+	case in.Reminder != nil && (*in.Reminder < 0 || *in.Reminder > 7*24*60):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "A reminder can be at the start of the event or up to 7 days before.")
 		return
 	}
 	if in.CalendarID == "" {
@@ -623,6 +629,9 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	}
 	if in.Repeat != "" {
 		event.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: repeatRules[in.Repeat]})
+	}
+	if in.Reminder != nil {
+		setReminder(event.Component, *in.Reminder, in.Title)
 	}
 	sequence := 0
 	if prev != nil {

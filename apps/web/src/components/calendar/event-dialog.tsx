@@ -37,6 +37,16 @@ export interface EventSelection {
 
 const repeats = { none: "Does not repeat", daily: "Daily", weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" }
 
+const reminderChoices: [string, string][] = [
+  ["off", "No reminder"],
+  ["0", "At the time of the event"],
+  ["5", "5 minutes before"],
+  ["15", "15 minutes before"],
+  ["30", "30 minutes before"],
+  ["60", "1 hour before"],
+  ["1440", "1 day before"],
+]
+
 function range(v: { allDay: boolean; startDate: string; startTime: string; endDate: string; endTime: string }) {
   if (v.allDay) return { start: fromValues(v.startDate), end: addDays(fromValues(v.endDate), 1) }
   return { start: fromValues(v.startDate, v.startTime), end: fromValues(v.endDate, v.endTime) }
@@ -55,6 +65,7 @@ const schema = z
     description: z.string().max(10000, "Use 10,000 characters or fewer."),
     attendees: z.array(z.object({ name: z.string().optional(), address: z.string(), kind: z.enum(["room", "equipment"]).optional() })).max(100, "Invite 100 people or fewer."),
     calendarId: z.string(),
+    reminder: z.string().refine((v) => v === "off" || (/^\d+$/.test(v) && Number(v) <= 7 * 24 * 60), "Choose a reminder up to 7 days before the event."),
   })
   .refine((v) => v.allDay || (v.startTime && v.endTime), { message: "Choose a start and end time.", path: ["endDate"] })
   .refine((v) => v.allDay || !v.startTime || !v.endTime || range(v).end > range(v).start, { message: "The event must end after it starts.", path: ["endDate"] })
@@ -75,6 +86,7 @@ function toValues({ event, start, end, allDay }: EventSelection): Values {
     description: event?.description ?? "",
     attendees: event?.attendees.map(({ name, address, kind }) => ({ name, address, kind })) ?? [],
     calendarId: event?.calendarId ?? "personal",
+    reminder: event?.reminderMinutes == null ? "off" : String(event.reminderMinutes),
   }
 }
 
@@ -141,7 +153,18 @@ export function EventDialog({
       const repeat = v.repeat === "none" || v.repeat === "custom" ? "" : v.repeat
       const picked = range(v)
       const { start, end } = repeat ? seriesShift(target, picked.start, picked.end, v.allDay) : picked
-      const body: CalendarEventInput = { title: v.title, start: toRFC3339(start), end: toRFC3339(end), allDay: v.allDay, location: v.location, description: v.description, repeat, attendees: v.attendees.map((a) => a.address), calendarId: v.calendarId }
+      const body: CalendarEventInput = {
+        title: v.title,
+        start: toRFC3339(start),
+        end: toRFC3339(end),
+        allDay: v.allDay,
+        location: v.location,
+        description: v.description,
+        repeat,
+        attendees: v.attendees.map((a) => a.address),
+        calendarId: v.calendarId,
+        reminderMinutes: v.reminder === "off" ? null : Number(v.reminder),
+      }
       type Saved = CalendarEvent & { bookings?: BookingOutcome[] }
       return event
         ? api<Saved>(`/calendar/events/${encodeURIComponent(event.id)}`, { method: "PUT", body })
@@ -269,6 +292,31 @@ export function EventDialog({
                 </Select>
               </Field>
             )}
+          />
+          <Controller
+            control={form.control}
+            name="reminder"
+            render={({ field }) => {
+              const choices = reminderChoices.some(([value]) => value === field.value) || field.value === "off"
+                ? reminderChoices
+                : [...reminderChoices, [field.value, `${field.value} minutes before`] as [string, string]]
+              return (
+                <Field id="event-reminder" label="Reminder" hint={allDay ? "For an all-day event, this is at the start of that day." : undefined}>
+                  <Select value={field.value} onValueChange={field.onChange} disabled={readOnly}>
+                    <SelectTrigger id="event-reminder" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {choices.map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )
+            }}
           />
           {invited ? (
             <Field id="event-attendees" label="Attendees">

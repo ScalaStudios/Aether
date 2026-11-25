@@ -117,6 +117,7 @@ export function MessageList({
   view,
   onViewChange,
   draggable,
+  live,
 }: {
   className?: string
   folder: Pick<Folder, "name" | "specialUse">
@@ -136,6 +137,7 @@ export function MessageList({
   view: ListView
   onViewChange: (view: ListView) => void
   draggable?: boolean
+  live?: boolean
 }) {
   const sentinel = useRef<HTMLDivElement>(null)
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
@@ -172,6 +174,10 @@ export function MessageList({
           {total !== undefined && (
             <span className="text-xs text-fg-tertiary tabular-nums">{total} {total === 1 ? "message" : "messages"}</span>
           )}
+          <span role="status" className="flex items-center gap-1.5 text-xs text-fg-tertiary">
+            <span aria-hidden className={cn("size-1.5 rounded-full", live ? "bg-success" : "bg-fg-tertiary")} />
+            <span className={cn(!live && "max-sm:sr-only")}>{live ? "Live" : "Every 30s"}</span>
+          </span>
           {onCompose && (
             <IconButton label="New message" size="icon-sm" className="lg:hidden" onClick={onCompose}>
               <PenSquare />

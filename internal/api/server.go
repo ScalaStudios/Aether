@@ -40,10 +40,23 @@ type Server struct {
 	imports       sync.Map
 	importSlots   chan struct{}
 	kickWake      chan struct{}
+	origin        string
+	hub           *liveHub
+	notifyWake    chan struct{}
+	watchesMu     sync.Mutex
+	watches       map[string]context.CancelFunc
+	vapidMu       sync.Mutex
+	vapidPublic   string
+	vapidPrivate  string
+	apnsMu        sync.Mutex
+	apnsKey       string
+	apns          *apnsClient
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4)}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
+		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -87,6 +100,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/trusted-sender", s.trustedSender)
 	mux.HandleFunc("POST /internal/mail-events", s.receiveMailEvent)
 	mux.HandleFunc("POST /internal/auth-policy", s.authPolicy)
+	mux.HandleFunc("POST /internal/ios-push", s.registerIOSPush)
+	mux.HandleFunc("DELETE /internal/ios-push", s.deleteIOSPush)
 	mux.HandleFunc("GET /mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("GET /.well-known/autoconfig/mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("/autodiscover/autodiscover.xml", s.mailAutodiscover)
@@ -247,6 +262,12 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/me/recipient-keys", s.recipientKeys)
 	authed("POST /api/v1/me/recipient-keys", s.savePeerKey)
 	authed("GET /api/v1/me/wkd", s.webKeyDirectory)
+	authed("GET /api/v1/events", s.events)
+	authed("GET /api/v1/me/notifications", s.getNotifications)
+	authed("PUT /api/v1/me/notifications", s.saveNotifications)
+	authed("PUT /api/v1/me/live-focus", s.focusMailbox)
+	authed("POST /api/v1/me/push-subscriptions", s.createPushSubscription)
+	authed("DELETE /api/v1/me/push-subscriptions", s.deletePushSubscription)
 	authed("GET /api/v1/me/mailboxes", s.myMailboxes)
 	authed("GET /api/v1/me/app-passwords", s.listAppPasswords)
 	authed("POST /api/v1/me/app-passwords", s.createAppPassword)

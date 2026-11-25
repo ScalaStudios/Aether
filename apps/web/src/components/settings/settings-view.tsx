@@ -20,6 +20,7 @@ import { HeldMessages } from "@/components/settings/held-messages"
 import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
 import { MailboxAccess } from "@/components/settings/mailbox-access"
+import { Notifications } from "@/components/settings/notifications"
 import { ManagedLists } from "@/components/settings/managed-lists"
 import { SenderLists } from "@/components/settings/sender-lists"
 import { Security } from "@/components/settings/security"
@@ -51,7 +52,7 @@ export function SettingsView() {
     <PageContainer>
       <PageHeader
         title="Settings"
-        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, encryption keys, mail rules, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
+        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, encryption keys, mail rules, notifications, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
       />
       {session && !setup && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
@@ -95,6 +96,7 @@ export function SettingsView() {
           <Signatures />
           <Encryption />
           <MailRules />
+          <Notifications />
           <PersonalAliases />
           <SenderLists />
           <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />

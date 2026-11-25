@@ -821,6 +821,7 @@ export interface CalendarEvent {
   calendarId?: string
   readOnly?: boolean
   color?: string
+  reminderMinutes?: number
 }
 
 export type CalendarAccess = "owner" | "write" | "read"
@@ -861,10 +862,27 @@ export interface Invitation {
   applied: boolean
 }
 
-export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart" | "organizer" | "attendees" | "calendarId" | "readOnly" | "color"> & {
+export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart" | "organizer" | "attendees" | "calendarId" | "readOnly" | "color" | "reminderMinutes"> & {
   repeat: Exclude<Repeat, "custom">
   attendees: string[]
   calendarId: string
+  reminderMinutes: number | null
+}
+
+export interface FolderNotification {
+  mailboxId: string
+  folder: string
+  enabled: boolean
+}
+
+export interface NotificationSettings {
+  mailEnabled: boolean
+  calendarEnabled: boolean
+  vapidPublicKey: string
+  pushConfigured: boolean
+  browsers: number
+  ios: { configured: boolean; devices: number }
+  folders: FolderNotification[]
 }
 
 export type ResourceType = "room" | "equipment"

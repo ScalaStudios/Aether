@@ -10,6 +10,7 @@ import { cn } from "cn"
 
 import { Avatar } from "@/components/avatar"
 import { BrandMark } from "@/components/branding"
+import { LiveEvents } from "@/components/live-events"
 import { EmptyState, ErrorState } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import {
@@ -106,6 +107,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Button>
             }
           />
+        ) : session.data ? (
+          <LiveEvents>{children}</LiveEvents>
         ) : (
           children
         )}

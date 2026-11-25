@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
 
+import { useLiveConnected } from "@/components/live-events"
 import { Composer } from "@/components/mail/composer"
 import { FolderPane } from "@/components/mail/folder-pane"
 import { MessageList } from "@/components/mail/message-list"
@@ -41,6 +42,8 @@ function isTyping(target: EventTarget | null) {
 
 export function MailView() {
   const qc = useQueryClient()
+  const live = useLiveConnected()
+  const refresh = live ? 120_000 : POLL
   const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.protocols.includes("webmail")) })
   const own = mailboxes.data?.filter((m) => m.kind !== "shared") ?? []
   const shared = mailboxes.data?.filter((m) => m.kind === "shared") ?? []
@@ -54,7 +57,7 @@ export function MailView() {
   const identities = senderIdentities(mailboxes.data ?? [], mbx)
   const from = identities.find((i) => i.from.address === mailbox?.address) ?? identities[0]
 
-  const folderQueries = useQueries({ queries: sections.map((m) => ({ ...foldersQuery(m.id), refetchInterval: POLL })) })
+  const folderQueries = useQueries({ queries: sections.map((m) => ({ ...foldersQuery(m.id), refetchInterval: refresh })) })
   const trees = sections.map((m, i) => ({ mailbox: m, folders: folderQueries[i] }))
   const folders = trees.find((t) => t.mailbox.id === mbx)?.folders
   const [folderName, setFolderName] = useState<string | null>(null)
@@ -71,7 +74,7 @@ export function MailView() {
     queryKey: ["scheduled", mbx],
     queryFn: () => api<ScheduledMessage[]>(`/mailboxes/${mbx}/scheduled`),
     enabled: !!mailbox,
-    refetchInterval: POLL,
+    refetchInterval: refresh,
   })
   const [scheduledView, setScheduledView] = useState(false)
   const showScheduled = scheduledView && !!scheduled.data?.length
@@ -113,7 +116,7 @@ export function MailView() {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled: !!folders?.isSuccess,
-    refetchInterval: POLL,
+    refetchInterval: refresh,
   })
   const summaries = messages.data?.pages.flatMap((p) => p.messages) ?? []
 
@@ -125,6 +128,11 @@ export function MailView() {
   const router = useRouter()
   const params = useSearchParams()
   const composeTo = params.get("compose")
+  const linkMailbox = params.get("mailbox")
+  const linkFolder = params.get("folder")
+  const linkMessage = params.get("message")
+  const linkKey = linkMailbox && linkFolder ? `${linkMailbox}/${linkFolder}/${linkMessage ?? ""}` : ""
+  const [appliedLink, setAppliedLink] = useState<string | null>(null)
   const [composedTo, setComposedTo] = useState<string | null>(null)
   if (mailbox && composeTo !== composedTo) {
     setComposedTo(composeTo)
@@ -143,9 +151,28 @@ export function MailView() {
       setSelectedUid(null)
     }
   }
+  if (mailbox && linkKey && appliedLink !== linkKey && linkMailbox && linkFolder && mailboxes.data?.some((m) => m.id === linkMailbox)) {
+    setAppliedLink(linkKey)
+    setMailboxId(linkMailbox)
+    setFolderName(linkFolder)
+    setScheduledView(false)
+    setQuarantineView(false)
+    const uid = Number(linkMessage)
+    if (linkMessage && Number.isInteger(uid) && uid > 0) setSelectedUid(uid)
+  }
   useEffect(() => {
-    if ((composeTo && composeTo === composedTo) || (linked && linked === linkedTo)) router.replace("/mail", { scroll: false })
-  }, [composeTo, composedTo, linked, linkedTo, router])
+    if ((composeTo && composeTo === composedTo) || (linked && linked === linkedTo) || (linkKey && appliedLink === linkKey && !composeTo)) router.replace("/mail", { scroll: false })
+  }, [composeTo, composedTo, linked, linkedTo, linkKey, appliedLink, router])
+  useEffect(() => {
+    if (!live || !mbx || !folder) return
+    if (linkMailbox && linkFolder && (mbx !== linkMailbox || folder !== linkFolder)) return
+    const send = () => {
+      api("/me/live-focus", { method: "PUT", body: { mailboxId: mbx, folder } }).catch(() => {})
+    }
+    send()
+    const id = window.setInterval(send, 20_000)
+    return () => window.clearInterval(id)
+  }, [live, mbx, folder, linkMailbox, linkFolder])
 
   const message = useQuery({
     queryKey: ["message", mbx, folder, selectedUid],
@@ -179,6 +206,14 @@ export function MailView() {
       qc.invalidateQueries({ queryKey: ["message", mbx, folder, uid] })
     },
   })
+
+  const markedSeen = useRef("")
+  useEffect(() => {
+    const key = `${mbx}/${folder}/${selectedUid}`
+    if (selectedUid === null || readOnly || !message.data || message.data.uid !== selectedUid || message.data.seen || markedSeen.current === key) return
+    markedSeen.current = key
+    setFlags.mutate({ uid: selectedUid, flags: { seen: true } })
+  }, [mbx, folder, selectedUid, readOnly, message.data, setFlags])
 
   const remove = useMutation({
     mutationFn: ({ uid, to, target, until, unsnooze }: { uid: number; to?: Folder; target?: Mailbox; until?: Date; unsnooze?: boolean; notice?: string }) =>
@@ -422,6 +457,7 @@ export function MailView() {
             view={view}
             onViewChange={setView}
             draggable={!readOnly}
+            live={live}
           />
         )}
         {quarantineView ? (

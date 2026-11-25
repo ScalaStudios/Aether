@@ -5,7 +5,25 @@
 }
 
 {$AETHER_SITE_ADDRESS} {
-	encode zstd gzip
+	encode zstd gzip {
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type text/javascript*
+			header Content-Type text/xml*
+			header Content-Type text/csv*
+			header Content-Type text/markdown*
+			header Content-Type application/javascript*
+			header Content-Type application/json*
+			header Content-Type application/xml*
+			header Content-Type application/xhtml+xml*
+			header Content-Type image/svg+xml*
+			header Content-Type application/manifest+json*
+			header Content-Type font/*
+			header Content-Type application/wasm*
+		}
+	}
 	request_body {
 		max_size 32MB
 	}
@@ -17,7 +35,9 @@
 	}
 	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
 	handle @api {
-		reverse_proxy api:8080
+		reverse_proxy api:8080 {
+			flush_interval -1
+		}
 	}
 	handle {
 		reverse_proxy web:3000

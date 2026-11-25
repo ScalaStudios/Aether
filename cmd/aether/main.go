@@ -174,6 +174,7 @@ func serve(log *slog.Logger) error {
 	go srv.RunRetention(ctx)
 	go srv.RunResourceWorker(ctx)
 	go srv.RunQuotaWatcher(ctx)
+	go srv.RunNotifications(ctx)
 	httpServer := &http.Server{
 		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,
@@ -272,7 +273,7 @@ func setupTracing(ctx context.Context) (func(), error) {
 }
 
 func tracedHandler(h http.Handler) http.Handler {
-	return otelhttp.NewHandler(h, "http",
+	traced := otelhttp.NewHandler(h, "http",
 		otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/healthz" && r.URL.Path != "/readyz" }),
 		otelhttp.WithSpanNameFormatter(func(op string, r *http.Request) string {
 			if r.Pattern != "" {
@@ -280,6 +281,13 @@ func tracedHandler(h http.Handler) http.Handler {
 			}
 			return r.Method
 		}))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/events" {
+			h.ServeHTTP(w, r)
+			return
+		}
+		traced.ServeHTTP(w, r)
+	})
 }
 
 func bootstrapAdmin(args []string) error {

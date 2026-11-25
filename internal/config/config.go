@@ -57,6 +57,11 @@ type Config struct {
 	ReportOrgName         string
 	MailLog               string
 	ReportRelayHost       string
+	VAPIDPublicKey        string
+	VAPIDPrivateKey       string
+	APNSCertFile          string
+	APNSKeyFile           string
+	APNSSandbox           bool
 }
 
 func Load() (*Config, error) {
@@ -99,6 +104,11 @@ func Load() (*Config, error) {
 		ReportOrgName:         os.Getenv("AETHER_REPORT_ORG_NAME"),
 		MailLog:               os.Getenv("AETHER_MAIL_LOG"),
 		ReportRelayHost:       os.Getenv("AETHER_RELAYHOST"),
+		VAPIDPublicKey:        os.Getenv("AETHER_VAPID_PUBLIC_KEY"),
+		VAPIDPrivateKey:       os.Getenv("AETHER_VAPID_PRIVATE_KEY"),
+		APNSCertFile:          os.Getenv("AETHER_APNS_CERT_FILE"),
+		APNSKeyFile:           os.Getenv("AETHER_APNS_KEY_FILE"),
+		APNSSandbox:           os.Getenv("AETHER_APNS_SANDBOX") == "true",
 	}
 	var errs []error
 	if c.DatabaseURL == "" {
@@ -126,6 +136,12 @@ func Load() (*Config, error) {
 	}
 	if c.MTASTSMode != "testing" && c.MTASTSMode != "enforce" {
 		errs = append(errs, errors.New("AETHER_MTA_STS_MODE must be testing or enforce"))
+	}
+	if (c.VAPIDPublicKey == "") != (c.VAPIDPrivateKey == "") {
+		errs = append(errs, errors.New("AETHER_VAPID_PUBLIC_KEY and AETHER_VAPID_PRIVATE_KEY must both be set, or both left empty"))
+	}
+	if (c.APNSCertFile == "") != (c.APNSKeyFile == "") {
+		errs = append(errs, errors.New("AETHER_APNS_CERT_FILE and AETHER_APNS_KEY_FILE must both be set, or both left empty"))
 	}
 	u, err := url.Parse(os.Getenv("AETHER_PUBLIC_URL"))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {

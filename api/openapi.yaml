@@ -24,6 +24,7 @@ tags:
   - name: mail-queue
   - name: contacts
   - name: calendar
+  - name: notifications
   - name: integrations
   - name: branding
   - name: mail-flow
@@ -603,6 +604,103 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Session" }
         "422": { $ref: "#/components/responses/Error" }
+  /events:
+    get:
+      tags: [notifications]
+      summary: Live mail and calendar events
+      description: A long-lived text/event-stream for the signed-in user. Events are named mail, calendar, ping and resync. API keys cannot use this route. The connection sends cookies and does not use the CSRF header.
+      responses:
+        "200":
+          description: Server-sent events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /me/notifications:
+    get:
+      tags: [notifications]
+      summary: Notification settings for the signed-in user
+      description: API keys cannot use this route. Inbox is notified unless a folder row turns it off. Other folders are quiet unless a row turns them on.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationSettings" }
+    put:
+      tags: [notifications]
+      summary: Replace notification settings
+      description: Replaces every folder row for the signed-in user. Send each folder you want to remember. API keys cannot use this route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationSettingsInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationSettings" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/live-focus:
+    put:
+      tags: [notifications]
+      summary: Tell the server which folder is open
+      description: The open folder is watched even when it is not a notification folder. Repeating the same folder extends the watch. Switching folders more than once every couple of seconds answers 429. API keys cannot use this route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mailboxId, folder]
+              properties:
+                mailboxId: { type: string, format: uuid }
+                folder: { type: string, maxLength: 255 }
+      responses:
+        "204": { description: Watching that folder }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /me/push-subscriptions:
+    post:
+      tags: [notifications]
+      summary: Register this browser for Web Push
+      description: The endpoint must be https. API keys cannot use this route. Answers 503 when the server has no VAPID keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint: { type: string, format: uri }
+                keys:
+                  type: object
+                  required: [p256dh, auth]
+                  properties:
+                    p256dh: { type: string }
+                    auth: { type: string }
+      responses:
+        "204": { description: Registered }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [notifications]
+      summary: Remove a Web Push subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint: { type: string }
+      responses:
+        "204": { description: Removed }
   /organizations/{orgId}/domains:
     get:
       tags: [domains]
@@ -4246,6 +4344,41 @@ components:
         email: { type: string, format: email }
         company: { type: string, maxLength: 200 }
         phone: { type: string, maxLength: 50 }
+    NotificationSettings:
+      type: object
+      required: [mailEnabled, calendarEnabled, vapidPublicKey, pushConfigured, browsers, ios, folders]
+      properties:
+        mailEnabled: { type: boolean }
+        calendarEnabled: { type: boolean }
+        vapidPublicKey: { type: string, description: Empty when background push is not available }
+        pushConfigured: { type: boolean }
+        browsers: { type: integer, description: Web Push subscriptions for this user }
+        ios:
+          type: object
+          required: [configured, devices]
+          properties:
+            configured: { type: boolean, description: The server has an Apple Push certificate }
+            devices: { type: integer }
+        folders:
+          type: array
+          items: { $ref: "#/components/schemas/FolderNotification" }
+    NotificationSettingsInput:
+      type: object
+      required: [mailEnabled, calendarEnabled, folders]
+      properties:
+        mailEnabled: { type: boolean }
+        calendarEnabled: { type: boolean }
+        folders:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/FolderNotification" }
+    FolderNotification:
+      type: object
+      required: [mailboxId, folder, enabled]
+      properties:
+        mailboxId: { type: string, format: uuid }
+        folder: { type: string, maxLength: 255 }
+        enabled: { type: boolean }
     CalendarEvent:
       type: object
       required: [id, title, start, end, seriesStart, allDay, location, description, repeat, attendees]
@@ -4263,6 +4396,7 @@ components:
         attendees: { type: array, items: { $ref: "#/components/schemas/Attendee" } }
         calendarId: { type: string }
         readOnly: { type: boolean, description: The calendar is shared with you to view only }
+        reminderMinutes: { type: integer, minimum: 0, maximum: 10080, description: Minutes before the start. 0 means at the start. Omitted when the event has no reminder. }
     Calendar:
       type: object
       required: [id, name, color, access]
@@ -4313,6 +4447,7 @@ components:
           items: { type: string, format: email }
           description: Saving sends invitations to these addresses from your own mailbox; removed attendees get a cancellation
         calendarId: { type: string, default: personal, description: The calendar to create the event in, or that holds the event being updated }
+        reminderMinutes: { type: integer, nullable: true, minimum: 0, maximum: 10080, description: Minutes before the start, 0 at the start, or null to clear the reminder. Omitted leaves the event without one. }
     MailRule:
       type: object
       required: [name, enabled, match, conditions, actions]

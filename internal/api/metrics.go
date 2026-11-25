@@ -25,10 +25,12 @@ var (
 	aclBacklog      = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_acl_backlog_seconds", Help: "Age in seconds of the oldest active mailbox whose Dovecot rights are still waiting for a successful reconciliation; 0 when none is pending."})
 	queueMessages   = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "aether_mail_queue_messages", Help: "Messages in the Postfix queue by queue: maildrop, incoming, active, deferred and hold. Read every minute."}, []string{"queue"})
 	queueOldest     = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_queue_oldest_seconds", Help: "Age in seconds of the oldest message in the Postfix queue that is not on hold; 0 when there is none."})
+	idleWatches     = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_idle_watches", Help: "IMAP IDLE connections this process holds for live mail."})
+	notifySent      = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_notifications_total", Help: "Notification deliveries by channel and result."}, []string{"channel", "result"})
 )
 
 func init() {
-	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned, queueMessages, queueOldest, authBlocks, reportsSent,
+	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned, queueMessages, queueOldest, authBlocks, reportsSent, idleWatches, notifySent,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 }
 

@@ -212,6 +212,8 @@ Dovecot serves its doveadm HTTP API on port 8089 inside the Compose network, pro
 
 Rspamd's controller accepts training requests only with `AETHER_RSPAMD_CONTROLLER_PASSWORD`, which `setup.sh` also generates. Only the API and Rspamd receive it; the API uses it to teach the spam filter when someone moves a message into or out of Junk. Installations created before spam learning existed must add it to `.env`, for example with `printf 'AETHER_RSPAMD_CONTROLLER_PASSWORD=%s\n' "$(head -c 48 /dev/urandom | base64 | tr -d '\n/+=' | cut -c1-40)" >> .env`, before upgrading.
 
+Live mail holds an IMAP IDLE connection for each watched folder. Dovecot allows 100 connections per user from one IP. Web Push keys are generated and stored encrypted when `AETHER_VAPID_PUBLIC_KEY` and `AETHER_VAPID_PRIVATE_KEY` are left empty; set both to pin them. iOS Mail push needs an Apple certificate in `AETHER_APNS_CERT_FILE` and `AETHER_APNS_KEY_FILE`, and the bundled Dovecot still does not implement `XAPPLEPUSHSERVICE`. See [Notifications](notifications.md).
+
 Installations created before shared mailboxes existed must add the key to `.env` before upgrading. [Shared mailboxes](shared-mailboxes.md#upgrading-an-existing-installation) lists the steps, including the check for existing folders named `Shared`.
 
 ## Postfix queue API

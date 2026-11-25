@@ -26,6 +26,7 @@ Aether's own code is AGPL-3.0-or-later. The components below are either Go or np
 | github.com/emersion/go-milter | BSD-2-Clause |
 | github.com/microcosm-cc/bluemonday | BSD-3-Clause |
 | github.com/redis/go-redis/v9 | BSD-2-Clause |
+| github.com/SherClockHolmes/webpush-go | MIT |
 
 ## Web
 

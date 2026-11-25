@@ -152,6 +152,10 @@ Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renam
 6. Postfix delivers the message: through Dovecot LMTP for local recipients, or by direct MX delivery or the configured relay host for remote ones.
 7. The API appends a copy to the mailbox's Sent folder over IMAP, or to the shared mailbox a list names for its sent copies.
 
+## Live mail and reminders
+
+Aether Mail keeps a server-sent event stream open at `GET /api/v1/events`. One API process holds the Valkey leader lock and runs IMAP IDLE for the folders people have asked to be told about, plus the folder they have open, at most eight folders per mailbox. It publishes each change on `aether:notify`, and every replica writes it to the streams connected to that process. New unread mail can also go out as Web Push. Calendar reminders are `VALARM`s on the event, delivered on the same loop. [Notifications](notifications.md) covers the settings, the keys, and what iOS Mail still needs.
+
 ## Performance targets
 
 These are design targets for a single 2 vCPU / 4 GB host, not measured results:
@@ -164,7 +168,7 @@ There is no benchmark harness yet; it is part of Phase 4. In development, the in
 
 ## Known limitations
 
-- The API opens one IMAP connection per request, with no pooling. Measured in October 2026, a request that uses IMAP takes about 14 ms in total, so a pool would save little. Revisit this if the mail routes' 95th percentile latency on the Aether overview dashboard goes above 100 ms.
+- The API opens one IMAP connection per request, with no pooling. Measured in October 2026, a request that uses IMAP takes about 14 ms in total, so a pool would save little. Revisit this if the mail routes' 95th percentile latency on the Aether overview dashboard goes above 100 ms. Live mail adds up to eight long-lived IDLE connections per mailbox, counted inside Dovecot's per-user connection limit.
 - Login, OIDC, and webmail send rate limits are fixed one-minute windows counted in Valkey, so they hold across API replicas. If Valkey is unreachable, the API allows the request and logs an error.
 
 ## Sender Rewriting Scheme
