@@ -1,14 +1,16 @@
 "use client"
 
-import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query"
-import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
+import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
+import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, Ban, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Globe, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
 import { cn } from "cn"
 import { useState } from "react"
+import { toast } from "sonner"
 
 import { Avatar } from "@/components/avatar"
 import { IconButton } from "@/components/icon-button"
 import { InvitationCard } from "@/components/mail/invitation-card"
 import { LaterMenu } from "@/components/mail/later-menu"
+import { senderListQuery } from "@/components/settings/sender-lists"
 import { Spinner } from "@/components/spinner"
 import { EmptyState, ErrorState } from "@/components/states"
 import {
@@ -29,7 +31,7 @@ import { api, apiUrl } from "@/lib/api"
 import { formatAddress, formatBytes, formatDateTime } from "@/lib/format"
 import { folderIcons, folderLabel, messageDocument, type ComposeMode } from "@/lib/mail"
 import { foldersQuery } from "@/lib/queries"
-import type { Address, Folder, Mailbox, Message } from "@/lib/types"
+import type { Address, Folder, Mailbox, Message, SenderEntry } from "@/lib/types"
 
 export function AddressLine({ label, addresses }: { label: string; addresses: Address[] }) {
   if (!addresses.length) return null
@@ -215,6 +217,44 @@ function FolderPicker({
   )
 }
 
+function BlockMenu({ mailboxId, address, disabled }: { mailboxId: string; address?: string; disabled: boolean }) {
+  const qc = useQueryClient()
+  const domain = address?.split("@")[1]
+  const block = useMutation({
+    mutationFn: (value: string) => api<SenderEntry[]>(`/mailboxes/${mailboxId}/sender-lists`, { method: "POST", body: { action: "block", value } }),
+    onSuccess: (list, value) => {
+      qc.setQueryData(senderListQuery(mailboxId).queryKey, list)
+      toast.success(`Blocked ${value}. New mail from them is deleted as it arrives.`)
+    },
+  })
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="quiet" size="icon" aria-label="Block" disabled={disabled || !address || block.isPending}>
+              {block.isPending ? <Spinner /> : <Ban />}
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Block</TooltipContent>
+      </Tooltip>
+      {address && domain && (
+        <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuItem onSelect={() => block.mutate(address)}>
+            <Ban aria-hidden className="text-fg-tertiary" />
+            <span className="truncate">Block {address}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => block.mutate(`@${domain}`)}>
+            <Globe aria-hidden className="text-fg-tertiary" />
+            <span className="truncate">Block everyone at @{domain}</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      )}
+    </DropdownMenu>
+  )
+}
+
 export function ReadingPane({
   className,
   mailboxId,
@@ -307,6 +347,7 @@ export function ReadingPane({
                 </Button>
               </LaterMenu>
             )}
+            <BlockMenu mailboxId={mailboxId} address={m?.from[0]?.address} disabled={!m} />
             <IconButton label="Delete" disabled={!m || deleting} onClick={onDelete}>
               <Trash2 />
             </IconButton>

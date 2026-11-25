@@ -195,3 +195,19 @@ func TestCompileSieveBodyHeaderSizeAndDelete(t *testing.T) {
 		}
 	}
 }
+
+func TestCompileSenderSieve(t *testing.T) {
+	script := CompileSenderSieve([]string{"bad@spam.test", "evil.test"}, []string{`fri"end@partner.test`})
+	for _, want := range []string{
+		`require ["envelope", "editheader"];`,
+		`if anyof (address :all :is "from" ["bad@spam.test"], address :domain :is "from" ["evil.test"], address :domain :matches "from" ["*.evil.test"], envelope :all :is "from" ["bad@spam.test"], envelope :domain :is "from" ["evil.test"], envelope :domain :matches "from" ["*.evil.test"]) {` + "\n  discard;\n  stop;\n}",
+		`if anyof (address :all :is "from" ["fri\"end@partner.test"], envelope :all :is "from" ["fri\"end@partner.test"]) {` + "\n  deleteheader \"X-Spam\";\n}",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %s:\n%s", want, script)
+		}
+	}
+	if empty := CompileSenderSieve(nil, nil); strings.Contains(empty, "if ") {
+		t.Errorf("empty lists compiled tests:\n%s", empty)
+	}
+}

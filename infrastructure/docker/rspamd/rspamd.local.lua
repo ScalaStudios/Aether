@@ -93,3 +93,65 @@ rspamd_config:register_symbol({
     })
   end,
 })
+
+local sender_lists_url = (os.getenv('AETHER_API_INTERNAL_URL') or 'http://api:8080') .. '/internal/sender-lists/check'
+
+local function first_addr(list)
+  return list and list[1] and list[1].addr or ''
+end
+
+local sender_lists = rspamd_config:register_symbol({
+  name = 'AETHER_SENDER_LISTS',
+  type = 'postfilter',
+  callback = function(task)
+    if task:get_user() or task:has_symbol('CLAM_VIRUS') then
+      return
+    end
+    local recipients = {}
+    for _, r in ipairs(task:get_recipients('smtp') or {}) do
+      table.insert(recipients, r.addr)
+    end
+    if #recipients == 0 then
+      return
+    end
+    local ip = task:get_from_ip()
+    local dmarc_reject = task:has_symbol('DMARC_POLICY_REJECT')
+    rspamd_http.request({
+      task = task,
+      url = sender_lists_url,
+      method = 'post',
+      mime_type = 'application/json',
+      timeout = 3,
+      body = ucl.to_format({
+        from = first_addr(task:get_from('smtp')),
+        headerFrom = first_addr(task:get_from('mime')),
+        ip = ip and ip:is_valid() and ip:to_string() or '',
+        recipients = recipients,
+        spfPass = task:has_symbol('R_SPF_ALLOW'),
+        dmarcPass = task:has_symbol('DMARC_POLICY_ALLOW'),
+        dmarcReject = dmarc_reject,
+      }, 'json-compact'),
+      callback = function(err, code, body)
+        if err or code ~= 200 then
+          rspamd_logger.warnx(task, 'sender list check failed: %s %s', err, code)
+          return
+        end
+        local parser = ucl.parser()
+        if not parser:parse_string(body) then
+          return
+        end
+        local action = parser:get_object().action
+        if action == 'block' then
+          task:insert_result('AETHER_SENDER_BLOCKED', 1.0)
+          task:set_pre_result({ action = 'reject', message = 'Mail from this sender is blocked by the recipient\'s organization', module = 'aether' })
+        elseif action == 'allow' and not task:has_pre_result() then
+          task:insert_result('AETHER_SENDER_ALLOWED', 1.0)
+          task:set_pre_result({ action = 'no action', module = 'aether' })
+        end
+      end,
+    })
+  end,
+})
+
+rspamd_config:register_symbol({ name = 'AETHER_SENDER_BLOCKED', type = 'virtual', parent = sender_lists, score = 0.0, description = 'Sender is on an Aether block list' })
+rspamd_config:register_symbol({ name = 'AETHER_SENDER_ALLOWED', type = 'virtual', parent = sender_lists, score = 0.0, description = 'Sender is on an Aether allow list' })

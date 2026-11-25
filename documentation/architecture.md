@@ -72,7 +72,7 @@ We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because 
 
 ## Rules, forwarding, and automatic replies
 
-Mail rules and automatic replies are stored per mailbox in PostgreSQL. Whenever either changes, the API compiles both into one Sieve script and installs it over ManageSieve, on Dovecot's internal port 4190, using the same master-user login as webmail. Dovecot runs the script at delivery, after the global spam-to-Junk script.
+Mail rules and automatic replies are stored per mailbox in PostgreSQL. Whenever either changes, the API compiles both into one Sieve script and installs it over ManageSieve, on Dovecot's internal port 4190, using the same master-user login as webmail. Dovecot runs the script at delivery, after the mailbox's blocked and trusted senders script and the global spam-to-Junk script.
 
 A rule has up to 20 conditions, matched with all or any, and at least one action. A condition tests From, To, Cc, Subject, the body, a named header, the size in kilobytes (over or under), or whether the mailbox's address is absent from To and Cc. The text conditions can be negated. The actions move the message to a folder, mark it read, flag it, forward it to up to five addresses, keep a copy when forwarding, delete it (Sieve `discard`), and stop later rules. A rule that deletes cannot also move the message or keep a copy.
 
@@ -165,3 +165,16 @@ Sender restrictions are enforced by Postfix during the SMTP session, on port 25 
 For `members` and `allowlist`, a sender on a domain that Aether hosts counts only when the session authenticated, so an outside server cannot claim a hosted address to reach a list. Mail with an empty envelope sender, such as a bounce, is rejected by every restricted list. The rejection is `5.7.1 <list> does not accept mail from this sender`, given while the sender is still connected. If the API cannot query the database, it asks Postfix to defer the message instead.
 
 Moderation, and members taken from identity provider groups, are not built.
+
+## Allowed and blocked senders
+
+Administrators keep one list of allowed and blocked senders for the organization, and optionally one per domain, under **Administration → Senders** or through `/api/v1/organizations/{orgId}/sender-lists` (API keys need the `senders` scope). An entry is an email address, a domain, which also matches its subdomains, or an IPv4 or IPv6 address or range, with an optional note and expiry date. People keep a personal list per mailbox under **Settings → Blocked and trusted senders**, from the Block button in the message view, or through `/api/v1/mailboxes/{mailboxId}/sender-lists` (API keys need `mailboxes`); personal entries are addresses and domains without expiry. Adding a value that is already listed in the same place replaces its entry. Every change is an audit event, `sender_list.add` or `sender_list.remove`, whose target is the organization or the mailbox.
+
+Organization and domain lists apply to mail arriving on port 25 from servers that did not authenticate. A block anywhere wins over an allow:
+
+- **During the SMTP session.** For each recipient, Postfix asks the API's policy service with `policy_context=senders`. The API compares the envelope sender and the client IP address with the entries for the organization that owns the recipient's domain and for that domain, and rejects a blocked sender with `5.7.1 Mail from this sender is blocked by the recipient's organization`. This check fails open: if the API or the database cannot answer, the message is accepted and filtered as usual.
+- **After scanning.** An Rspamd postfilter sends the envelope sender, the header From, the client address and the recipients to the API's `/internal/sender-lists/check`, which answers only callers on private networks. A verdict applies only when every recipient domain agrees. A block, which now also covers the header From, rejects the message. An allow sets the action to `no action`, so the message skips the spam score and greylisting, but not virus scanning, which runs first. An allowed address or domain counts for the header From only when the message passes DMARC, and for the envelope sender only when it passes SPF, so a forged sender cannot use an allow; allowed IP addresses need neither. No allow counts when the sender's domain publishes a DMARC `reject` policy that the message fails. If the API cannot be reached, the message is filtered as usual.
+
+Personal lists are compiled into a second Sieve script for the mailbox, `aether-senders`, installed over ManageSieve without being activated. Dovecot runs it first, from `sieve_before`, then the spam-to-Junk script, then the person's rules. A blocked sender's message is discarded and nothing else runs, so it gets no automatic reply. A trusted sender's message has its `X-Spam` header removed with the `editheader` extension, so the spam-to-Junk script leaves it in the inbox and the person's rules still run. Both tests compare the header From and the envelope sender. A personal list cannot rescue a message that Rspamd already rejected.
+
+Spam thresholds per mailbox are not built.

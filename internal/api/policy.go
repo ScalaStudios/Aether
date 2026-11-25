@@ -40,12 +40,17 @@ func (s *Server) policyConn(conn net.Conn) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		action, err := s.listPolicy(ctx, attrs["recipient"], attrs["sender"], attrs["sasl_username"])
-		cancel()
-		if err != nil {
+		var action string
+		if attrs["policy_context"] == "senders" {
+			if action, err = s.senderPolicy(ctx, attrs); err != nil {
+				s.log.Warn("sender list check failed; accepting", "err", err)
+				action = "DUNNO"
+			}
+		} else if action, err = s.listPolicy(ctx, attrs["recipient"], attrs["sender"], attrs["sasl_username"]); err != nil {
 			s.log.Warn("list policy check failed", "err", err)
 			action = "DEFER_IF_PERMIT 4.3.0 Try again later"
 		}
+		cancel()
 		if _, err := conn.Write([]byte("action=" + action + "\n\n")); err != nil {
 			return
 		}

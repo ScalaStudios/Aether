@@ -212,6 +212,40 @@ func CompileSieve(rules []Rule, reply AutoReply, address string) string {
 	return b.String()
 }
 
+func CompileSenderSieve(blocked, trusted []string) string {
+	var b strings.Builder
+	b.WriteString(`require ["envelope", "editheader"];` + "\n")
+	if tests := senderTests(blocked); tests != "" {
+		fmt.Fprintf(&b, "if anyof (%s) {\n  discard;\n  stop;\n}\n", tests)
+	}
+	if tests := senderTests(trusted); tests != "" {
+		fmt.Fprintf(&b, "if anyof (%s) {\n  deleteheader \"X-Spam\";\n}\n", tests)
+	}
+	return b.String()
+}
+
+func senderTests(values []string) string {
+	var addresses, domains, subdomains []string
+	for _, v := range values {
+		if strings.Contains(v, "@") {
+			addresses = append(addresses, sieveString(v))
+		} else {
+			domains = append(domains, sieveString(v))
+			subdomains = append(subdomains, sieveString("*."+v))
+		}
+	}
+	var tests []string
+	for _, part := range []string{"address", "envelope"} {
+		if len(addresses) > 0 {
+			tests = append(tests, part+` :all :is "from" [`+strings.Join(addresses, ", ")+`]`)
+		}
+		if len(domains) > 0 {
+			tests = append(tests, part+` :domain :is "from" [`+strings.Join(domains, ", ")+`]`, part+` :domain :matches "from" [`+strings.Join(subdomains, ", ")+`]`)
+		}
+	}
+	return strings.Join(tests, ", ")
+}
+
 type sieveConn struct {
 	conn net.Conn
 	r    *bufio.Reader
@@ -242,6 +276,14 @@ func (s *sieveConn) command(format string, args ...any) error {
 }
 
 func (c *Client) PutSieve(address, script string) error {
+	return c.putSieve(address, "aether", script, true)
+}
+
+func (c *Client) PutSenderSieve(address, script string) error {
+	return c.putSieve(address, "aether-senders", script, false)
+}
+
+func (c *Client) putSieve(address, name, script string, activate bool) error {
 	raw, err := net.DialTimeout("tcp", c.sieveAddr, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("managesieve connect: %w", err)
@@ -267,11 +309,13 @@ func (c *Client) PutSieve(address, script string) error {
 	if err := s.command(`AUTHENTICATE "PLAIN" "%s"`, creds); err != nil {
 		return err
 	}
-	if err := s.command("PUTSCRIPT \"aether\" {%d+}\r\n%s", len(script), script); err != nil {
+	if err := s.command("PUTSCRIPT \"%s\" {%d+}\r\n%s", name, len(script), script); err != nil {
 		return err
 	}
-	if err := s.command(`SETACTIVE "aether"`); err != nil {
-		return err
+	if activate {
+		if err := s.command(`SETACTIVE "%s"`, name); err != nil {
+			return err
+		}
 	}
 	s.command("LOGOUT")
 	return nil

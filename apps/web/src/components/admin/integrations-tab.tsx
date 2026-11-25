@@ -40,6 +40,7 @@ const resources: { value: string; label: string; description: string; levels: Ac
   { value: "members", label: "Members", description: "Members and their roles. Write also adds and removes members.", levels: ["", "read", "write"] },
   { value: "audit", label: "Audit log", description: "The organization’s audit log.", levels: ["", "read"] },
   { value: "webhooks", label: "Webhooks", description: "Webhooks, their delivery history and test deliveries.", levels: ["", "read", "write"] },
+  { value: "senders", label: "Senders", description: "Allowed and blocked senders for the organization and its domains.", levels: ["", "read", "write"] },
 ]
 
 const levelLabels: Record<Access, string> = { "": "None", read: "Read", write: "Write" }

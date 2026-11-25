@@ -561,3 +561,16 @@ export interface AllowedSender {
   sender: string
   createdAt: string
 }
+
+export type SenderAction = "allow" | "block"
+
+export interface SenderEntry {
+  id: string
+  domainId: string | null
+  action: SenderAction
+  kind: "address" | "domain" | "ip"
+  value: string
+  note: string
+  expiresAt: string | null
+  createdAt: string
+}

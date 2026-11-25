@@ -18,6 +18,7 @@ import { PageContainer } from "@/components/page-container"
 import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
 import { ManagedLists } from "@/components/settings/managed-lists"
+import { SenderLists } from "@/components/settings/sender-lists"
 import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
@@ -75,6 +76,7 @@ export function SettingsView() {
       )}
       <Signatures />
       <MailRules />
+      <SenderLists />
       <ManagedLists />
       <ImportMail />
       <AppPasswords />
