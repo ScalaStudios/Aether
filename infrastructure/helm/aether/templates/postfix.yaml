@@ -34,6 +34,7 @@ spec:
           image: {{ include "aether.image" (dict "name" "postfix" "root" .) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - { name: TZ, value: UTC }
             - { name: AETHER_MAIL_HOSTNAME, value: {{ .Values.mailHostname | quote }} }
             - { name: AETHER_RELAYHOST, value: {{ .Values.relay.host | quote }} }
             - { name: AETHER_RELAY_USER, value: {{ .Values.relay.user | quote }} }

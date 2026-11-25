@@ -134,6 +134,14 @@ The policy starts in `testing` mode: senders report failures but still deliver. 
 
 The DMARC record that Aether suggests asks receivers such as Google and Microsoft to send daily aggregate reports to `dmarc-reports@<domain>`. Every verified domain accepts mail at that address without a mailbox. Postfix hands the reports to the API, which unpacks the gzip, zip, or XML attachment and stores the results. The domain page then shows, for each sending IP address, how many messages passed DKIM and SPF alignment and how many receivers quarantined or rejected. Use this to find services that send as your domain but are not covered by SPF or DKIM before you tighten the policy.
 
+Aether also sends aggregate reports to domains that send mail here. After a UTC day has been over for half an hour, it builds one report from the DMARC results Rspamd stored and sends it to each `mailto` address in that domain's current `rua` tag. An address at another organization is used only when that organization publishes a DMARC record at `<their-domain>._report._dmarc.<collector>` naming the same address. The message is submitted on the internal authenticated relay and signed with the DKIM key of the sending domain. The address is `dmarc-reports@` the verified domain that matches `AETHER_MAIL_HOSTNAME`, unless `AETHER_REPORT_FROM` names another address on a verified domain that has a DKIM key. `AETHER_REPORT_ORG_NAME` is the organization name in the report; it otherwise defaults to the sending domain. `AETHER_SEND_REPORTS=false` turns this off, and so does an empty `AETHER_SIEVE_RELAY_PASSWORD`.
+
+### Reports Aether sends about TLS
+
+For each domain that publishes a `_smtp._tls` record, Aether sends the daily TLS report RFC 8460 describes. It reads Postfix's mail log (`AETHER_MAIL_LOG`, `/var/log/postfix/mail.log` in Compose) and counts TLS sessions to that domain: a DANE-verified session is reported under the `tlsa` policy, and any other TLS session under `no-policy-found`. The report goes to each `mailto` or `https` address in the record's `rua` tag. HTTPS collectors must be on port 443 with a public name; private addresses are refused the same way as webhooks. This is skipped when `AETHER_RELAYHOST` is set, because Postfix then records the connection to the relay, not to the recipient's server. The same `AETHER_SEND_REPORTS`, `AETHER_REPORT_FROM` and `AETHER_REPORT_ORG_NAME` settings apply.
+
+`aether_reports_sent_total` counts reports that Postfix or an HTTPS collector accepted, labeled `dmarc` or `tls`. A rejected address is not retried when the collector returns a permanent error.
+
 ### DANE
 
 Outbound mail checks DANE. The bundled Unbound resolver validates DNSSEC, and Postfix uses it to look up TLSA records. When a receiving domain publishes signed TLSA records, Postfix only delivers over TLS to a server whose certificate matches them. Domains without TLSA records get opportunistic TLS as before. Unbound sits on an internal `resolver` network at `172.29.53.53`. If `172.29.53.0/24` is already in use on the host, change the subnet and the two addresses in `compose.yml`.
@@ -201,7 +209,7 @@ The Postfix container runs `aether-postfix-api` on port 8025 inside the Compose 
 
 ## Monitoring
 
-The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks; none of them can be switched off. The metrics cover:
+The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, the loop that sends DMARC and TLS reports, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks. The report loop is the one that `AETHER_SEND_REPORTS=false` switches off. The metrics cover:
 
 - request rate, errors, and latency by route,
 - sign-in attempts by method and result,
@@ -212,6 +220,7 @@ The API serves Prometheus metrics on port 9090 inside the Compose network (`AETH
 - pending rights reconciliation (age of the oldest),
 - messages sent to the spam filter for learning, by class (`spam`, `ham`) and result (`learned`, `duplicate`, `disabled`, `failed`),
 - messages in the Postfix queue by queue, and the age of the oldest one not on hold,
+- DMARC aggregate and TLS reports accepted by a collector (`aether_reports_sent_total`, labeled `dmarc` or `tls`),
 - Go runtime and process statistics.
 
 No metric carries a user, mailbox, or address label.

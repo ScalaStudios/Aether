@@ -201,7 +201,7 @@ The Go API is the only component that writes application data. It keeps organiza
 
 | Component | Path | What it is |
 | --- | --- | --- |
-| API and CLI | `cmd/aether/`, `internal/` | The Go server: REST API, CalDAV and CardDAV, OIDC, webmail bridge, DMARC report intake, and the `serve`, `migrate` and `bootstrap-admin` commands |
+| API and CLI | `cmd/aether/`, `internal/` | The Go server: REST API, CalDAV and CardDAV, OIDC, webmail bridge, DMARC report intake and the DMARC and TLS reports Aether sends, and the `serve`, `migrate` and `bootstrap-admin` commands |
 | Web app | `apps/web/` | Aether Mail, Calendar, Contacts, Settings and Administration, built with Next.js |
 | Database schema | `migrations/` | Numbered PostgreSQL migrations, embedded in the binary and run when the API starts |
 | Mail stack | `infrastructure/docker/` | Images and configuration for Postfix, Dovecot, Rspamd, Unbound, Caddy and PostgreSQL |
@@ -225,6 +225,9 @@ The Go API is the only component that writes application data. It keeps organiza
 | `AETHER_LOCAL_LOGIN` | `true` | Password sign-in. Set it to `false` once an identity provider is connected |
 | `AETHER_RELAYHOST`, `AETHER_RELAY_USER`, `AETHER_RELAY_PASSWORD` | none | An authenticated relay for outgoing mail, for hosts that block outbound port 25 |
 | `AETHER_MTA_STS_MODE` | `testing` | The MTA-STS policy mode. Set it to `enforce` once TLS reports show no failures |
+| `AETHER_SEND_REPORTS` | `true` | Send DMARC aggregate reports and TLS reports to domains that ask for them. Set it to `false` to keep receiving reports without sending any |
+| `AETHER_REPORT_FROM` | `dmarc-reports@` the mail host's domain | The address those reports are sent from. It has to be on a verified domain that has a DKIM key |
+| `AETHER_REPORT_ORG_NAME` | the sending domain | The organization name written into the reports |
 | `AETHER_CUSTOM_CSS` | `true` | Organizations' custom CSS from **Administration → Branding**. Set it to `false` if a stylesheet breaks the sign-in page |
 | `AETHER_QUOTA_CHECK_INTERVAL` | `5m` | How often Aether measures mailbox sizes and sends storage warnings |
 | `AETHER_BACKUP_REPOSITORY`, `AETHER_BACKUP_PASSWORD` | none | A restic repository on S3-compatible storage for off-site backups, and its encryption password |

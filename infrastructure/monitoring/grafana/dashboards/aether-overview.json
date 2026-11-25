@@ -487,6 +487,38 @@
           }
         }
       ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Aggregate reports sent",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "aether-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind) (rate(aether_reports_sent_total[5m]))",
+          "legendFormat": "{{kind}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "aether-prometheus"
+          }
+        }
+      ]
     }
   ]
 }

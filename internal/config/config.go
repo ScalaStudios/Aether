@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/mail"
 	"net/netip"
 	"net/url"
 	"os"
@@ -51,6 +52,11 @@ type Config struct {
 	AuthBlockThreshold    int
 	AuthBlockAllowNets    []netip.Prefix
 	QuotaCheckInterval    time.Duration
+	SendReports           bool
+	ReportFrom            string
+	ReportOrgName         string
+	MailLog               string
+	ReportRelayHost       string
 }
 
 func Load() (*Config, error) {
@@ -88,6 +94,11 @@ func Load() (*Config, error) {
 		OutboundSASLListen:    env("AETHER_OUTBOUND_SASL_LISTEN", ":10041"),
 		MailDBPassword:        os.Getenv("AETHER_MAIL_DB_PASSWORD"),
 		CustomCSS:             env("AETHER_CUSTOM_CSS", "true") == "true",
+		SendReports:           env("AETHER_SEND_REPORTS", "true") == "true",
+		ReportFrom:            strings.ToLower(os.Getenv("AETHER_REPORT_FROM")),
+		ReportOrgName:         os.Getenv("AETHER_REPORT_ORG_NAME"),
+		MailLog:               os.Getenv("AETHER_MAIL_LOG"),
+		ReportRelayHost:       os.Getenv("AETHER_RELAYHOST"),
 	}
 	var errs []error
 	if c.DatabaseURL == "" {
@@ -107,6 +118,12 @@ func Load() (*Config, error) {
 		errs = append(errs, errors.New("AETHER_QUOTA_CHECK_INTERVAL must be a duration of at least 10s, for example 5m"))
 	}
 	c.QuotaCheckInterval = interval
+	if c.ReportFrom != "" {
+		addr, err := mail.ParseAddress(c.ReportFrom)
+		if err != nil || addr.Address != c.ReportFrom || strings.ContainsAny(c.ReportFrom, "\r\n") {
+			errs = append(errs, errors.New("AETHER_REPORT_FROM must be an email address"))
+		}
+	}
 	if c.MTASTSMode != "testing" && c.MTASTSMode != "enforce" {
 		errs = append(errs, errors.New("AETHER_MTA_STS_MODE must be testing or enforce"))
 	}

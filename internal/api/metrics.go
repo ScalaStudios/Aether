@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	reportsSent     = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_reports_sent_total", Help: "Aggregate reports accepted by Postfix or an HTTPS collector."}, []string{"kind"})
 	metricsRegistry = prometheus.NewRegistry()
 	httpRequests    = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_http_requests_total", Help: "HTTP requests by route pattern, method, and status code."}, []string{"route", "method", "code"})
 	httpDuration    = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "aether_http_request_duration_seconds", Help: "HTTP request latency by route pattern.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"route"})
@@ -27,7 +28,7 @@ var (
 )
 
 func init() {
-	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned, queueMessages, queueOldest, authBlocks,
+	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned, queueMessages, queueOldest, authBlocks, reportsSent,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 }
 

@@ -39,3 +39,5 @@ The key and storage considerations are the same as for [Compose installations](i
 CI checks the chart with `helm lint`, renders it with `helm template`, and validates the result against Kubernetes schemas with `kubeconform`. It has not yet been installed on a real cluster.
 
 To serve MTA-STS policies, list your mail domains in `mtaSts.domains`. The ingress then routes `mta-sts.<domain>` to the API and includes those hosts in its TLS certificate. Set `mtaSts.mode` to `enforce` once TLS reports show no failures.
+
+DMARC aggregate reports are sent when `reports.enabled` is true. The API submits them to Postfix on port 10025, which the NetworkPolicy allows, and Rspamd signs them. TLS reports are not sent: the chart does not mount Postfix's mail log into the API, and a report built without that log would describe the wrong servers. Set `reports.from` and `reports.orgName` to override the sending address and the organization name.

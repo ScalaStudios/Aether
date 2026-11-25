@@ -84,6 +84,7 @@ Forwarding (`redirect`) and automatic replies (`vacation`) need Dovecot to send 
 - **Forwarded mail** keeps the original headers, but its envelope sender is the forwarding mailbox. SPF therefore passes for the forwarding domain, the original sender's DKIM signature still satisfies DMARC, and delivery failures return to the forwarding mailbox.
 - **Automatic replies** are sent with an empty envelope sender.
 - **Header From check.** Rspamd's From-header rule exempts the relay account, because forwarded mail keeps someone else's From.
+- **Aggregate reports.** The same relay carries DMARC aggregate reports and TLS reports. Rspamd signs them because the relay login is authenticated and the From domain is one of Aether's verified domains. After a collector accepts a report, or rejects it permanently, the API records that destination in `report_deliveries`, so another API process does not send it again.
 
 ## Spam filtering and learning
 

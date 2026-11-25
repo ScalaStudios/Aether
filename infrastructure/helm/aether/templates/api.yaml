@@ -47,6 +47,11 @@ spec:
             - { name: AETHER_METRICS_LISTEN, value: ":9090" }
             - { name: AETHER_LOCAL_LOGIN, value: {{ .Values.localLogin | quote }} }
             - { name: AETHER_MTA_STS_MODE, value: {{ .Values.mtaSts.mode | quote }} }
+            - { name: AETHER_SEND_REPORTS, value: {{ .Values.reports.enabled | quote }} }
+            - { name: AETHER_REPORT_FROM, value: {{ .Values.reports.from | quote }} }
+            - { name: AETHER_REPORT_ORG_NAME, value: {{ .Values.reports.orgName | quote }} }
+            - { name: AETHER_RELAYHOST, value: {{ .Values.relay.host | quote }} }
+            {{- include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_DATABASE_URL" "key" "databaseUrl" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_SECRET_KEY" "key" "secretKey" "root" .) | nindent 12 }}

@@ -25,6 +25,11 @@ relay:
   host: ""
   user: ""
 
+reports:
+  enabled: true
+  from: ""
+  orgName: ""
+
 localLogin: true
 
 mtaSts:

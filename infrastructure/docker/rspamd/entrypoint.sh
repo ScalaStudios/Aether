@@ -27,4 +27,14 @@ CONF
 else
   : > /etc/rspamd/local.d/antivirus.conf
 fi
+reporting=false
+if [ "${AETHER_SEND_REPORTS:-true}" = true ]; then
+  reporting=true
+fi
+cat > /etc/rspamd/local.d/dmarc.conf <<CONF
+reporting {
+  enabled = ${reporting};
+  keys_expire = 4d;
+}
+CONF
 exec /usr/bin/rspamd -f -u _rspamd -g _rspamd

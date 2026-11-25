@@ -27,6 +27,11 @@ x-api-env: &api-env
   AETHER_OIDC_ALLOW_HTTP: ${AETHER_OIDC_ALLOW_HTTP:-false}
   AETHER_MTA_STS_MODE: ${AETHER_MTA_STS_MODE:-testing}
   AETHER_WEBHOOK_ALLOW_PRIVATE: ${AETHER_WEBHOOK_ALLOW_PRIVATE:-false}
+  AETHER_SEND_REPORTS: ${AETHER_SEND_REPORTS:-true}
+  AETHER_REPORT_FROM: ${AETHER_REPORT_FROM:-}
+  AETHER_REPORT_ORG_NAME: ${AETHER_REPORT_ORG_NAME:-}
+  AETHER_RELAYHOST: ${AETHER_RELAYHOST:-}
+  AETHER_MAIL_LOG: ${AETHER_MAIL_LOG-/var/log/postfix/mail.log}
   AETHER_CUSTOM_CSS: ${AETHER_CUSTOM_CSS:-true}
   AETHER_AUTH_BLOCK_THRESHOLD: ${AETHER_AUTH_BLOCK_THRESHOLD:-10}
   AETHER_AUTH_BLOCK_ALLOW_NETS: ${AETHER_AUTH_BLOCK_ALLOW_NETS:-}
@@ -89,7 +94,9 @@ services:
     image: aether/rspamd:dev
     restart: unless-stopped
     environment:
+      TZ: UTC
       AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
+      AETHER_SEND_REPORTS: ${AETHER_SEND_REPORTS:-true}
       AETHER_RSPAMD_METRICS_PASSWORD: ${AETHER_RSPAMD_METRICS_PASSWORD:-}
       AETHER_RSPAMD_CONTROLLER_PASSWORD: ${AETHER_RSPAMD_CONTROLLER_PASSWORD:?run scripts/setup.sh or add AETHER_RSPAMD_CONTROLLER_PASSWORD to .env}
       AETHER_CLAMAV_ADDR: ${AETHER_CLAMAV_ADDR:-}
@@ -133,6 +140,7 @@ services:
       - resolver
     environment:
       <<: *mail-env
+      TZ: UTC
       AETHER_RELAYHOST: ${AETHER_RELAYHOST:-}
       AETHER_RELAY_USER: ${AETHER_RELAY_USER:-}
       AETHER_RELAY_PASSWORD: ${AETHER_RELAY_PASSWORD:-}
@@ -162,6 +170,7 @@ services:
     environment: *api-env
     volumes:
       - tls:/tls:ro
+      - postfix-logs:/var/log/postfix:ro
     depends_on:
       postgres:
         condition: service_healthy

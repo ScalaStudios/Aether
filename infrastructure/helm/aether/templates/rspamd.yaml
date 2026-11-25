@@ -34,6 +34,8 @@ spec:
           image: {{ include "aether.image" (dict "name" "rspamd" "root" .) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            - { name: TZ, value: UTC }
+            - { name: AETHER_SEND_REPORTS, value: {{ .Values.reports.enabled | quote }} }
             {{- include "aether.secretEnv" (dict "env" "AETHER_VALKEY_PASSWORD" "key" "valkeyPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_RSPAMD_CONTROLLER_PASSWORD" "key" "rspamdControllerPassword" "root" .) | nindent 12 }}
             {{- if .Values.clamav.enabled }}

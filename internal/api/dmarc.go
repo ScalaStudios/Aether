@@ -26,8 +26,11 @@ const (
 )
 
 type dmarcFeedback struct {
+	XMLName  xml.Name `xml:"feedback"`
+	Version  string   `xml:"version,omitempty"`
 	Metadata struct {
 		OrgName   string `xml:"org_name"`
+		Email     string `xml:"email,omitempty"`
 		ReportID  string `xml:"report_id"`
 		DateRange struct {
 			Begin int64 `xml:"begin"`
@@ -36,22 +39,42 @@ type dmarcFeedback struct {
 	} `xml:"report_metadata"`
 	Policy struct {
 		Domain string `xml:"domain"`
+		ADKIM  string `xml:"adkim,omitempty"`
+		ASPF   string `xml:"aspf,omitempty"`
 		P      string `xml:"p"`
+		SP     string `xml:"sp,omitempty"`
+		Pct    string `xml:"pct,omitempty"`
 	} `xml:"policy_published"`
-	Records []struct {
-		Row struct {
-			SourceIP  string `xml:"source_ip"`
-			Count     int    `xml:"count"`
-			Evaluated struct {
-				Disposition string `xml:"disposition"`
-				DKIM        string `xml:"dkim"`
-				SPF         string `xml:"spf"`
-			} `xml:"policy_evaluated"`
-		} `xml:"row"`
-		Identifiers struct {
-			HeaderFrom string `xml:"header_from"`
-		} `xml:"identifiers"`
-	} `xml:"record"`
+	Records []dmarcRecord `xml:"record"`
+}
+
+type dmarcRecord struct {
+	Row struct {
+		SourceIP  string `xml:"source_ip"`
+		Count     int    `xml:"count"`
+		Evaluated struct {
+			Disposition string       `xml:"disposition"`
+			DKIM        string       `xml:"dkim"`
+			SPF         string       `xml:"spf"`
+			Reason      *dmarcReason `xml:"reason,omitempty"`
+		} `xml:"policy_evaluated"`
+	} `xml:"row"`
+	Identifiers struct {
+		HeaderFrom string `xml:"header_from"`
+	} `xml:"identifiers"`
+	Auth struct {
+		DKIM []dmarcAuth `xml:"dkim"`
+		SPF  []dmarcAuth `xml:"spf"`
+	} `xml:"auth_results"`
+}
+
+type dmarcReason struct {
+	Type string `xml:"type,omitempty"`
+}
+
+type dmarcAuth struct {
+	Domain string `xml:"domain"`
+	Result string `xml:"result"`
 }
 
 func parseDMARCMessage(r io.Reader) ([]*dmarcFeedback, error) {
