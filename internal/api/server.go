@@ -178,6 +178,10 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/me/held-messages", s.myHeldMessages)
 	authed("GET /api/v1/held-messages/{heldId}/raw", s.heldMessageRaw)
 	authed("POST /api/v1/held-messages/{heldId}/{decision}", s.decideHeldMessage)
+	authed("GET /api/v1/organizations/{orgId}/contacts", s.listOrgContacts)
+	authed("POST /api/v1/organizations/{orgId}/contacts", s.saveOrgContact)
+	authed("PUT /api/v1/organizations/{orgId}/contacts/{id}", s.saveOrgContact)
+	authed("DELETE /api/v1/organizations/{orgId}/contacts/{id}", s.deleteOrgContact)
 
 	authed("GET /api/v1/me/mailboxes", s.myMailboxes)
 	authed("GET /api/v1/me/app-passwords", s.listAppPasswords)

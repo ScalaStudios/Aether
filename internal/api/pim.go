@@ -274,19 +274,27 @@ type directoryEntry struct {
 	Address string `json:"address"`
 	Source  string `json:"source"`
 	Kind    string `json:"kind,omitempty"`
+	Company string `json:"company,omitempty"`
+	Phone   string `json:"phone,omitempty"`
 }
 
 func (s *Server) directory(ctx context.Context, userID, q string, limit int) ([]directoryEntry, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT coalesce(nullif(m.display_name, ''), nullif(u.display_name, ''), ''), m.address, 'directory', coalesce(r.resource_type, '')
-		FROM mailboxes m LEFT JOIN users u ON u.id = m.owner_user_id LEFT JOIN resources r ON r.mailbox_id = m.id
-		WHERE m.active AND m.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
-		  AND (m.address LIKE $2 OR lower(m.display_name) LIKE $2 OR lower(coalesce(u.display_name, '')) LIKE $2)
-		UNION ALL
-		SELECT a.name, a.address, 'directory', '' FROM aliases a
-		WHERE a.kind = 'list' AND a.active AND a.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
-		  AND (a.address LIKE $2 OR lower(a.name) LIKE $2)
-		ORDER BY 2 LIMIT $3`, userID, q, limit)
+		SELECT DISTINCT ON (address) name, address, 'directory', kind, company, phone FROM (
+			SELECT coalesce(nullif(m.display_name, ''), nullif(u.display_name, ''), '') AS name, m.address, coalesce(r.resource_type, '') AS kind, '' AS company, '' AS phone
+			FROM mailboxes m LEFT JOIN users u ON u.id = m.owner_user_id LEFT JOIN resources r ON r.mailbox_id = m.id
+			WHERE m.active AND NOT m.hidden_from_directory AND m.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
+			  AND (m.address LIKE $2 OR lower(m.display_name) LIKE $2 OR lower(coalesce(u.display_name, '')) LIKE $2)
+			UNION ALL
+			SELECT a.name, a.address, '', '', '' FROM aliases a
+			WHERE a.kind = 'list' AND a.active AND NOT a.hidden_from_directory AND a.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
+			  AND (a.address LIKE $2 OR lower(a.name) LIKE $2)
+			UNION ALL
+			SELECT c.name, c.email, '', c.company, c.phone FROM organization_contacts c
+			WHERE c.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
+			  AND (c.email LIKE $2 OR lower(c.name) LIKE $2 OR lower(c.company) LIKE $2)
+		) d
+		ORDER BY address LIMIT $3`, userID, q, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +318,7 @@ func (s *Server) suggestRecipients(w http.ResponseWriter, r *http.Request, p *pr
 	}
 	like := "%" + q + "%"
 	rows, err := s.db.Query(r.Context(), `
-		SELECT o.summary, e, 'contact', '' FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id, unnest(o.emails) e
+		SELECT o.summary, e, 'contact', '', '', '' FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id, unnest(o.emails) e
 		WHERE c.user_id = $1 AND c.kind = 'addressbook' AND (e LIKE $2 OR lower(o.summary) LIKE $2) LIMIT 10`, p.User.ID, like)
 	if err != nil {
 		s.internalError(w, r, err)

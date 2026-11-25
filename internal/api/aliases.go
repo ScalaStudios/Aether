@@ -31,12 +31,13 @@ type alias struct {
 	Moderated        bool     `json:"moderated"`
 	Moderators       []string `json:"moderators"`
 	ModerationExempt []string `json:"moderationExempt"`
+	Hidden           bool     `json:"hiddenFromDirectory"`
 }
 
 const aliasColumns = `a.id, a.org_id, a.domain_id, a.address, a.local_part, a.destinations, a.active, a.kind, a.name, a.accept_from, a.allowed_senders, a.send_as,
 	coalesce((SELECT array_agg(o.user_id::text ORDER BY o.user_id) FROM alias_owners o WHERE o.alias_id = a.id), '{}'),
 	coalesce((SELECT array_agg(g.group_id::text ORDER BY g.group_id) FROM alias_groups g WHERE g.alias_id = a.id), '{}'), a.member_domains::text[],
-	a.moderated, coalesce((SELECT array_agg(m.user_id::text ORDER BY m.user_id) FROM alias_moderators m WHERE m.alias_id = a.id), '{}'), a.moderation_exempt`
+	a.moderated, coalesce((SELECT array_agg(m.user_id::text ORDER BY m.user_id) FROM alias_moderators m WHERE m.alias_id = a.id), '{}'), a.moderation_exempt, a.hidden_from_directory`
 
 var acceptFromValues = []string{"anyone", "organization", "members", "allowlist"}
 
@@ -56,6 +57,7 @@ type aliasInput struct {
 	Moderated          *bool     `json:"moderated"`
 	Moderators         *[]string `json:"moderators"`
 	ModerationExempt   *[]string `json:"moderationExempt"`
+	Hidden             *bool     `json:"hiddenFromDirectory"`
 }
 
 func (s *Server) loadAlias(ctx context.Context, id string) (*alias, error) {
@@ -136,6 +138,9 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 	}
 	if in.Active != nil {
 		a.Active = *in.Active
+	}
+	if in.Hidden != nil {
+		a.Hidden = *in.Hidden
 	}
 	var ok bool
 	if in.Destinations != nil {
@@ -241,8 +246,8 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "A distribution list needs an address, not a catch-all.")
 		return false
 	}
-	if a.Kind == "alias" && (a.AcceptFrom != "anyone" || len(a.AllowedSenders) > 0 || len(a.SendAs) > 0 || len(a.Owners) > 0 || len(a.Groups) > 0 || len(a.MemberDomains) > 0 || a.Moderated || len(a.Moderators) > 0 || len(a.ModerationExempt) > 0) {
-		writeError(w, http.StatusUnprocessableEntity, "list_only", "Sender restrictions, moderation, send-as, owners, groups and domain members are only available on distribution lists.")
+	if a.Kind == "alias" && (a.AcceptFrom != "anyone" || len(a.AllowedSenders) > 0 || len(a.SendAs) > 0 || len(a.Owners) > 0 || len(a.Groups) > 0 || len(a.MemberDomains) > 0 || a.Moderated || len(a.Moderators) > 0 || len(a.ModerationExempt) > 0 || a.Hidden) {
+		writeError(w, http.StatusUnprocessableEntity, "list_only", "Sender restrictions, moderation, send-as, owners, groups, domain members and hiding from the directory are only available on distribution lists.")
 		return false
 	}
 	if a.Moderated && len(a.Moderators) == 0 && len(a.Owners) == 0 {
@@ -277,12 +282,12 @@ func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
 	}
 	defer tx.Rollback(ctx)
 	if create {
-		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as, member_domains, moderated, moderation_exempt)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
-			a.OrgID, a.DomainID, a.LocalPart, a.Address, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt).Scan(&a.ID)
+		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as, member_domains, moderated, moderation_exempt, hidden_from_directory)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+			a.OrgID, a.DomainID, a.LocalPart, a.Address, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt, a.Hidden).Scan(&a.ID)
 	} else {
-		_, err = tx.Exec(ctx, `UPDATE aliases SET destinations = $2, active = $3, kind = $4, name = $5, accept_from = $6, allowed_senders = $7, send_as = $8, member_domains = $9, moderated = $10, moderation_exempt = $11, updated_at = now() WHERE id = $1`,
-			a.ID, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt)
+		_, err = tx.Exec(ctx, `UPDATE aliases SET destinations = $2, active = $3, kind = $4, name = $5, accept_from = $6, allowed_senders = $7, send_as = $8, member_domains = $9, moderated = $10, moderation_exempt = $11, hidden_from_directory = $12, updated_at = now() WHERE id = $1`,
+			a.ID, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt, a.Hidden)
 	}
 	if err != nil {
 		return err
@@ -402,7 +407,7 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	if !p.canAdminOrg(a.OrgID) {
 		membershipOnly := in.Kind == nil && in.Name == nil && in.Active == nil && in.AcceptFrom == nil && in.AllowedSenders == nil && in.SendAs == nil && in.Owners == nil && in.Groups == nil && in.MemberDomains == nil &&
-			in.Moderated == nil && in.Moderators == nil && in.ModerationExempt == nil
+			in.Moderated == nil && in.Moderators == nil && in.ModerationExempt == nil && in.Hidden == nil
 		if !slices.Contains(a.Owners, p.User.ID) || !membershipOnly {
 			forbidden(w)
 			return
@@ -422,7 +427,7 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 
 func aliasAuditFields(a *alias) map[string]any {
 	return map[string]any{"kind": a.Kind, "name": a.Name, "active": a.Active, "destinations": a.Destinations, "acceptFrom": a.AcceptFrom, "allowedSenders": a.AllowedSenders, "sendAs": a.SendAs, "owners": a.Owners, "groups": a.Groups, "memberDomains": a.MemberDomains,
-		"moderated": a.Moderated, "moderators": a.Moderators, "moderationExempt": a.ModerationExempt}
+		"moderated": a.Moderated, "moderators": a.Moderators, "moderationExempt": a.ModerationExempt, "hiddenFromDirectory": a.Hidden}
 }
 
 func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principal) {

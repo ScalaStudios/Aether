@@ -185,6 +185,8 @@ type collectionRow struct {
 
 const sharedSlugPrefix = "shared-"
 
+var directoryBook = collectionRow{Slug: sharedSlugPrefix + "directory", Name: "Directory", Description: "People, lists and contacts in your organizations"}
+
 const accessibleCollections = `
 	SELECT id, slug, name, description, color, updated_at, 'owner' AS access, created_at FROM dav_collections WHERE user_id = $1 AND kind = $2
 	UNION ALL
@@ -512,13 +514,17 @@ func (b *contactsBackend) ListAddressBooks(ctx context.Context) ([]carddav.Addre
 	for i, c := range rows {
 		out[i] = b.toBook(ctx, c)
 	}
-	return out, err
+	return append(out, b.toBook(ctx, directoryBook)), err
 }
 
 func (b *contactsBackend) GetAddressBook(ctx context.Context, p string) (*carddav.AddressBook, error) {
 	dp, err := parseDAVPath(ctx, p, davContacts)
 	if err != nil {
 		return nil, err
+	}
+	if dp.slug == directoryBook.Slug {
+		book := b.toBook(ctx, directoryBook)
+		return &book, nil
 	}
 	c, err := b.s.davCollection(ctx, "addressbook", dp.slug)
 	if err != nil {
@@ -552,11 +558,16 @@ func (b *contactsBackend) objects(ctx context.Context, p string, single bool) ([
 	if single && dp.name == "" {
 		return nil, davNotFound()
 	}
-	c, err := b.s.davCollection(ctx, "addressbook", dp.slug)
-	if err != nil {
-		return nil, err
+	var rows []objectRow
+	if dp.slug == directoryBook.Slug {
+		rows, err = b.s.directoryObjects(ctx, dp.name)
+	} else {
+		var c *collectionRow
+		if c, err = b.s.davCollection(ctx, "addressbook", dp.slug); err != nil {
+			return nil, err
+		}
+		rows, err = b.s.davObjects(ctx, c.ID, dp.name)
 	}
-	rows, err := b.s.davObjects(ctx, c.ID, dp.name)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +580,26 @@ func (b *contactsBackend) objects(ctx context.Context, p string, single bool) ([
 		if err != nil {
 			continue
 		}
-		out = append(out, carddav.AddressObject{Path: b.bookPath(ctx, c.Slug) + row.Name, ModTime: row.UpdatedAt, ContentLength: int64(len(row.Data)), ETag: row.ETag, Card: card})
+		out = append(out, carddav.AddressObject{Path: b.bookPath(ctx, dp.slug) + row.Name, ModTime: row.UpdatedAt, ContentLength: int64(len(row.Data)), ETag: row.ETag, Card: card})
+	}
+	return out, nil
+}
+
+func (s *Server) directoryObjects(ctx context.Context, name string) ([]objectRow, error) {
+	entries, err := s.directory(ctx, davUser(ctx), "%", 10000)
+	if err != nil {
+		return nil, err
+	}
+	var out []objectRow
+	for _, e := range entries {
+		uid := etagOf(e.Address)
+		in := contactInput{Name: cmp.Or(e.Name, e.Address), Emails: []string{e.Address}, Phones: []string{e.Phone}, Organization: e.Company}
+		card, _ := in.card(uid, nil)
+		var buf bytes.Buffer
+		if card == nil || name != "" && name != uid+".vcf" || vcard.NewEncoder(&buf).Encode(card) != nil {
+			continue
+		}
+		out = append(out, objectRow{Name: uid + ".vcf", ETag: etagOf(buf.String()), Data: buf.String()})
 	}
 	return out, nil
 }

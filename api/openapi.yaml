@@ -616,7 +616,7 @@ paths:
   /mailboxes/{mailboxId}:
     patch:
       tags: [mailboxes]
-      summary: Change a mailbox's display name, quota or active state
+      summary: Change a mailbox's display name, quota, active state or directory visibility
       description: Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
@@ -629,6 +629,7 @@ paths:
                 displayName: { type: string }
                 quotaBytes: { type: integer, minimum: 0 }
                 active: { type: boolean }
+                hiddenFromDirectory: { type: boolean, description: Leaves the mailbox out of the directory, address suggestions and the CardDAV directory. It still receives mail. }
       responses:
         "200":
           description: OK
@@ -729,6 +730,60 @@ paths:
     delete:
       tags: [aliases]
       parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Deleted }
+  /organizations/{orgId}/contacts:
+    get:
+      tags: [contacts]
+      summary: Organization contacts, outside addresses shown to every member in the directory. Organization admins.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: Sorted by name
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/OrgContact" } }
+    post:
+      tags: [contacts]
+      summary: Add an organization contact
+      description: The address can be used as a list member like any outside address. An address that is already a contact of the organization is refused with 409 contact_exists.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrgContactInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgContact" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/contacts/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/orgId" }
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [contacts]
+      summary: Replace an organization contact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrgContactInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgContact" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [contacts]
+      summary: Remove an organization contact. Lists that have the address as a member keep it.
       responses:
         "204": { description: Deleted }
   /me/lists:
@@ -967,7 +1022,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write"]
+                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "contacts:read", "contacts:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write"]
                 expiresAt: { type: string, format: date-time }
       responses:
         "201":
@@ -1915,8 +1970,8 @@ paths:
   /directory:
     get:
       tags: [contacts]
-      summary: Active mailboxes in the caller's organizations
-      parameters: [{ name: q, in: query, schema: { type: string } }]
+      summary: Active mailboxes and lists in the caller's organizations, and their organization contacts. Mailboxes and lists hidden from the directory are left out. Also served over CardDAV as the read-only address book shared-directory.
+      parameters: [{ name: q, in: query, schema: { type: string }, description: Matches name, address or company }]
       responses:
         "200":
           description: OK
@@ -1926,7 +1981,7 @@ paths:
   /recipients:
     get:
       tags: [contacts]
-      summary: Up to 10 recipient suggestions from contacts and the directory
+      summary: Up to 10 recipient suggestions from the caller's contacts and the directory
       parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
       responses:
         "200":
@@ -2324,7 +2379,7 @@ components:
     apiKey:
       type: http
       scheme: bearer
-      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, members, audit, webhooks, and mail flow rules with their held messages. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
+      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, organization contacts, members, audit, webhooks, and mail flow rules with their held messages. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2551,7 +2606,7 @@ components:
         found: { type: array, items: { type: string } }
     Mailbox:
       type: object
-      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt, kind]
+      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt, kind, hiddenFromDirectory]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -2564,12 +2619,13 @@ components:
         active: { type: boolean }
         createdAt: { type: string, format: date-time }
         kind: { type: string, enum: [user, shared], description: A user mailbox has an owner account that signs in with the address. A shared mailbox has no sign-in; its members open it with their own accounts. }
+        hiddenFromDirectory: { type: boolean }
         access: { type: string, enum: [owner, full, read], description: The caller's access. Only in GET /me/mailboxes. }
         sendAs: { type: boolean, description: The caller may send from the address. Only in GET /me/mailboxes. }
         sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }
     Alias:
       type: object
-      required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt]
+      required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt, hiddenFromDirectory]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -2602,6 +2658,7 @@ components:
         size: { type: integer }
         receivedAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time, description: Five days after it was received. The message is then discarded and the sender told. }
+        hiddenFromDirectory: { type: boolean }
     AliasInput:
       type: object
       properties:
@@ -2621,6 +2678,7 @@ components:
         moderated: { type: boolean, description: "Hold messages to the list until a moderator approves them. Needs at least one moderator or owner, and AETHER_SIEVE_RELAY_PASSWORD on the API." }
         moderators: { type: array, items: { type: string, format: uuid }, description: Organization members who approve held messages. When empty, the owners do. }
         moderationExempt: { type: array, items: { type: string }, description: "Addresses or @domain entries whose mail skips moderation. Moderators and owners always skip it." }
+        hiddenFromDirectory: { type: boolean, description: Lists only. Leaves the list out of the directory, address suggestions and the CardDAV directory. It still receives mail. }
     ImportCounts:
       type: object
       properties:
@@ -2845,6 +2903,26 @@ components:
         name: { type: string }
         address: { type: string }
         source: { type: string, enum: [contact, directory] }
+        company: { type: string, description: Organization contacts only }
+        phone: { type: string, description: Organization contacts only }
+    OrgContact:
+      type: object
+      required: [id, orgId, name, email, company, phone]
+      properties:
+        id: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        company: { type: string }
+        phone: { type: string }
+    OrgContactInput:
+      type: object
+      required: [name, email]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        email: { type: string, format: email }
+        company: { type: string, maxLength: 200 }
+        phone: { type: string, maxLength: 50 }
     CalendarEvent:
       type: object
       required: [id, title, start, end, seriesStart, allDay, location, description, repeat, attendees]

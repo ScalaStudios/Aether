@@ -37,6 +37,7 @@ const resources: { value: string; label: string; description: string; levels: Ac
     levels: ["", "read", "write"],
   },
   { value: "aliases", label: "Aliases", description: "Aliases and distribution lists, with their members, sender restrictions and owners.", levels: ["", "read", "write"] },
+  { value: "contacts", label: "Contacts", description: "Organization contacts shown in the directory.", levels: ["", "read", "write"] },
   { value: "members", label: "Members", description: "Members and their roles. Write also adds and removes members.", levels: ["", "read", "write"] },
   { value: "audit", label: "Audit log", description: "The organization’s audit log.", levels: ["", "read"] },
   { value: "message-trace", label: "Message trace", description: "Search and export delivery records for the organization’s domains.", levels: ["", "read"] },

@@ -96,6 +96,7 @@ export interface Mailbox {
   createdAt: string
   kind: MailboxKind
   retainedAt?: string | null
+  hiddenFromDirectory: boolean
   access?: "owner" | DelegateAccess
   sendAs?: boolean
   sendOnBehalf?: boolean
@@ -134,6 +135,7 @@ export interface Alias {
   moderated: boolean
   moderators: string[]
   moderationExempt: string[]
+  hiddenFromDirectory: boolean
 }
 
 export interface DirectoryGroup {
@@ -602,6 +604,17 @@ export interface Recipient {
   address: string
   source: "contact" | "directory"
   kind?: ResourceType
+  company?: string
+  phone?: string
+}
+
+export interface OrgContact {
+  id: string
+  orgId: string
+  name: string
+  email: string
+  company: string
+  phone: string
 }
 
 export type Repeat = "" | "daily" | "weekly" | "monthly" | "yearly" | "custom"

@@ -29,9 +29,10 @@ type mailbox struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 	Kind        string     `json:"kind"`
 	RetainedAt  *time.Time `json:"retainedAt"`
+	Hidden      bool       `json:"hiddenFromDirectory"`
 }
 
-const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at`
+const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at, hidden_from_directory`
 
 func collectMailboxes(rows pgx.Rows, err error) ([]mailbox, error) {
 	if err != nil {
@@ -195,7 +196,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+mailboxColumns,
 			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Kind).
-			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden)
 		if err == nil && in.Kind == "resource" {
 			err = saveResource(r.Context(), tx, m.ID, in.Resource)
 		}
@@ -230,7 +231,7 @@ func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *prin
 	}
 	var m mailbox
 	err := s.db.QueryRow(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes WHERE id = $1`, id).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.orgRole(m.OrgID) == "") {
 		notFound(w)
 		return nil, false
@@ -255,6 +256,7 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		DisplayName *string `json:"displayName"`
 		QuotaBytes  *int64  `json:"quotaBytes"`
 		Active      *bool   `json:"active"`
+		Hidden      *bool   `json:"hiddenFromDirectory"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
@@ -278,15 +280,15 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 	}
 	err := s.db.QueryRow(r.Context(), `
-		UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active),
+		UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active), hidden_from_directory = coalesce($5, hidden_from_directory),
 			retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END
-		WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
+		WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active, in.Hidden).
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.update", "mailbox", m.ID, map[string]any{"address": m.Address, "active": m.Active, "quotaBytes": m.QuotaBytes})
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.update", "mailbox", m.ID, map[string]any{"address": m.Address, "active": m.Active, "quotaBytes": m.QuotaBytes, "hiddenFromDirectory": m.Hidden})
 	if activate {
 		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
 			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)

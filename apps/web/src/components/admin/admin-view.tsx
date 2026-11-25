@@ -11,6 +11,7 @@ import { z } from "zod"
 import { AliasesTab } from "@/components/admin/aliases-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
 import { BrandingTab } from "@/components/admin/branding-tab"
+import { ContactsTab } from "@/components/admin/contacts-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
 import { ForwardingTab } from "@/components/admin/forwarding-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
@@ -53,6 +54,7 @@ const orgTabs = [
   { value: "aliases", label: "Aliases", Component: AliasesTab },
   { value: "senders", label: "Senders", Component: SendersTab },
   { value: "resources", label: "Rooms and equipment", Component: ResourcesTab },
+  { value: "contacts", label: "Contacts", Component: ContactsTab },
   { value: "members", label: "Members", Component: MembersTab },
   { value: "forwarding", label: "Forwarding", Component: ForwardingTab },
   { value: "branding", label: "Branding", Component: BrandingTab },

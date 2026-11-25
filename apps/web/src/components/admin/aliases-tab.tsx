@@ -55,6 +55,7 @@ const schema = z
     moderated: z.boolean(),
     moderators: addresses,
     moderationExempt: addresses,
+    hidden: z.boolean(),
   })
   .refine((v) => v.kind === "list" || v.destinations.length > 0, { message: "Add at least one address.", path: ["destinations"] })
   .refine((v) => v.kind === "alias" || v.destinations.length + v.groups.length + v.memberDomains.length > 0, { message: "Add at least one member, group or domain.", path: ["destinations"] })
@@ -66,7 +67,7 @@ const schema = z
 
 type Values = z.infer<typeof schema>
 
-const blank: Values = { kind: "alias", domainId: "", localPart: "", name: "", destinations: [], active: true, acceptFrom: "organization", allowedSenders: [], sendAs: [], owners: [], groups: [], memberDomains: [], moderated: false, moderators: [], moderationExempt: [] }
+const blank: Values = { kind: "alias", domainId: "", localPart: "", name: "", destinations: [], active: true, acceptFrom: "organization", allowedSenders: [], sendAs: [], owners: [], groups: [], memberDomains: [], moderated: false, moderators: [], moderationExempt: [], hidden: false }
 
 const kinds = [
   { value: "alias" as const, label: "Alias" },
@@ -135,6 +136,7 @@ function toValues(target: Alias | Kind, people: Member[]): Values {
     moderated: target.moderated,
     moderators: toPeople(target.moderators),
     moderationExempt: toAddresses(target.moderationExempt),
+    hidden: target.hiddenFromDirectory,
   }
 }
 
@@ -191,6 +193,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         moderated,
         moderators: moderated ? userIds(v.moderators, "invalid_moderators") : [],
         moderationExempt: moderated ? v.moderationExempt.map((a) => a.address) : [],
+        hiddenFromDirectory: list && v.hidden,
       }
       return existing
         ? api<Alias>(`/aliases/${existing.id}`, { method: "PATCH", body: { ...body, active: v.active } })
@@ -314,6 +317,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                         </div>
                         {a.moderated && <StatusBadge tone="info">Moderated</StatusBadge>}
                         {!a.active && <StatusBadge tone="neutral">Inactive</StatusBadge>}
+                        {a.hiddenFromDirectory && <StatusBadge tone="neutral">Hidden</StatusBadge>}
                       </div>
                     </TableCell>
                     <TableCell>{[plural(a.destinations.length, "member"), a.groups.length && plural(a.groups.length, "group"), a.memberDomains.length && plural(a.memberDomains.length, "domain")].filter(Boolean).join(" · ")}</TableCell>
@@ -369,7 +373,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
             <Field
               id="alias-destinations"
               label={kind === "list" ? "Members" : "Destinations"}
-              hint={kind === "list" ? "Added by hand: mailboxes, other lists or outside addresses. Press Enter or type a comma after each one." : "Press Enter or type a comma after each address."}
+              hint={kind === "list" ? "Added by hand: mailboxes, other lists, organization contacts or outside addresses. Press Enter or type a comma after each one." : "Press Enter or type a comma after each address."}
               error={fieldState.error?.message}
             >
               <RecipientInput id="alias-destinations" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" suggest />
@@ -415,6 +419,13 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         {existing && <SwitchField control={form.control} name="active" id="alias-active" label="Active" hint="Turn it off to stop forwarding mail without deleting it." />}
         {kind === "list" && (
           <>
+            <SwitchField
+              control={form.control}
+              name="hidden"
+              id="alias-hidden"
+              label="Hide from directory"
+              hint="The list still receives mail, but people won’t find it in the directory, address suggestions or synced address books."
+            />
             <Controller
               control={form.control}
               name="acceptFrom"

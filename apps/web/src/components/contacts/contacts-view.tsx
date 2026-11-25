@@ -306,7 +306,7 @@ function Directory() {
           q ? (
             <EmptyState icon={SearchX} title="No matches" description={`Nobody in your organizations matches “${q}”.`} />
           ) : (
-            <EmptyState icon={Users} title="The directory is empty" description="Active mailboxes in your organizations are listed here." />
+            <EmptyState icon={Users} title="The directory is empty" description="Mailboxes, lists and organization contacts in your organizations are listed here." />
           )
         }
       >
@@ -316,6 +316,8 @@ function Directory() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Address</TableHead>
+                <TableHead className="max-md:hidden">Company</TableHead>
+                <TableHead className="max-lg:hidden">Phone</TableHead>
                 <TableHead className="w-16">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -331,6 +333,8 @@ function Directory() {
                     </span>
                   </TableCell>
                   <TableCell className="font-mono text-sm">{entry.address}</TableCell>
+                  <TableCell className="max-md:hidden">{entry.company}</TableCell>
+                  <TableCell className="max-lg:hidden">{entry.phone}</TableCell>
                   <TableCell>
                     <div className="flex justify-end">
                       <WriteEmail address={entry.address} name={entry.name} />

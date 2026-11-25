@@ -19,6 +19,9 @@ func TestTenantIsolation(t *testing.T) {
 	orgAdmin.must("GET", "/organizations/"+a.orgID+"/mailboxes", nil, nil, 200)
 	var bPolicy idOnly
 	b.admin.must("POST", "/organizations/"+b.orgID+"/retention-policies", map[string]any{"action": "keep", "days": 10}, &bPolicy, 201)
+	var bContact idOnly
+	outside := "partner-" + randomSuffix() + "@partner.example"
+	b.admin.must("POST", "/organizations/"+b.orgID+"/contacts", map[string]string{"name": "Partner", "email": outside}, &bContact, 201)
 
 	denied := []struct{ method, path string }{
 		{"GET", "/organizations/" + b.orgID},
@@ -55,6 +58,10 @@ func TestTenantIsolation(t *testing.T) {
 		{"DELETE", "/retention-policies/" + bPolicy.ID},
 		{"GET", "/mailboxes/" + b.bobMailbox + "/recoverable"},
 		{"POST", "/mailboxes/" + b.bobMailbox + "/recoverable/restore"},
+		{"GET", "/organizations/" + b.orgID + "/contacts"},
+		{"POST", "/organizations/" + b.orgID + "/contacts"},
+		{"PUT", "/organizations/" + b.orgID + "/contacts/" + bContact.ID},
+		{"DELETE", "/organizations/" + b.orgID + "/contacts/" + bContact.ID},
 	}
 	for _, d := range denied {
 		var body any
@@ -86,6 +93,16 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("POST", "/me/app-passwords", map[string]string{"name": "steal", "mailboxId": b.aliceMailbox}, nil); got != 422 {
 		t.Errorf("creating an app password for another tenant's mailbox returned %d, want 422", got)
+	}
+	var seen []struct {
+		Address string `json:"address"`
+	}
+	orgAdmin.must("GET", "/directory?q=partner", nil, &seen, 200)
+	if len(seen) != 0 {
+		t.Errorf("another tenant's organization contacts are in the directory: %v", seen)
+	}
+	if got := orgAdmin.do("PUT", "/organizations/"+a.orgID+"/contacts/"+bContact.ID, map[string]string{"name": "Moved", "email": outside}, nil); got != 404 {
+		t.Errorf("updating another tenant's contact through one's own organization returned %d, want 404", got)
 	}
 	if got := orgAdmin.do("POST", "/organizations", map[string]string{"name": "x", "slug": "x-" + randomSuffix()}, nil); got != 403 {
 		t.Errorf("org admin created an organization: %d", got)

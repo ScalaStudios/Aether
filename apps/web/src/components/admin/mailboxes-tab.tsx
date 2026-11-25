@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Eye, EyeOff, Inbox, ListFilter, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -327,6 +327,13 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
     mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}`, { method: "PATCH", body: { active: !m.active } }),
     onSuccess: refresh,
   })
+  const hide = useMutation({
+    mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}`, { method: "PATCH", body: { hiddenFromDirectory: !m.hiddenFromDirectory } }),
+    onSuccess: (m) => {
+      toast.success(m.hiddenFromDirectory ? `${m.address} is hidden from the directory` : `${m.address} is listed in the directory`)
+      refresh()
+    },
+  })
   const importFile = useMutation({
     mutationFn: ({ mailbox, kind, file }: { mailbox: Mailbox; kind: ImportKind; file: File }) =>
       api<ImportCounts>(`/mailboxes/${mailbox.id}/${imports[kind].path}`, { method: "POST", body: file }),
@@ -391,7 +398,12 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <TableBody>
               {items.map((m) => (
                 <TableRow key={m.id}>
-                  <TableCell className="font-mono text-sm">{m.address}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-sm">{m.address}</span>
+                      {m.hiddenFromDirectory && <StatusBadge tone="neutral">Hidden</StatusBadge>}
+                    </div>
+                  </TableCell>
                   <TableCell>{m.kind === "shared" ? <StatusBadge tone="neutral">Shared</StatusBadge> : "User"}</TableCell>
                   <TableCell>{m.displayName || "—"}</TableCell>
                   <TableCell>{m.quotaBytes ? formatBytes(m.quotaBytes) : "No limit"}</TableCell>
@@ -423,7 +435,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <DropdownMenuTrigger asChild>
-                                <Button variant="quiet" size="icon-sm" aria-label={`More actions for ${m.address}`} loading={importFile.isPending && importFile.variables?.mailbox.id === m.id}>
+                                <Button variant="quiet" size="icon-sm" aria-label={`More actions for ${m.address}`} loading={(importFile.isPending && importFile.variables?.mailbox.id === m.id) || (hide.isPending && hide.variables?.id === m.id)}>
                                   <Ellipsis />
                                 </Button>
                               </DropdownMenuTrigger>
@@ -450,6 +462,10 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                             <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
                               <Upload aria-hidden />
                               Import contacts (.vcf)
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => hide.mutate(m)}>
+                              {m.hiddenFromDirectory ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
+                              {m.hiddenFromDirectory ? "Show in directory" : "Hide from directory"}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onSelect={() => setConverting(m)}>
