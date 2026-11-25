@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api, errorMessage } from "@/lib/api"
 import { formatDateTime, plural } from "@/lib/format"
 import { mailboxesQuery, myMailboxesQuery } from "@/lib/queries"
-import type { Mailbox, MailImport, MailImportSchedule } from "@/lib/types"
+import type { MailImport, MailImportSchedule } from "@/lib/types"
 
 const providers = [
   { label: "Gmail", host: "imap.gmail.com" },
