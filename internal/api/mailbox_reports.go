@@ -20,7 +20,7 @@ import (
 
 const (
 	mailEventsKey          = "aether:mail_events"
-	storageSyncLockID      = 7316249
+	storageSyncLockID      = 7316251
 	storageSyncInterval    = 5 * time.Minute
 	storageSyncStartupWait = 10 * time.Second
 	maxAliasResolveDepth   = 10

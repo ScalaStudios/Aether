@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	alertAdvisoryLockID  = 7316249
+	alertAdvisoryLockID  = 7316252
 	alertEventWindow     = 15 * time.Minute
 	alertDNSCheckCadence = 10 * time.Minute
 	alertDMARCMinSamples = 10

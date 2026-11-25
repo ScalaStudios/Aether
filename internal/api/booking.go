@@ -641,10 +641,10 @@ func (s *Server) processResourceInboxes(ctx context.Context) {
 	}
 	defer conn.Release()
 	var leader bool
-	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(7316249)`).Scan(&leader); err != nil || !leader {
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(7316254)`).Scan(&leader); err != nil || !leader {
 		return
 	}
-	defer conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(7316249)`)
+	defer conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(7316254)`)
 	if _, err := s.db.Exec(ctx, `DELETE FROM resource_requests WHERE NOT recurring AND ends_at < now()`); err != nil {
 		s.log.Error("removing expired booking requests failed", "err", err)
 	}

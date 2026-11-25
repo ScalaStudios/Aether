@@ -95,7 +95,7 @@ func (s *Server) vapid(ctx context.Context) (string, string, error) {
 	}
 	var public, private string
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(7316249)`); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(7316250)`); err != nil {
 			return err
 		}
 		var sealed []byte

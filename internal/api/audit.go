@@ -25,7 +25,7 @@ const (
 	maxAuditExportLimit   = 50000
 	auditPurgeBatchSize   = 5000
 	auditPurgeInterval    = time.Hour
-	auditPurgeLockID      = 7316249
+	auditPurgeLockID      = 7316253
 	maxAuditActionFilters = 25
 )
 
