@@ -6,7 +6,7 @@
 
 **Aether is an open-source email platform that you host yourself.** It runs your mail server, webmail, calendar and contacts from one Docker Compose file, and people sign in with a local account, [Halo](https://github.com/ScalaStudios/Halo) or any OpenID Connect provider.
 
-In mail server terms, Aether is Postfix for SMTP, Dovecot for IMAP and Rspamd for spam filtering and DKIM, configured from PostgreSQL by a Go control plane, so nobody edits map files by hand. On top of that stack it adds a web admin console for domains, mailboxes and aliases, Aether Mail for reading and sending in the browser, and CalDAV and CardDAV for calendar and contacts apps.
+In mail server terms, Aether is Postfix for SMTP, Dovecot for IMAP and Rspamd for spam filtering and DKIM, configured from PostgreSQL by a Go control plane, so nobody edits map files by hand. On top of that stack it adds a web admin console for domains, mailboxes and aliases, Aether Mail for reading and sending in the browser, JMAP for mail, calendars and contacts, and CalDAV and CardDAV for calendar and contacts apps.
 
 <p>
   <a href="#quick-start"><img src=".github/assets/button-quick-start.svg" alt="Quick start" height="40"></a>
@@ -56,6 +56,7 @@ Not built yet: Exchange ActiveSync. See [Known limitations](#known-limitations).
 | --- | --- | --- |
 | SMTP (RFC 5321) | Implemented | Postfix accepts mail on port 25 for verified domains, and submission on 587 with STARTTLS and 465 with implicit TLS. Authentication is required before relaying |
 | IMAP4rev1 (RFC 3501) | Implemented | Dovecot on 143 with STARTTLS and 993 with implicit TLS, with special-use folders, quotas and `THREAD=REFERENCES` |
+| JMAP (RFC 8620 and RFC 8621) | Implemented | Mail, calendars and contacts on the API at `/.well-known/jmap`, backed by the same IMAP mailboxes and CalDAV records. See [JMAP](documentation/jmap.md) |
 | DKIM (RFC 6376, RFC 8463) and ARC (RFC 8617) | Implemented | Rspamd signs outgoing mail with the domain's active RSA key and, when configured, a second Ed25519 key. Keys can be rotated or imported. Incoming signatures are verified |
 | SPF (RFC 7208) and DMARC (RFC 7489) | Implemented | Checked on incoming mail by Rspamd. Aether suggests the records to publish and summarizes the aggregate reports it receives |
 | MTA-STS (RFC 8461) and TLS-RPT (RFC 8460) | Implemented | A policy served for every verified domain, starting in `testing` mode |
@@ -201,7 +202,7 @@ The Go API is the only component that writes application data. It keeps organiza
 
 | Component | Path | What it is |
 | --- | --- | --- |
-| API and CLI | `cmd/aether/`, `internal/` | The Go server: REST API, CalDAV and CardDAV, OIDC, webmail bridge, DMARC report intake and the DMARC and TLS reports Aether sends, and the `serve`, `migrate` and `bootstrap-admin` commands |
+| API and CLI | `cmd/aether/`, `internal/` | The Go server: REST API, JMAP, CalDAV and CardDAV, OIDC, webmail bridge, DMARC report intake and the DMARC and TLS reports Aether sends, and the `serve`, `migrate` and `bootstrap-admin` commands |
 | Web app | `apps/web/` | Aether Mail, Calendar, Contacts, Settings and Administration, built with Next.js |
 | Database schema | `migrations/` | Numbered PostgreSQL migrations, embedded in the binary and run when the API starts |
 | Mail stack | `infrastructure/docker/` | Images and configuration for Postfix, Dovecot, Rspamd, Unbound, Caddy and PostgreSQL |

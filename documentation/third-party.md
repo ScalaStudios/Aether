@@ -1,6 +1,6 @@
 # Third-party components
 
-Aether's own code is AGPL-3.0-or-later. The components below are either Go or npm dependencies that are compiled into Aether's binaries, or separate services that run in their own containers.
+Aether's own code is AGPL-3.0-or-later. The components below are either Go or npm dependencies that are compiled into Aether's binaries, or separate services that run in their own containers. JMAP is implemented in the API and does not add a module.
 
 ## Services
 

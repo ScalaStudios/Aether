@@ -33,7 +33,7 @@
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
-	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
+	@api path /api/* /dav /dav/* /jmap /jmap/* /.well-known/jmap /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
 	handle @api {
 		reverse_proxy api:8080 {
 			flush_interval -1

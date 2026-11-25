@@ -29,7 +29,7 @@ spec:
     - host: {{ $host | quote }}
       http:
         paths:
-          {{- range list "/api" "/dav" "/.well-known/caldav" "/.well-known/carddav" "/.well-known/autoconfig" "/autodiscover" "/Autodiscover" }}
+          {{- range list "/api" "/dav" "/jmap" "/.well-known/jmap" "/.well-known/caldav" "/.well-known/carddav" "/.well-known/autoconfig" "/autodiscover" "/Autodiscover" }}
           - path: {{ . }}
             pathType: Prefix
             backend:

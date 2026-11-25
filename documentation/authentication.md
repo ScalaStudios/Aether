@@ -176,6 +176,10 @@ Dovecot hands these logins to the API, which caches a positive introspection res
 
 Most desktop and phone mail apps only offer OAuth for a fixed list of large providers, so this is mainly for scripts and tools that already hold a token, such as one obtained from Halo with the device flow. App passwords remain the way to connect ordinary mail apps.
 
+## JMAP
+
+JMAP clients use the same app password, or the same OpenID Connect access token, against `/.well-known/jmap`. The username for Basic authentication is the mailbox address. A web password, a browser session and an API key are not accepted. Details, including what the server does not implement, are in [JMAP](jmap.md).
+
 ## Calendar and contacts apps
 
 Calendar and contacts apps connect over CalDAV and CardDAV, using an app password created for **Mail, calendar and contacts** or for **Calendar and contacts**.

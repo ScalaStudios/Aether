@@ -68,14 +68,14 @@ A record that authorizes the server only through an `include` or an IP address i
 If ports 80 and 443 already belong to another web server on the host, skip the bundled Caddy:
 
 1. Add `COMPOSE_FILE=compose.yml:compose.external-proxy.yml` to `.env`. The API then listens on `127.0.0.1:20100` and the web app on `127.0.0.1:20101`. Change them with `AETHER_API_LOCAL_PORT` and `AETHER_WEB_LOCAL_PORT`.
-2. In your proxy, send `/api/*`, `/dav/*`, `/.well-known/caldav`, `/.well-known/carddav`, `/.well-known/autoconfig/*`, `/autodiscover/*` and `/Autodiscover/*` to the API port, and everything else to the web port. With Caddy:
+2. In your proxy, send `/api/*`, `/dav/*`, `/jmap`, `/jmap/*`, `/.well-known/jmap`, `/.well-known/caldav`, `/.well-known/carddav`, `/.well-known/autoconfig/*`, `/autodiscover/*` and `/Autodiscover/*` to the API port, and everything else to the web port. With Caddy:
 
    ```caddyfile
    mail.example.com {
    	request_body {
    		max_size 32MB
    	}
-   	@api path /api/* /dav /dav/* /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /autodiscover/* /Autodiscover/*
+   	@api path /api/* /dav /dav/* /jmap /jmap/* /.well-known/jmap /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /autodiscover/* /Autodiscover/*
    	handle @api {
    		reverse_proxy 127.0.0.1:20100
    	}

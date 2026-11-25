@@ -29,16 +29,15 @@ func (s *Server) loadSieveSettings(ctx context.Context, mailboxID string) ([]mai
 	return rules, reply, json.Unmarshal(rawReply, &reply)
 }
 
-func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, rules []mailpkg.Rule, reply mailpkg.AutoReply, response any) bool {
+func (s *Server) writeSieve(ctx context.Context, m *ownedMailbox, rules []mailpkg.Rule, reply mailpkg.AutoReply) error {
 	rawRules, _ := json.Marshal(nonNil(rules))
 	rawReply, _ := json.Marshal(reply)
-	forward, err := s.forwardPolicy(r.Context(), m.OrgID)
+	forward, err := s.forwardPolicy(ctx, m.OrgID)
 	if err != nil {
-		s.internalError(w, r, err)
-		return false
+		return err
 	}
-	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		_, err := tx.Exec(r.Context(), `
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
 			INSERT INTO mailbox_rules (mailbox_id, rules, auto_reply) VALUES ($1, $2, $3)
 			ON CONFLICT (mailbox_id) DO UPDATE SET rules = EXCLUDED.rules, auto_reply = EXCLUDED.auto_reply, updated_at = now()`, m.ID, rawRules, rawReply)
 		if err != nil {
@@ -46,6 +45,10 @@ func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *princip
 		}
 		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address, forward))
 	})
+}
+
+func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, rules []mailpkg.Rule, reply mailpkg.AutoReply, response any) bool {
+	err := s.writeSieve(r.Context(), m, rules, reply)
 	if err != nil {
 		mailBackendErrs.Inc()
 		s.log.Error("installing mail rules failed", "mailbox", m.ID, "err", err)
