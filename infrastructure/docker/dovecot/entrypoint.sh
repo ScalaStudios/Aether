@@ -74,6 +74,11 @@ plugin {
   mail_crypt_global_public_key = </run/dovecot-secrets/mail-crypt.pub
 }
 CRYPT
+if [ -n "${AETHER_TIKA_URL:-}" ]; then
+  printf 'plugin {\n  fts_tika = %s\n}\n' "$AETHER_TIKA_URL" > /run/dovecot-secrets/fts.conf
+else
+  : > /run/dovecot-secrets/fts.conf
+fi
 chgrp dovecot /run/dovecot-secrets/*
 chmod 0640 /run/dovecot-secrets/*
 

@@ -137,6 +137,10 @@ func (c *Client) KickSessions(ctx context.Context, user string) error {
 	return c.doveadmUnlessUnknownUser(ctx, c.http, "kick", map[string][]string{"mask": {user}})
 }
 
+func (c *Client) QueueSearchIndex(ctx context.Context) error {
+	return c.doveadmUnlessUnknownUser(ctx, c.http, "index", map[string]any{"allUsers": true, "queue": true, "mailboxMask": "*"})
+}
+
 func (c *Client) Expunge(ctx context.Context, user string, query []string) error {
 	return c.doveadmUnlessUnknownUser(ctx, c.bulk, "expunge", map[string]any{"user": user, "query": query})
 }
@@ -409,8 +413,9 @@ type ListOptions struct {
 	Limit          int
 }
 
-func (o ListOptions) criteria() *imap.SearchCriteria {
-	c := &imap.SearchCriteria{Text: strings.Fields(o.Query), Since: o.Since}
+func (o ListOptions) criteria() (*imap.SearchCriteria, ParsedQuery) {
+	q := ParseSearchQuery(o.Query)
+	c := &imap.SearchCriteria{Text: q.Text, Since: o.Since}
 	if o.Unread {
 		c.NotFlag = append(c.NotFlag, imap.FlagSeen)
 	}
@@ -422,16 +427,20 @@ func (o ListOptions) criteria() *imap.SearchCriteria {
 			c.Flag = append(c.Flag, imap.Flag(keyword))
 		}
 	}
-	if o.From != "" {
-		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "From", Value: o.From})
+	for _, from := range append(q.From, o.From) {
+		if from != "" {
+			c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "From", Value: from})
+		}
 	}
-	if o.To != "" {
-		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "To", Value: o.To})
+	for _, to := range append(q.To, o.To) {
+		if to != "" {
+			c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "To", Value: to})
+		}
 	}
 	if !o.Until.IsZero() {
 		c.Before = o.Until.AddDate(0, 0, 1)
 	}
-	return c
+	return c, q
 }
 
 func addresses(in []imap.Address) []Address {
@@ -457,23 +466,10 @@ func summarize(m *imapclient.FetchMessageBuffer) Summary {
 	s.Seen = slices.Contains(m.Flags, imap.FlagSeen)
 	s.Flagged = slices.Contains(m.Flags, imap.FlagFlagged)
 	s.Answered = slices.Contains(m.Flags, imap.FlagAnswered)
-	s.HasAttachments = hasAttachments(m.BodyStructure)
+	s.HasAttachments = matchesAttachments(m.BodyStructure, nil)
 	s.Keywords = messageKeywords(m.Flags)
 	s.FlagColor = FlagColor(flagStrings(m.Flags))
 	return s
-}
-
-func hasAttachments(bs imap.BodyStructure) bool {
-	found := false
-	if bs != nil {
-		bs.Walk(func(path []int, part imap.BodyStructure) bool {
-			if single, ok := part.(*imap.BodyStructureSinglePart); ok && isAttachment(single) {
-				found = true
-			}
-			return true
-		})
-	}
-	return found
 }
 
 func isAttachment(p *imap.BodyStructureSinglePart) bool {
@@ -503,7 +499,7 @@ func sortUIDs(ic *imapclient.Client, criteria *imap.SearchCriteria, key imapclie
 	return ic.UIDSort(&imapclient.SortOptions{SearchCriteria: criteria, SortCriteria: []imapclient.SortCriterion{{Key: key}}}).Wait()
 }
 
-func withAttachments(ic *imapclient.Client, uids []uint32) ([]uint32, error) {
+func withAttachments(ic *imapclient.Client, uids []uint32, filenames []string) ([]uint32, error) {
 	if len(uids) == 0 {
 		return uids, nil
 	}
@@ -513,7 +509,7 @@ func withAttachments(ic *imapclient.Client, uids []uint32) ([]uint32, error) {
 	}
 	keep := map[uint32]bool{}
 	for _, m := range msgs {
-		keep[uint32(m.UID)] = hasAttachments(m.BodyStructure)
+		keep[uint32(m.UID)] = matchesAttachments(m.BodyStructure, filenames)
 	}
 	return slices.DeleteFunc(uids, func(uid uint32) bool { return !keep[uid] }), nil
 }
@@ -579,14 +575,14 @@ func (c *Client) List(address, folder string, o ListOptions) (*Page, error) {
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 			return ErrNotFound
 		}
-		criteria := o.criteria()
+		criteria, query := o.criteria()
 		key := cmp.Or(SortKeys[o.Sort], imapclient.SortKeyArrival)
 		sorted, err := sortUIDs(ic, criteria, key)
 		if err != nil {
 			return err
 		}
-		if o.HasAttachments {
-			if sorted, err = withAttachments(ic, sorted); err != nil {
+		if o.HasAttachments || query.HasAttachments || len(query.Filenames) > 0 {
+			if sorted, err = withAttachments(ic, sorted, query.Filenames); err != nil {
 				return err
 			}
 		}

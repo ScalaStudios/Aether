@@ -89,8 +89,13 @@ clamav:
   enabled: false
   image: clamav/clamav:stable
 
+tika:
+  enabled: false
+  image: apache/tika:3.3.3.0
+
 resources:
   clamav: { requests: { cpu: 100m, memory: 1536Mi }, limits: { memory: 3Gi } }
+  tika: { requests: { cpu: 100m, memory: 512Mi }, limits: { memory: 2Gi } }
   api: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 512Mi } }
   web: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
   postfix: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 256Mi } }

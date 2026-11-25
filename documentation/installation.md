@@ -326,6 +326,26 @@ A download link is a page at `{AETHER_PUBLIC_URL}/files/{token}`. The file itsel
 
 The files live in the PostgreSQL database as large objects. `pg_dump` includes them, and deleting a link removes the object, so no extra volume is required.
 
+## Search
+
+Dovecot keeps a full-text index of every mailbox with the [Flatcurve](https://slusarz.github.io/dovecot-fts-flatcurve/) plugin, stored next to the mail in the `vmail` volume. New mail is indexed when it arrives, except in Junk and Trash, and each time the API starts it asks Dovecot to index existing mail in the background. Searches in Aether Mail and in mail apps use the index, and a search word also matches longer words that start with it. In Aether Mail, `from:`, `to:`, `has:attachment` and `filename:` narrow a search, and quotes keep a phrase together, as in `from:amy "quarterly report"`.
+
+Text inside attachments such as PDF and Office documents is searchable when Apache Tika runs. It needs about 512 MB of memory. Add both lines to `.env`, then run `docker compose up -d`:
+
+```sh
+COMPOSE_PROFILES=tika
+AETHER_TIKA_URL=http://tika:9998/tika/
+```
+
+Mail indexed before Tika was turned on, or while it was unreachable, stays indexed without its attachment text. Rebuild the index to include it:
+
+```sh
+docker compose exec dovecot doveadm fts-flatcurve remove -A '*'
+docker compose exec dovecot doveadm index -A -q '*'
+```
+
+With Helm, set `tika.enabled=true`.
+
 ## Upgrades
 
 Each release is a tag, such as `v0.1.0`, with notes in [CHANGELOG.md](../CHANGELOG.md). Back up first, then check out the new tag and rebuild:

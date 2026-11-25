@@ -59,7 +59,7 @@ func TestDiffLabelFlagsKeepsUnknownKeywordsAndAppleColor(t *testing.T) {
 
 func TestListCriteriaIncludeKeywords(t *testing.T) {
 	since := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	got := ListOptions{Keywords: []string{"invoice"}, Since: since}.criteria()
+	got, _ := ListOptions{Keywords: []string{"invoice"}, Since: since}.criteria()
 	want := &imap.SearchCriteria{Flag: []imap.Flag{"invoice"}, Since: since}
 	if len(got.Flag) != 1 || got.Flag[0] != "invoice" || !got.Since.Equal(since) {
 		t.Fatalf("criteria = %+v, want %+v", got, want)

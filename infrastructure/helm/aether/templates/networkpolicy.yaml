@@ -9,6 +9,9 @@
 {{- if .Values.clamav.enabled }}
 {{- $rules = append $rules (dict "name" "clamav" "from" (list "rspamd") "ports" (list 3310)) }}
 {{- end }}
+{{- if .Values.tika.enabled }}
+{{- $rules = append $rules (dict "name" "tika" "from" (list "dovecot") "ports" (list 9998)) }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

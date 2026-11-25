@@ -76,10 +76,10 @@ func TestTransferCopyKeepsSourceAndChecksTarget(t *testing.T) {
 
 func TestListCriteriaCombineFilters(t *testing.T) {
 	since, until := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC)
-	got := ListOptions{Query: " invoice  2026 ", Unread: true, Flagged: true, From: "billing", To: "abuse", Since: since, Until: until}.criteria()
+	got, _ := ListOptions{Query: ` invoice  "due 2026" from:"Amy B" to:ops`, Unread: true, Flagged: true, From: "billing", To: "abuse", Since: since, Until: until}.criteria()
 	want := &imap.SearchCriteria{
-		Text: []string{"invoice", "2026"}, NotFlag: []imap.Flag{imap.FlagSeen}, Flag: []imap.Flag{imap.FlagFlagged},
-		Header: []imap.SearchCriteriaHeaderField{{Key: "From", Value: "billing"}, {Key: "To", Value: "abuse"}},
+		Text: []string{"invoice", "due 2026"}, NotFlag: []imap.Flag{imap.FlagSeen}, Flag: []imap.Flag{imap.FlagFlagged},
+		Header: []imap.SearchCriteriaHeaderField{{Key: "From", Value: "Amy B"}, {Key: "From", Value: "billing"}, {Key: "To", Value: "ops"}, {Key: "To", Value: "abuse"}},
 		Since:  since, Before: until.AddDate(0, 0, 1),
 	}
 	if !reflect.DeepEqual(got, want) {

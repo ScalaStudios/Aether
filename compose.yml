@@ -139,6 +139,7 @@ services:
       <<: *mail-env
       AETHER_DOVECOT_API_KEY: ${AETHER_DOVECOT_API_KEY:?run scripts/setup.sh or add AETHER_DOVECOT_API_KEY to .env}
       AETHER_SECRET_KEY: ${AETHER_SECRET_KEY:?run scripts/setup.sh}
+      AETHER_TIKA_URL: ${AETHER_TIKA_URL:-}
     volumes:
       - vmail:/var/vmail
       - tls:/tls:ro
@@ -259,6 +260,11 @@ services:
     volumes:
       - clamav:/var/lib/clamav
 
+  tika:
+    profiles: ["tika"]
+    image: apache/tika:3.3.3.0
+    restart: unless-stopped
+
   integration-tests:
     profiles: ["test"]
     image: golang:1.27-bookworm
@@ -269,6 +275,7 @@ services:
       AETHER_TEST_ADMIN_PASSWORD: ${AETHER_TEST_ADMIN_PASSWORD:-}
       AETHER_TEST_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
       AETHER_TEST_ANTIVIRUS: ${AETHER_CLAMAV_ADDR:+true}
+      AETHER_TEST_TIKA: ${AETHER_TIKA_URL:+true}
       AETHER_TEST_WEBHOOKS: ${AETHER_WEBHOOK_ALLOW_PRIVATE:-false}
       AETHER_TEST_ALERT_FROM: ${AETHER_ALERT_FROM:-}
       AETHER_TEST_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable

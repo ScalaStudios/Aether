@@ -1,0 +1,35 @@
+{{- if .Values.tika.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: tika
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "aether.selector" (dict "name" "tika" "root" .) | nindent 4 }}
+  ports:
+    - { name: http, port: 9998, targetPort: 9998 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tika
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "aether.selector" (dict "name" "tika" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aether.selector" (dict "name" "tika" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: tika
+          image: {{ .Values.tika.image }}
+          ports:
+            - { name: http, containerPort: 9998 }
+          readinessProbe:
+            tcpSocket: { port: 9998 }
+            initialDelaySeconds: 10
+          resources: {{- toYaml .Values.resources.tika | nindent 12 }}
+          securityContext: {{- include "aether.restrictedSecurity" . | nindent 12 }}
+{{- end }}

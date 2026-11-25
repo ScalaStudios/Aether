@@ -32,6 +32,9 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 {{- define "aether.dovecotEnv" -}}
 - { name: AETHER_MAIL_HOSTNAME, value: {{ .Values.mailHostname | quote }} }
 - { name: AETHER_DOVECOT_MASTER_ALLOW_NETS, value: {{ .Values.dovecotMasterAllowNets | quote }} }
+{{- if .Values.tika.enabled }}
+- { name: AETHER_TIKA_URL, value: "http://tika:9998/tika/" }
+{{- end }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_API_KEY" "key" "dovecotApiKey" "root" .) }}

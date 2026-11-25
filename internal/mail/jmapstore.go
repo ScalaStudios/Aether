@@ -230,7 +230,7 @@ func (c *Client) SearchMessages(address string, f MessageFilter) ([]MessageHit, 
 				slices.Reverse(uids)
 			}
 			if f.HasAttachment {
-				if uids, err = withAttachments(ic, uids); err != nil {
+				if uids, err = withAttachments(ic, uids, nil); err != nil {
 					return err
 				}
 			}

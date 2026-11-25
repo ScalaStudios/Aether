@@ -210,7 +210,7 @@ func attachmentFlags(ic *imapclient.Client, uids []uint32) (map[uint32]bool, err
 			return err
 		}
 		for _, msg := range msgs {
-			out[uint32(msg.UID)] = hasAttachments(msg.BodyStructure)
+			out[uint32(msg.UID)] = matchesAttachments(msg.BodyStructure, nil)
 		}
 		return nil
 	})
@@ -237,12 +237,13 @@ func (c *Client) ListAcross(address string, folders []string, o ListOptions) (*P
 			if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 				return ErrNotFound
 			}
-			sorted, err := sortUIDs(ic, o.criteria(), cmp.Or(SortKeys[o.Sort], imapclient.SortKeyArrival))
+			criteria, q := o.criteria()
+			sorted, err := sortUIDs(ic, criteria, cmp.Or(SortKeys[o.Sort], imapclient.SortKeyArrival))
 			if err != nil {
 				return err
 			}
-			if o.HasAttachments {
-				if sorted, err = withAttachments(ic, sorted); err != nil {
+			if o.HasAttachments || q.HasAttachments || len(q.Filenames) > 0 {
+				if sorted, err = withAttachments(ic, sorted, q.Filenames); err != nil {
 					return err
 				}
 			}

@@ -180,6 +180,16 @@ func serve(log *slog.Logger) error {
 	go srv.RunMailboxMaintenance(ctx)
 	go srv.RunReportWorkers(ctx)
 	go srv.RunAlertWorker(ctx)
+	go func() {
+		for mc.QueueSearchIndex(ctx) != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(30 * time.Second):
+			}
+		}
+		log.Info("queued search indexing of all mailboxes")
+	}()
 	httpServer := &http.Server{
 		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Minute, WriteTimeout: 30 * time.Minute, IdleTimeout: 120 * time.Second,
