@@ -19,6 +19,8 @@ type Config struct {
 	IMAPAddr              string
 	SubmissionAddr        string
 	SieveAddr             string
+	SieveRelayAddr        string
+	SieveRelayPassword    string
 	MailTLSCAFile         string
 	DovecotMasterUser     string
 	DovecotMasterPassword string
@@ -39,8 +41,6 @@ type Config struct {
 	PolicyListen          string
 	MilterListen          string
 	MilterAfterListen     string
-	RelayAddr             string
-	RelayPassword         string
 	AuditMilterListen     string
 	CustomCSS             bool
 }
@@ -54,6 +54,8 @@ func Load() (*Config, error) {
 		IMAPAddr:              env("AETHER_IMAP_ADDR", "dovecot:143"),
 		SubmissionAddr:        env("AETHER_SUBMISSION_ADDR", "postfix:587"),
 		SieveAddr:             env("AETHER_SIEVE_ADDR", "dovecot:4190"),
+		SieveRelayAddr:        env("AETHER_SIEVE_RELAY_ADDR", "postfix:10025"),
+		SieveRelayPassword:    os.Getenv("AETHER_SIEVE_RELAY_PASSWORD"),
 		MailTLSCAFile:         os.Getenv("AETHER_MAIL_TLS_CA_FILE"),
 		DovecotMasterUser:     env("AETHER_DOVECOT_MASTER_USER", "aether-webmail"),
 		DovecotMasterPassword: os.Getenv("AETHER_DOVECOT_MASTER_PASSWORD"),
@@ -74,8 +76,6 @@ func Load() (*Config, error) {
 		PolicyListen:          env("AETHER_POLICY_LISTEN", ":10040"),
 		MilterListen:          env("AETHER_MILTER_LISTEN", ":10045"),
 		MilterAfterListen:     env("AETHER_MILTER_AFTER_LISTEN", ":10046"),
-		RelayAddr:             env("AETHER_SIEVE_RELAY_ADDR", "postfix:10025"),
-		RelayPassword:         os.Getenv("AETHER_SIEVE_RELAY_PASSWORD"),
 		AuditMilterListen:     env("AETHER_AUDIT_MILTER_LISTEN", ":10047"),
 		CustomCSS:             env("AETHER_CUSTOM_CSS", "true") == "true",
 	}

@@ -70,17 +70,20 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 		return "DUNNO", nil
 	}
 	local, _, _ = strings.Cut(local, "+")
+	sender = strings.ToLower(sender)
 	var orgID, acceptFrom string
 	var members, allowed []string
-	err := s.db.QueryRow(ctx, `SELECT org_id, accept_from, destinations, allowed_senders FROM aliases WHERE address = $1 AND active`, local+"@"+domain).
-		Scan(&orgID, &acceptFrom, &members, &allowed)
+	var moderated, dynamicMember bool
+	err := s.db.QueryRow(ctx, `SELECT org_id, accept_from, destinations, allowed_senders, moderated, EXISTS (SELECT 1 FROM list_dynamic_members lm WHERE lm.alias_id = aliases.id AND lm.address = $2)
+		FROM aliases WHERE address = $1 AND active`, local+"@"+domain, sender).
+		Scan(&orgID, &acceptFrom, &members, &allowed, &moderated, &dynamicMember)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "DUNNO", nil
 	}
-	if err != nil || acceptFrom == "anyone" {
+	if err != nil || (acceptFrom == "anyone" && !moderated) {
 		return "DUNNO", err
 	}
-	sender = strings.ToLower(sender)
+	reject := "REJECT 5.7.1 " + local + "@" + domain + " does not accept mail from this sender"
 	_, senderDomain, _ := strings.Cut(sender, "@")
 	var hosted, sameOrg bool
 	err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mail_domains WHERE name = $1), EXISTS (SELECT 1 FROM domains WHERE name = $1 AND org_id = $2)`, senderDomain, orgID).
@@ -89,20 +92,23 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 		return "", err
 	}
 	authenticated := saslUser != ""
+	if moderated && hosted && !authenticated {
+		return reject, nil
+	}
 	trusted := sender != "" && (authenticated || !hosted)
-	var permit bool
+	permit := acceptFrom == "anyone"
 	switch acceptFrom {
 	case "organization":
 		permit = authenticated && sameOrg
 	case "members":
-		permit = trusted && slices.Contains(members, sender)
+		permit = trusted && (slices.Contains(members, sender) || dynamicMember)
 	case "allowlist":
 		permit = trusted && (slices.Contains(allowed, sender) || slices.Contains(allowed, "@"+senderDomain))
 	}
 	if permit {
 		return "DUNNO", nil
 	}
-	return "REJECT 5.7.1 " + local + "@" + domain + " does not accept mail from this sender", nil
+	return reject, nil
 }
 
 func (s *Server) forwardingPolicyCheck(ctx context.Context, recipient, sender, _ string) (string, error) {

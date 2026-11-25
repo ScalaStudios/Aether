@@ -15,7 +15,8 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { PageContainer } from "@/components/page-container"
-import { HeldMessages } from "@/components/settings/approvals"
+import { FlowApprovals } from "@/components/settings/approvals"
+import { HeldMessages } from "@/components/settings/held-messages"
 import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
 import { MailboxAccess } from "@/components/settings/mailbox-access"
@@ -79,7 +80,8 @@ export function SettingsView() {
       <Signatures />
       <MailRules />
       <SenderLists />
-      <HeldMessages queryKey={["my-held"]} path="/me/held-messages" hideWhenEmpty />
+      <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />
+      <HeldMessages />
       <ManagedLists />
       <ImportMail />
       <MailboxAccess />

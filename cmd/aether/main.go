@@ -134,7 +134,7 @@ func serve(log *slog.Logger) error {
 	if err := redisotel.InstrumentTracing(kv, redisotel.WithDBStatement(false)); err != nil {
 		return err
 	}
-	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.SieveAddr, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword, cfg.DovecotAPIURL, cfg.DovecotAPIKey)
+	mc, err := mail.NewClient(cfg.IMAPAddr, cfg.SubmissionAddr, cfg.SieveAddr, cfg.SieveRelayAddr, cfg.SieveRelayPassword, cfg.MailHostname, cfg.MailTLSCAFile, cfg.DovecotMasterUser, cfg.DovecotMasterPassword, cfg.DovecotAPIURL, cfg.DovecotAPIKey)
 	if err != nil {
 		return err
 	}

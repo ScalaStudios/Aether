@@ -65,7 +65,7 @@ Messages whose body is not text, such as a message that is only a PDF, also get 
 
 ### Holding messages for approval
 
-Approvers must be active members of the organization. Each gets an email with the sender, recipients, subject and the start of the text, and approves or rejects the message under **Settings → Messages waiting for approval**. Owners and administrators can also decide under **Administration → Mail flow**. Any one approval sends the message on to its recipients as it was held, with the other actions of the matching rules already applied. A rejected message, or one nobody approves within 7 days, is discarded without telling the sender.
+Approvers must be active members of the organization. Each gets an email with the sender, recipients, subject and the start of the text, and approves or rejects the message under **Settings → Messages held by mail flow rules**. Owners and administrators can also decide under **Administration → Mail flow**. Any one approval sends the message on to its recipients as it was held, with the other actions of the matching rules already applied. A rejected message, or one nobody approves within 7 days, is discarded without telling the sender.
 
 The sender's server is told the message was accepted. Approved messages are passed back to Postfix through the Sieve relay port, so the API needs `AETHER_SIEVE_RELAY_PASSWORD`; without it, rules that hold messages cannot be saved.
 

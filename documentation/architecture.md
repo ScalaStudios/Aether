@@ -126,7 +126,8 @@ The data model is defined in `migrations/0001_init.sql`:
 - `users`, `user_identities`, linking an OIDC issuer and subject to a user
 - `domains`, with a verification token and an encrypted DKIM key
 - `mailboxes`, each with an owner, or with `kind` `shared` and no owner, plus the pending flag, generation, lease, attempt count and next-attempt time that drive the Dovecot rights reconciliation; its foreign keys restrict the deletion of its domain and organization; `mailbox_delegates` holds delegates and members with their access level, `send_as` and `send_on_behalf`
-- `aliases`, where an empty local part is the catch-all, and `kind` is `alias` or `list`; `alias_owners` holds the owners of lists
+- `aliases`, where an empty local part is the catch-all, and `kind` is `alias` or `list`; `alias_owners` holds the owners of lists, `alias_groups` the groups whose members a list includes, and `member_domains` the domains whose mailboxes it includes
+- `directory_groups` and `directory_group_members`, groups pushed by an identity provider over SCIM and the accounts in them
 - `app_passwords`
 - `mail_kicks`, IMAP session kicks waiting for Dovecot to confirm them, one row per address with a generation that each new revocation increments
 - `quarantine_messages`, one stored copy of each held message with its category, score and Rspamd symbols; `quarantine_items`, one row per mailbox it was held for, with its status and who requested or released it; `quarantine_policies` per organization; `quarantine_allowed_senders` per mailbox
@@ -174,7 +175,7 @@ A distribution list is an alias whose `kind` is `list`. It needs a local part, s
 
 | | Alias | List |
 | --- | --- | --- |
-| Destinations | Up to 100 | Up to 5,000, including other lists and outside addresses |
+| Destinations | Up to 100 | Up to 5,000, including other lists and outside addresses, plus identity provider groups and whole domains |
 | Who may send to it | Anyone | `acceptFrom`: `anyone`, `organization`, `members` or `allowlist` |
 | Who may send as it | Every destination mailbox | The mailboxes in `sendAs`, which must belong to the organization |
 | Who may change it | Organization administrators | Administrators, and the owners for the destinations only |
@@ -184,12 +185,34 @@ Owners must be members of the organization. `GET /api/v1/me/lists` returns the l
 Sender restrictions are enforced by Postfix during the SMTP session, on port 25 and on submission. `smtpd_recipient_restrictions` looks the recipient up in `mail_restricted_lists`, which holds only active lists whose `acceptFrom` is not `anyone` on active, verified domains; mail to any other address is not checked. For a restricted list, Postfix asks the API's policy service with `check_policy_service`. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). The decision uses the envelope sender, the recipient and the SASL login:
 
 - `organization`: the session authenticated, and the sender's domain belongs to the list's organization.
-- `members`: the sender is one of the list's destinations.
+- `members`: the sender is one of the list's destinations, or one of its members through a group or a domain.
 - `allowlist`: the sender, or `@` followed by its domain, is in `allowedSenders`.
 
 For `members` and `allowlist`, a sender on a domain that Aether hosts counts only when the session authenticated, so an outside server cannot claim a hosted address to reach a list. Mail with an empty envelope sender, such as a bounce, is rejected by every restricted list. The rejection is `5.7.1 <list> does not accept mail from this sender`, given while the sender is still connected. If the API cannot query the database, it asks Postfix to defer the message instead.
 
-Moderation, and members taken from identity provider groups, are not built.
+### Members from groups and domains
+
+Besides the addresses added by hand, a list's members can come from two places, both resolved when mail is delivered, so people join and leave with no change to the list:
+
+- `groups`: groups that an identity provider keeps in Aether over SCIM (see [SCIM provisioning](authentication.md#scim-provisioning)). Each group member's personal mailboxes in the list's organization receive the mail. Deprovisioned accounts and inactive mailboxes are left out; a suspended account keeps receiving mail, as it does for its own address.
+- `memberDomains`: domains of the list's organization. Every active personal mailbox on them receives the mail, including mailboxes created later.
+
+A list needs at least one destination, group or domain, and only administrators can change its groups and domains. The `list_dynamic_members` view resolves both, and `mail_aliases` adds its addresses to the list's own destinations, so Postfix expands the list in one lookup. `GET /api/v1/aliases/{aliasId}/members` returns every address the list reaches right now, with how each one got there, to administrators and the list's owners; **Show members** on the list in **Administration → Aliases** displays it. `GET /api/v1/organizations/{orgId}/directory-groups` lists the groups an administrator can choose: those with a mailbox in the organization, or already used by one of its lists. API keys need `aliases:read` for both.
+
+### Moderation
+
+A list with `moderated` set holds messages until a moderator approves them. The moderators are the people in `moderators`, or the owners when that is empty, and a moderated list needs at least one of either. The moderators' and owners' own addresses and mailboxes, and the addresses and `@domain` entries in `moderationExempt`, skip moderation.
+
+- **Routing.** For a moderated list, `mail_aliases` resolves the address to `list-<id>@aether-reports.internal` instead of its members, so Postfix hands every message for the list to the API's LMTP receiver (`AETHER_REPORT_LISTEN`, default `:2424`), the same receiver as DMARC reports. No Postfix setting changed. Migration `0039a` rebuilds the view after the one that adds members from groups and domains, so a moderated list routes to the API and leaves its group and domain members out of the view, and an unmoderated list keeps resolving them in Postfix.
+- **Spoofing.** A moderated list is also in `mail_restricted_lists`, and the policy service rejects a sender on a hosted domain that did not authenticate. A moderator's address therefore cannot be claimed from outside to skip moderation. Senders outside Aether reach the API rewritten by SRS; the API reads the original address back from an `SRS0` address to check it against `moderationExempt`, and never treats a decoded address on a hosted domain as exempt.
+- **Delivery.** An exempt message is stored in `held_messages` as already approved before the LMTP receiver answers, and an approved one stays there, so Postfix never has to retry it. The API then submits it on internal port 10025 with the `aether-sieve-relay` login and the original envelope sender to the list's members as they are at that moment: its own destinations plus everyone `list_dynamic_members` resolves from its groups and domains. Recipients go in batches of 500, one SMTP transaction each, and after every batch Postfix accepts, the accepted recipients, and those it refused with a 5xx, are added to the row's `delivered` list in the database. A batch that fails, or a recipient Postfix defers with a 4xx, is retried by the scheduler with the members that are not in `delivered` yet, after 5 minutes and up to an hour between attempts; after 30 attempts the message is dropped and the sender told. A row is claimed for 15 minutes while it is being delivered, so two API processes never deliver it at once. The API adds `X-Aether-List: <list>` and drops a message that already carries its own list's header, so lists that contain each other cannot loop. The API needs `AETHER_SIEVE_RELAY_PASSWORD` (and `AETHER_SIEVE_RELAY_ADDR`, default `postfix:10025`); without it, a list cannot be made moderated.
+- **Holding.** Any other message is stored in `held_messages` with its sender, From, subject and a text preview, and the moderators get an email from the list's address with links to **Settings → Messages waiting for approval**. The links only open the page; approving or rejecting is a separate click, so a link scanner cannot decide for anyone.
+- **Deciding.** `GET /api/v1/me/held-messages` lists what the signed-in person can moderate, `GET /api/v1/held-messages/{heldId}/raw` downloads the original, and `POST /api/v1/held-messages/{heldId}/approve` or `/reject` (with an optional `reason`) decides. The row is locked while the decision is recorded, so two moderators cannot both decide. Approving answers `204` once every member was reached, or `202` with `{"status": "queued"}` when part of the delivery is left to the scheduler. Each decision is an `alias.message_approve` or `alias.message_reject` audit event. A rejection tells the sender, with the reason.
+- **Expiry.** A message nobody decides on is deleted five days after it arrived, and the sender is told. Notices go out with an empty envelope sender, and a held bounce, which has no sender, gets none.
+
+When moderation is turned off, the list goes back to delivering directly; messages already held stay until someone decides or they expire.
+
+Delivery is at least once per member, not exactly once. If the connection to Postfix drops after Postfix has queued a batch but before its `250` reply arrives, or the API stops between that reply and the database update, the batch is sent again on the next attempt and those members get the message twice. SMTP gives the client no way to ask whether a transaction it lost the reply for was queued.
 
 ## Allowed and blocked senders
 

@@ -13,23 +13,30 @@ import (
 )
 
 type alias struct {
-	ID             string   `json:"id"`
-	OrgID          string   `json:"orgId"`
-	DomainID       string   `json:"domainId"`
-	Address        string   `json:"address"`
-	LocalPart      string   `json:"localPart"`
-	Destinations   []string `json:"destinations"`
-	Active         bool     `json:"active"`
-	Kind           string   `json:"kind"`
-	Name           string   `json:"name"`
-	AcceptFrom     string   `json:"acceptFrom"`
-	AllowedSenders []string `json:"allowedSenders"`
-	SendAs         []string `json:"sendAs"`
-	Owners         []string `json:"owners"`
+	ID               string   `json:"id"`
+	OrgID            string   `json:"orgId"`
+	DomainID         string   `json:"domainId"`
+	Address          string   `json:"address"`
+	LocalPart        string   `json:"localPart"`
+	Destinations     []string `json:"destinations"`
+	Active           bool     `json:"active"`
+	Kind             string   `json:"kind"`
+	Name             string   `json:"name"`
+	AcceptFrom       string   `json:"acceptFrom"`
+	AllowedSenders   []string `json:"allowedSenders"`
+	SendAs           []string `json:"sendAs"`
+	Owners           []string `json:"owners"`
+	Groups           []string `json:"groups"`
+	MemberDomains    []string `json:"memberDomains"`
+	Moderated        bool     `json:"moderated"`
+	Moderators       []string `json:"moderators"`
+	ModerationExempt []string `json:"moderationExempt"`
 }
 
 const aliasColumns = `a.id, a.org_id, a.domain_id, a.address, a.local_part, a.destinations, a.active, a.kind, a.name, a.accept_from, a.allowed_senders, a.send_as,
-	coalesce((SELECT array_agg(o.user_id::text ORDER BY o.user_id) FROM alias_owners o WHERE o.alias_id = a.id), '{}')`
+	coalesce((SELECT array_agg(o.user_id::text ORDER BY o.user_id) FROM alias_owners o WHERE o.alias_id = a.id), '{}'),
+	coalesce((SELECT array_agg(g.group_id::text ORDER BY g.group_id) FROM alias_groups g WHERE g.alias_id = a.id), '{}'), a.member_domains::text[],
+	a.moderated, coalesce((SELECT array_agg(m.user_id::text ORDER BY m.user_id) FROM alias_moderators m WHERE m.alias_id = a.id), '{}'), a.moderation_exempt`
 
 var acceptFromValues = []string{"anyone", "organization", "members", "allowlist"}
 
@@ -44,6 +51,11 @@ type aliasInput struct {
 	AllowedSenders     *[]string `json:"allowedSenders"`
 	SendAs             *[]string `json:"sendAs"`
 	Owners             *[]string `json:"owners"`
+	Groups             *[]string `json:"groups"`
+	MemberDomains      *[]string `json:"memberDomains"`
+	Moderated          *bool     `json:"moderated"`
+	Moderators         *[]string `json:"moderators"`
+	ModerationExempt   *[]string `json:"moderationExempt"`
 }
 
 func (s *Server) loadAlias(ctx context.Context, id string) (*alias, error) {
@@ -145,12 +157,40 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 		return false
 	}
 	a.Destinations = slices.DeleteFunc(a.Destinations, func(d string) bool { return slices.Contains(remove, d) })
+	if in.Groups != nil {
+		a.Groups = nonNil(slices.Compact(slices.Sorted(slices.Values(*in.Groups))))
+		var known int
+		if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM directory_groups WHERE id::text = ANY($1)`, a.Groups).Scan(&known); err != nil {
+			s.internalError(w, r, err)
+			return false
+		}
+		if known != len(a.Groups) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_groups", "Choose groups provisioned by an identity provider.")
+			return false
+		}
+	}
+	if in.MemberDomains != nil {
+		a.MemberDomains = nonNil(slices.Compact(slices.Sorted(slices.Values(*in.MemberDomains))))
+		var owned int
+		if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM domains WHERE org_id = $1 AND id::text = ANY($2)`, a.OrgID, a.MemberDomains).Scan(&owned); err != nil {
+			s.internalError(w, r, err)
+			return false
+		}
+		if owned != len(a.MemberDomains) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_member_domains", "Choose domains that belong to this organization.")
+			return false
+		}
+	}
 	limit := 100
 	if a.Kind == "list" {
 		limit = 5000
 	}
-	if len(a.Destinations) == 0 || len(a.Destinations) > limit {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", "Add at least one destination and no more than "+strconv.Itoa(limit)+".")
+	if len(a.Destinations) > limit {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", "Add no more than "+strconv.Itoa(limit)+" destinations.")
+		return false
+	}
+	if len(a.Destinations) == 0 && (a.Kind == "alias" || len(a.Groups)+len(a.MemberDomains) == 0) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", "Add at least one destination.")
 		return false
 	}
 	if in.AcceptFrom != nil {
@@ -180,14 +220,20 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 		}
 	}
 	if in.Owners != nil {
-		a.Owners = slices.Compact(slices.Sorted(slices.Values(*in.Owners)))
-		var members int
-		if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM organization_members WHERE org_id = $1 AND user_id::text = ANY($2)`, a.OrgID, a.Owners).Scan(&members); err != nil {
-			s.internalError(w, r, err)
+		if a.Owners, ok = s.orgUsers(w, r, a.OrgID, *in.Owners, "invalid_owners", "Owners must be members of this organization."); !ok {
 			return false
 		}
-		if members != len(a.Owners) {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_owners", "Owners must be members of this organization.")
+	}
+	if in.Moderated != nil {
+		a.Moderated = *in.Moderated
+	}
+	if in.Moderators != nil {
+		if a.Moderators, ok = s.orgUsers(w, r, a.OrgID, *in.Moderators, "invalid_moderators", "Moderators must be members of this organization."); !ok {
+			return false
+		}
+	}
+	if in.ModerationExempt != nil {
+		if a.ModerationExempt, ok = parseAddressList(w, *in.ModerationExempt, true); !ok {
 			return false
 		}
 	}
@@ -195,11 +241,33 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "A distribution list needs an address, not a catch-all.")
 		return false
 	}
-	if a.Kind == "alias" && (a.AcceptFrom != "anyone" || len(a.AllowedSenders) > 0 || len(a.SendAs) > 0 || len(a.Owners) > 0) {
-		writeError(w, http.StatusUnprocessableEntity, "list_only", "Sender restrictions, send-as and owners are only available on distribution lists.")
+	if a.Kind == "alias" && (a.AcceptFrom != "anyone" || len(a.AllowedSenders) > 0 || len(a.SendAs) > 0 || len(a.Owners) > 0 || len(a.Groups) > 0 || len(a.MemberDomains) > 0 || a.Moderated || len(a.Moderators) > 0 || len(a.ModerationExempt) > 0) {
+		writeError(w, http.StatusUnprocessableEntity, "list_only", "Sender restrictions, moderation, send-as, owners, groups and domain members are only available on distribution lists.")
+		return false
+	}
+	if a.Moderated && len(a.Moderators) == 0 && len(a.Owners) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_moderators", "Add a moderator or an owner to approve messages sent to the list.")
+		return false
+	}
+	if a.Moderated && s.cfg.SieveRelayPassword == "" {
+		writeError(w, http.StatusUnprocessableEntity, "moderation_unavailable", "Moderation needs AETHER_SIEVE_RELAY_PASSWORD set on the API.")
 		return false
 	}
 	return true
+}
+
+func (s *Server) orgUsers(w http.ResponseWriter, r *http.Request, orgID string, ids []string, code, message string) ([]string, bool) {
+	ids = slices.Compact(append([]string{}, slices.Sorted(slices.Values(ids))...))
+	var members int
+	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM organization_members WHERE org_id = $1 AND user_id::text = ANY($2)`, orgID, ids).Scan(&members); err != nil {
+		s.internalError(w, r, err)
+		return nil, false
+	}
+	if members != len(ids) {
+		writeError(w, http.StatusUnprocessableEntity, code, message)
+		return nil, false
+	}
+	return ids, true
 }
 
 func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
@@ -209,12 +277,12 @@ func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
 	}
 	defer tx.Rollback(ctx)
 	if create {
-		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-			a.OrgID, a.DomainID, a.LocalPart, a.Address, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs).Scan(&a.ID)
+		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as, member_domains, moderated, moderation_exempt)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+			a.OrgID, a.DomainID, a.LocalPart, a.Address, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt).Scan(&a.ID)
 	} else {
-		_, err = tx.Exec(ctx, `UPDATE aliases SET destinations = $2, active = $3, kind = $4, name = $5, accept_from = $6, allowed_senders = $7, send_as = $8, updated_at = now() WHERE id = $1`,
-			a.ID, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs)
+		_, err = tx.Exec(ctx, `UPDATE aliases SET destinations = $2, active = $3, kind = $4, name = $5, accept_from = $6, allowed_senders = $7, send_as = $8, member_domains = $9, moderated = $10, moderation_exempt = $11, updated_at = now() WHERE id = $1`,
+			a.ID, a.Destinations, a.Active, a.Kind, a.Name, a.AcceptFrom, a.AllowedSenders, a.SendAs, a.MemberDomains, a.Moderated, a.ModerationExempt)
 	}
 	if err != nil {
 		return err
@@ -223,6 +291,18 @@ func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO alias_owners (alias_id, user_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`, a.ID, a.Owners); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM alias_groups WHERE alias_id = $1 AND NOT (group_id::text = ANY($2))`, a.ID, a.Groups); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO alias_groups (alias_id, group_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`, a.ID, a.Groups); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM alias_moderators WHERE alias_id = $1 AND NOT (user_id::text = ANY($2))`, a.ID, a.Moderators); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO alias_moderators (alias_id, user_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`, a.ID, a.Moderators); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -246,7 +326,7 @@ func (s *Server) createAlias(w http.ResponseWriter, r *http.Request, p *principa
 		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, underscores, or plus signs, or leave it empty for a catch-all.")
 		return
 	}
-	a := &alias{OrgID: orgID, DomainID: in.DomainID, LocalPart: in.LocalPart, Active: true, Kind: "alias", AcceptFrom: "anyone", Destinations: []string{}, AllowedSenders: []string{}, SendAs: []string{}, Owners: []string{}}
+	a := &alias{OrgID: orgID, DomainID: in.DomainID, LocalPart: in.LocalPart, Active: true, Kind: "alias", AcceptFrom: "anyone", Destinations: []string{}, AllowedSenders: []string{}, SendAs: []string{}, Owners: []string{}, Groups: []string{}, MemberDomains: []string{}, Moderators: []string{}, ModerationExempt: []string{}}
 	if !s.applyAliasInput(w, r, a, &in.aliasInput) {
 		return
 	}
@@ -321,7 +401,8 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	if !p.canAdminOrg(a.OrgID) {
-		membershipOnly := in.Kind == nil && in.Name == nil && in.Active == nil && in.AcceptFrom == nil && in.AllowedSenders == nil && in.SendAs == nil && in.Owners == nil
+		membershipOnly := in.Kind == nil && in.Name == nil && in.Active == nil && in.AcceptFrom == nil && in.AllowedSenders == nil && in.SendAs == nil && in.Owners == nil && in.Groups == nil && in.MemberDomains == nil &&
+			in.Moderated == nil && in.Moderators == nil && in.ModerationExempt == nil
 		if !slices.Contains(a.Owners, p.User.ID) || !membershipOnly {
 			forbidden(w)
 			return
@@ -340,7 +421,8 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 }
 
 func aliasAuditFields(a *alias) map[string]any {
-	return map[string]any{"kind": a.Kind, "name": a.Name, "active": a.Active, "destinations": a.Destinations, "acceptFrom": a.AcceptFrom, "allowedSenders": a.AllowedSenders, "sendAs": a.SendAs, "owners": a.Owners}
+	return map[string]any{"kind": a.Kind, "name": a.Name, "active": a.Active, "destinations": a.Destinations, "acceptFrom": a.AcceptFrom, "allowedSenders": a.AllowedSenders, "sendAs": a.SendAs, "owners": a.Owners, "groups": a.Groups, "memberDomains": a.MemberDomains,
+		"moderated": a.Moderated, "moderators": a.Moderators, "moderationExempt": a.ModerationExempt}
 }
 
 func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -358,4 +440,79 @@ func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	s.audit(r.Context(), r, p, &a.OrgID, "alias.delete", "alias", a.ID, map[string]any{"address": a.Address})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type resolvedMember struct {
+	Address string   `json:"address"`
+	Name    string   `json:"name"`
+	Direct  bool     `json:"direct"`
+	Domain  bool     `json:"domain"`
+	Groups  []string `json:"groups"`
+}
+
+func (s *Server) listResolvedMembers(w http.ResponseWriter, r *http.Request, p *principal) {
+	a, ok := s.aliasFromPath(w, r, p)
+	if !ok {
+		return
+	}
+	if !p.canAdminOrg(a.OrgID) && !slices.Contains(a.Owners, p.User.ID) {
+		forbidden(w)
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT x.address, coalesce(min(coalesce(nullif(m.display_name, ''), nullif(u.display_name, ''))), ''),
+			bool_or(x.direct), bool_or(NOT x.direct AND x.group_id IS NULL),
+			coalesce(array_agg(DISTINCT g.display_name ORDER BY g.display_name) FILTER (WHERE g.id IS NOT NULL), '{}')
+		FROM (
+			SELECT unnest(destinations) AS address, true AS direct, NULL::uuid AS group_id FROM aliases WHERE id = $1
+			UNION ALL
+			SELECT address, false, group_id FROM list_dynamic_members WHERE alias_id = $1
+		) x
+		LEFT JOIN directory_groups g ON g.id = x.group_id
+		LEFT JOIN mailboxes m ON m.address = x.address
+		LEFT JOIN users u ON u.id = m.owner_user_id
+		GROUP BY x.address ORDER BY x.address`, a.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[resolvedMember])
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(out))
+}
+
+type directoryGroup struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Members  int    `json:"members"`
+}
+
+func (s *Server) listDirectoryGroups(w http.ResponseWriter, r *http.Request, p *principal) {
+	orgID, ok := s.orgFromPath(w, r, p, true)
+	if !ok {
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT g.id, g.display_name, p.name,
+			(SELECT count(DISTINCT m.address)::int FROM directory_group_members gm
+				JOIN users u ON u.id = gm.user_id AND u.status <> 'deprovisioned'
+				JOIN mailboxes m ON m.owner_user_id = u.id AND m.org_id = $1 AND m.kind = 'user' AND m.active
+				WHERE gm.group_id = g.id)
+		FROM directory_groups g
+		JOIN oidc_providers p ON p.id = g.provider_id
+		WHERE EXISTS (SELECT 1 FROM directory_group_members gm JOIN mailboxes m ON m.owner_user_id = gm.user_id AND m.org_id = $1 WHERE gm.group_id = g.id)
+			OR EXISTS (SELECT 1 FROM alias_groups ag JOIN aliases a ON a.id = ag.alias_id AND a.org_id = $1 WHERE ag.group_id = g.id)
+		ORDER BY g.display_name, p.name`, orgID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[directoryGroup])
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(out))
 }

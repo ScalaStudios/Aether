@@ -61,7 +61,7 @@ func (s *Server) decodeFlowRule(w http.ResponseWriter, r *http.Request, orgID st
 		d.HTML = mailpkg.SanitizeHTML(d.HTML)
 	}
 	if len(in.Actions.Approvers) > 0 {
-		if s.cfg.RelayPassword == "" {
+		if s.cfg.SieveRelayPassword == "" {
 			return fail("Approval needs AETHER_SIEVE_RELAY_PASSWORD to be set for the API, so approved messages can be sent on.")
 		}
 		var known []string
@@ -262,7 +262,7 @@ func (s *Server) listFlowMatches(w http.ResponseWriter, r *http.Request, p *prin
 	writeJSON(w, http.StatusOK, nonNil(matches))
 }
 
-type heldMessage struct {
+type flowHeldMessage struct {
 	ID         string    `json:"id"`
 	OrgID      string    `json:"orgId"`
 	RuleName   string    `json:"ruleName"`
@@ -282,7 +282,7 @@ func (s *Server) listHeld(w http.ResponseWriter, r *http.Request, where string, 
 		s.internalError(w, r, err)
 		return
 	}
-	held, err := pgx.CollectRows(rows, pgx.RowToStructByPos[heldMessage])
+	held, err := pgx.CollectRows(rows, pgx.RowToStructByPos[flowHeldMessage])
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -371,7 +371,7 @@ func (s *Server) decideHeld(w http.ResponseWriter, r *http.Request, p *principal
 
 func (s *Server) relayHeld(ctx context.Context, sender string, recipients []string, raw []byte) error {
 	done := make(chan error, 1)
-	go func() { done <- s.mail.Relay(s.cfg.RelayAddr, s.cfg.RelayPassword, sender, recipients, raw) }()
+	go func() { done <- s.mail.Relay(sender, recipients, raw, nil) }()
 	select {
 	case err := <-done:
 		return err

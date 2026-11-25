@@ -125,8 +125,8 @@ func (s *Server) scimListUsers(w http.ResponseWriter, r *http.Request) {
 			scimError(w, http.StatusBadRequest, "invalidFilter", `Only filters of the form userName eq "address" are supported.`)
 			return
 		}
-		var userName string
-		if err := json.Unmarshal([]byte(`"`+m[1]+`"`), &userName); err != nil {
+		userName, ok := scimFilterValue(m[1])
+		if !ok {
 			scimError(w, http.StatusBadRequest, "invalidFilter", "The userName in the filter is not a valid string.")
 			return
 		}

@@ -129,6 +129,40 @@ export interface Alias {
   allowedSenders: string[]
   sendAs: string[]
   owners: string[]
+  groups: string[]
+  memberDomains: string[]
+  moderated: boolean
+  moderators: string[]
+  moderationExempt: string[]
+}
+
+export interface DirectoryGroup {
+  id: string
+  name: string
+  provider: string
+  members: number
+}
+
+export interface ResolvedMember {
+  address: string
+  name: string
+  direct: boolean
+  domain: boolean
+  groups: string[]
+}
+
+export interface HeldMessage {
+  id: string
+  listId: string
+  listAddress: string
+  listName: string
+  sender: string
+  from: string
+  subject: string
+  preview: string
+  size: number
+  receivedAt: string
+  expiresAt: string
 }
 
 export interface Member {
@@ -514,7 +548,7 @@ export interface FlowMatch {
   createdAt: string
 }
 
-export interface HeldMessage {
+export interface FlowHeldMessage {
   id: string
   orgId: string
   ruleName: string

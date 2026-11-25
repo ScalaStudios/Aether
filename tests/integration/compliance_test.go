@@ -343,7 +343,7 @@ func purgeRecoverableNow(t *testing.T, db *pgx.Conn, mailboxID, address string) 
 		}
 		queries = append(queries, mailpkg.SearchQuery{Subject: s.Subject, Attachment: s.Attachment})
 	}
-	mc, err := mailpkg.NewClient(env(t, "AETHER_TEST_IMAP", "dovecot:143"), "", "", env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test"), env(t, "AETHER_TEST_CA_FILE", "/tls/fullchain.pem"),
+	mc, err := mailpkg.NewClient(env(t, "AETHER_TEST_IMAP", "dovecot:143"), "", "", "", "", env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test"), env(t, "AETHER_TEST_CA_FILE", "/tls/fullchain.pem"),
 		env(t, "AETHER_TEST_DOVECOT_MASTER_USER", "aether-webmail"), env(t, "AETHER_TEST_DOVECOT_MASTER_PASSWORD", ""), env(t, "AETHER_TEST_DOVEADM", "http://dovecot:8089"), env(t, "AETHER_TEST_DOVECOT_API_KEY", ""))
 	if err != nil {
 		t.Fatal(err)

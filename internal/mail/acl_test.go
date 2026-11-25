@@ -22,7 +22,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 )
 
-func fakeIMAP(t *testing.T, answer bool) (*Client, <-chan []byte) {
+func localhostCert(t *testing.T) (*ecdsa.PrivateKey, []byte, *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -39,6 +39,12 @@ func fakeIMAP(t *testing.T, answer bool) (*Client, <-chan []byte) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
+	return key, der, roots
+}
+
+func fakeIMAP(t *testing.T, answer bool) (*Client, <-chan []byte) {
+	t.Helper()
+	key, der, roots := localhostCert(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

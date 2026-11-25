@@ -435,8 +435,8 @@ paths:
           description: OK
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/HeldMessage" } }
-  /me/held-messages:
+              schema: { type: array, items: { $ref: "#/components/schemas/FlowHeldMessage" } }
+  /me/mail-flow/held:
     get:
       tags: [mail-flow]
       summary: Messages waiting for the signed-in person's approval
@@ -445,8 +445,8 @@ paths:
           description: OK
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/HeldMessage" } }
-  /held-messages/{heldId}/approve:
+              schema: { type: array, items: { $ref: "#/components/schemas/FlowHeldMessage" } }
+  /mail-flow/held/{heldId}/approve:
     post:
       tags: [mail-flow]
       summary: Approve a held message and send it on to its recipients
@@ -457,7 +457,7 @@ paths:
         "204": { description: Sent on }
         "404": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
-  /held-messages/{heldId}/reject:
+  /mail-flow/held/{heldId}/reject:
     post:
       tags: [mail-flow]
       summary: Reject a held message; it is discarded without telling the sender
@@ -741,6 +741,54 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Alias" } }
+  /me/held-messages:
+    get:
+      tags: [aliases]
+      summary: Messages waiting for the signed-in person's approval on moderated lists
+      responses:
+        "200":
+          description: Oldest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/HeldMessage" } }
+  /held-messages/{heldId}/raw:
+    get:
+      tags: [aliases]
+      summary: Download a held message as it was received
+      parameters:
+        - { name: heldId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The original message
+          content:
+            message/rfc822:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error" }
+  /held-messages/{heldId}/{decision}:
+    post:
+      tags: [aliases]
+      summary: Approve or reject a held message
+      description: Approving delivers the message to the list's current members, including those from its groups and domains. Rejecting discards it and tells the sender, with the reason if one is given. Both are recorded in the audit log as alias.message_approve or alias.message_reject.
+      parameters:
+        - { name: heldId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: decision, in: path, required: true, schema: { type: string, enum: [approve, reject] } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 2000, description: Only for reject. Sent to the sender. }
+      responses:
+        "202":
+          description: Approved, and part of the delivery was left to the scheduler, which retries the members not reached yet
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, enum: [queued] } } }
+        "204": { description: Decided, and an approved message reached every member }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/members:
     get:
       tags: [members]
@@ -2459,7 +2507,7 @@ components:
         subject: { type: string }
         actions: { type: array, items: { type: string } }
         createdAt: { type: string, format: date-time }
-    HeldMessage:
+    FlowHeldMessage:
       type: object
       required: [id, orgId, ruleName, approvers, sender, recipients, subject, preview, createdAt]
       properties:
@@ -2521,7 +2569,7 @@ components:
         sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }
     Alias:
       type: object
-      required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners]
+      required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -2536,6 +2584,24 @@ components:
         allowedSenders: { type: array, items: { type: string } }
         sendAs: { type: array, items: { type: string } }
         owners: { type: array, items: { type: string, format: uuid } }
+        moderated: { type: boolean }
+        moderators: { type: array, items: { type: string, format: uuid } }
+        moderationExempt: { type: array, items: { type: string } }
+    HeldMessage:
+      type: object
+      required: [id, listId, listAddress, listName, sender, from, subject, preview, size, receivedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        listId: { type: string, format: uuid }
+        listAddress: { type: string }
+        listName: { type: string }
+        sender: { type: string, description: Envelope sender. Empty for bounces. }
+        from: { type: string, description: The From header }
+        subject: { type: string }
+        preview: { type: string, description: Up to 2,000 characters of the message text }
+        size: { type: integer }
+        receivedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: Five days after it was received. The message is then discarded and the sender told. }
     AliasInput:
       type: object
       properties:
@@ -2552,6 +2618,9 @@ components:
         allowedSenders: { type: array, items: { type: string }, description: Addresses or @domain entries }
         sendAs: { type: array, items: { type: string, format: email }, description: Mailboxes of this organization that may send as the list }
         owners: { type: array, items: { type: string, format: uuid }, description: Organization members who may change the list's destinations }
+        moderated: { type: boolean, description: "Hold messages to the list until a moderator approves them. Needs at least one moderator or owner, and AETHER_SIEVE_RELAY_PASSWORD on the API." }
+        moderators: { type: array, items: { type: string, format: uuid }, description: Organization members who approve held messages. When empty, the owners do. }
+        moderationExempt: { type: array, items: { type: string }, description: "Addresses or @domain entries whose mail skips moderation. Moderators and owners always skip it." }
     ImportCounts:
       type: object
       properties:

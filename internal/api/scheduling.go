@@ -249,6 +249,8 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		}
 		go s.purgeRecoverable(ctx)
 		s.pruneMailboxAudit(ctx)
+		s.expireHeldMessages(ctx)
+		s.deliverQueuedListMessages(ctx)
 		select {
 		case <-ctx.Done():
 			return

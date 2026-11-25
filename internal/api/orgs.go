@@ -304,7 +304,10 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		if err := s.revokeMailAccess(r.Context(), tx, userID, ids); err != nil {
 			return err
 		}
-		_, err = tx.Exec(r.Context(), `DELETE FROM alias_owners WHERE user_id = $2 AND alias_id IN (SELECT id FROM aliases WHERE org_id = $1)`, orgID, userID)
+		if _, err := tx.Exec(r.Context(), `DELETE FROM alias_owners WHERE user_id = $2 AND alias_id IN (SELECT id FROM aliases WHERE org_id = $1)`, orgID, userID); err != nil {
+			return err
+		}
+		_, err = tx.Exec(r.Context(), `DELETE FROM alias_moderators WHERE user_id = $2 AND alias_id IN (SELECT id FROM aliases WHERE org_id = $1)`, orgID, userID)
 		return err
 	})
 	if err != nil {

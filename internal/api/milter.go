@@ -427,7 +427,7 @@ func (s *Server) holdMessage(ctx context.Context, msg *mailflow.Message, out mai
 }
 
 func (s *Server) notifyApprovers(id, rule, sender string, recipients []string, subject, preview string, approvers []string) {
-	text := fmt.Sprintf("%s sent a message to %s that the mail flow rule \"%s\" holds for approval.\n\nSubject: %s\n\n%s\n\nApprove or reject it in Aether under Settings, Messages waiting for approval:\n%s/settings\n\nMessages that are not approved within 7 days are discarded.\n",
+	text := fmt.Sprintf("%s sent a message to %s that the mail flow rule \"%s\" holds for approval.\n\nSubject: %s\n\n%s\n\nApprove or reject it in Aether under Settings, Messages held by mail flow rules:\n%s/settings\n\nMessages that are not approved within 7 days are discarded.\n",
 		sender, strings.Join(recipients, ", "), rule, subject, preview, strings.TrimRight(s.cfg.PublicURL.String(), "/"))
 	note := mailpkg.Outgoing{
 		From:    mailpkg.Address{Name: "Aether", Address: "postmaster@" + s.cfg.MailHostname},
@@ -439,7 +439,7 @@ func (s *Server) notifyApprovers(id, rule, sender string, recipients []string, s
 	}
 	raw, _, err := note.Build(s.cfg.MailHostname)
 	if err == nil {
-		err = s.mail.Relay(s.cfg.RelayAddr, s.cfg.RelayPassword, note.From.Address, approvers, raw)
+		err = s.mail.Relay(note.From.Address, approvers, raw, nil)
 	}
 	if err != nil {
 		s.log.Error("notifying approvers failed", "held", id, "err", err)

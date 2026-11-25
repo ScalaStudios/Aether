@@ -33,6 +33,8 @@ type Client struct {
 	imapAddr       string
 	submissionAddr string
 	sieveAddr      string
+	relayAddr      string
+	relayPassword  string
 	tls            *tls.Config
 	masterUser     string
 	masterPassword string
@@ -43,7 +45,7 @@ type Client struct {
 	bulk           *http.Client
 }
 
-func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser, masterPassword, doveadmURL, doveadmKey string) (*Client, error) {
+func NewClient(imapAddr, submissionAddr, sieveAddr, relayAddr, relayPassword, hostname, caFile, masterUser, masterPassword, doveadmURL, doveadmKey string) (*Client, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil {
 		roots = x509.NewCertPool()
@@ -58,7 +60,7 @@ func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser
 		}
 	}
 	return &Client{
-		imapAddr: imapAddr, submissionAddr: submissionAddr, sieveAddr: sieveAddr, hostname: hostname,
+		imapAddr: imapAddr, submissionAddr: submissionAddr, sieveAddr: sieveAddr, relayAddr: relayAddr, relayPassword: relayPassword, hostname: hostname,
 		tls:        &tls.Config{ServerName: hostname, RootCAs: roots, MinVersion: tls.VersionTLS12},
 		masterUser: masterUser, masterPassword: masterPassword,
 		doveadmURL: doveadmURL, doveadmKey: doveadmKey, http: &http.Client{Timeout: 10 * time.Second},
@@ -1048,17 +1050,66 @@ func appendRaw(ic *imapclient.Client, folder string, flags []imap.Flag, raw []by
 	return err
 }
 
-func (c *Client) Relay(addr, password, from string, rcpts []string, raw []byte) error {
-	sc, err := smtp.DialStartTLS(addr, c.tls)
+var ErrDeferred = errors.New("the mail server deferred some recipients")
+
+const relayBatch = 500
+
+func (c *Client) Relay(from string, rcpts []string, raw []byte, progress func(accepted, rejected []string) error) error {
+	if c.relayPassword == "" {
+		return errors.New("AETHER_SIEVE_RELAY_PASSWORD is not set")
+	}
+	sc, err := smtp.DialStartTLS(c.relayAddr, c.tls)
 	if err != nil {
 		return fmt.Errorf("relay connect: %w", err)
 	}
 	defer sc.Close()
-	if err := sc.Auth(sasl.NewPlainClient("", "aether-sieve-relay", password)); err != nil {
+	if err := sc.Auth(sasl.NewPlainClient("", "aether-sieve-relay", c.relayPassword)); err != nil {
 		return fmt.Errorf("relay auth: %w", err)
 	}
-	if err := sc.SendMail(from, rcpts, bytes.NewReader(raw)); err != nil {
-		return err
+	deferred := false
+	for batch := range slices.Chunk(rcpts, relayBatch) {
+		if err := sc.Mail(from, nil); err != nil {
+			return err
+		}
+		var accepted, rejected []string
+		for _, rcpt := range batch {
+			err := sc.Rcpt(rcpt, nil)
+			var smtpErr *smtp.SMTPError
+			switch {
+			case err == nil:
+				accepted = append(accepted, rcpt)
+			case errors.As(err, &smtpErr) && smtpErr.Code >= 500:
+				rejected = append(rejected, rcpt)
+			case errors.As(err, &smtpErr):
+				deferred = true
+			default:
+				return err
+			}
+		}
+		if len(accepted) == 0 {
+			if err := sc.Reset(); err != nil {
+				return err
+			}
+		} else {
+			w, err := sc.Data()
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(raw); err != nil {
+				return err
+			}
+			if err := w.Close(); err != nil {
+				return err
+			}
+		}
+		if progress != nil && len(accepted)+len(rejected) > 0 {
+			if err := progress(accepted, rejected); err != nil {
+				return err
+			}
+		}
+	}
+	if deferred {
+		return ErrDeferred
 	}
 	return sc.Quit()
 }

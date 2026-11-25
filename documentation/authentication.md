@@ -90,8 +90,13 @@ What each request does:
 | `PUT /Users/{id}` | Updates the display name, links `externalId`, and applies `active`. The email address cannot change over SCIM, and a `userName` containing `*` or `?` returns `400 invalidValue` here too. |
 | `PATCH /Users/{id}` | Applies `replace` operations on `active` and `displayName`. |
 | `DELETE /Users/{id}` | Marks the account deprovisioned and ends its IMAP sessions, including sessions opened for delegated mailboxes with an app password or an access token. Its mail is kept. |
+| `POST /Groups` | Creates a group with `displayName`, an optional `externalId`, and `members` given as Aether user ids from `/Users`. A `displayName` already used by this provider returns `409 uniqueness`, and a member that is not an Aether user returns `400 invalidValue`. |
+| `GET /Groups?filter=displayName eq "…"` | Finds a group by name. Only `displayName eq` filters are supported, and `excludedAttributes=members` leaves the members out. |
+| `PUT /Groups/{id}` | Replaces the name, `externalId` and the whole member list. |
+| `PATCH /Groups/{id}` | Applies `add`, `remove` and `replace` on `members`, `displayName` and `externalId`, including `remove` with a `members[value eq "…"]` path. `remove` on `members` without a value empties the group. |
+| `DELETE /Groups/{id}` | Deletes the group and takes it off every distribution list that used it. |
 
-`active: false` suspends the account like a Halo suspension webhook: web sessions end and app passwords stop working, while mail keeps arriving. `active: true` restores the account only if this provider suspended it, so a suspension made by an Aether administrator stays in place. Neither value changes an account whose mailbox was converted to a shared mailbox. Groups are not provisioned; group mappings still apply when people sign in.
+`active: false` suspends the account like a Halo suspension webhook: web sessions end and app passwords stop working, while mail keeps arriving. `active: true` restores the account only if this provider suspended it, so a suspension made by an Aether administrator stays in place. Neither value changes an account whose mailbox was converted to a shared mailbox. Groups belong to the provider that pushed them, and deleting the provider deletes them. Administrators add them to distribution lists, whose members then follow the group (see [Distribution lists](architecture.md#members-from-groups-and-domains)). Organization roles still come from group mappings when people sign in, not from SCIM groups.
 
 ## Generic OIDC providers
 

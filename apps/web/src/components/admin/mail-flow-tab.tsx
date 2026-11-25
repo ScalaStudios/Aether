@@ -14,7 +14,7 @@ import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { RecipientInput } from "@/components/recipient-input"
-import { HeldMessages } from "@/components/settings/approvals"
+import { FlowApprovals } from "@/components/settings/approvals"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
@@ -207,7 +207,7 @@ export function MailFlowTab({ orgId }: { orgId: string }) {
   return (
     <div className="flex flex-col gap-10">
       <RuleList orgId={orgId} />
-      <HeldMessages queryKey={["held", orgId]} path={`/organizations/${orgId}/mail-flow/held`} />
+      <FlowApprovals queryKey={["held", orgId]} path={`/organizations/${orgId}/mail-flow/held`} />
       <MatchLog orgId={orgId} />
     </div>
   )

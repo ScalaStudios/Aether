@@ -58,6 +58,8 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/aliases/{aliasId}":                           "aliases",
 	"PATCH /api/v1/aliases/{aliasId}":                         "aliases",
 	"DELETE /api/v1/aliases/{aliasId}":                        "aliases",
+	"GET /api/v1/aliases/{aliasId}/members":                   "aliases",
+	"GET /api/v1/organizations/{orgId}/directory-groups":      "aliases",
 	"GET /api/v1/organizations/{orgId}/webhooks":              "webhooks",
 	"POST /api/v1/organizations/{orgId}/webhooks":             "webhooks",
 	"DELETE /api/v1/webhooks/{webhookId}":                     "webhooks",
@@ -78,8 +80,8 @@ var apiKeyRoutes = map[string]string{
 	"PUT /api/v1/organizations/{orgId}/mail-flow/order":             "mailflow",
 	"GET /api/v1/organizations/{orgId}/mail-flow/matches":           "mailflow",
 	"GET /api/v1/organizations/{orgId}/mail-flow/held":              "mailflow",
-	"POST /api/v1/held-messages/{heldId}/approve":                   "mailflow",
-	"POST /api/v1/held-messages/{heldId}/reject":                    "mailflow",
+	"POST /api/v1/mail-flow/held/{heldId}/approve":                  "mailflow",
+	"POST /api/v1/mail-flow/held/{heldId}/reject":                   "mailflow",
 }
 
 type apiKeyIdentity struct {

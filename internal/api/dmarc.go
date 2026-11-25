@@ -162,21 +162,49 @@ func (b reportBackend) NewSession(*smtp.Conn) (smtp.Session, error) {
 	return &reportSession{s: b.s}, nil
 }
 
-type reportSession struct{ s *Server }
+type reportSession struct {
+	s     *Server
+	from  string
+	rcpts []string
+}
 
 func (r *reportSession) AuthMechanisms() []string { return nil }
 func (r *reportSession) Auth(string) (sasl.Server, error) {
 	return nil, smtp.ErrAuthUnsupported
 }
-func (r *reportSession) Mail(string, *smtp.MailOptions) error { return nil }
+func (r *reportSession) Mail(from string, _ *smtp.MailOptions) error {
+	r.from = from
+	return nil
+}
 func (r *reportSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	if !strings.HasSuffix(strings.ToLower(to), "@aether-reports.internal") {
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "Unknown recipient"}
 	}
+	r.rcpts = append(r.rcpts, to)
 	return nil
 }
-func (r *reportSession) Reset()        {}
+func (r *reportSession) Reset()        { r.from, r.rcpts = "", nil }
 func (r *reportSession) Logout() error { return nil }
+
+func (r *reportSession) LMTPData(body io.Reader, status smtp.StatusCollector) error {
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	var reportErr error
+	reported := false
+	for _, rcpt := range r.rcpts {
+		if id, ok := listRecipient(rcpt); ok {
+			status.SetStatus(rcpt, r.s.receiveListMessage(id, r.from, raw))
+			continue
+		}
+		if !reported {
+			reportErr, reported = r.Data(bytes.NewReader(raw)), true
+		}
+		status.SetStatus(rcpt, reportErr)
+	}
+	return nil
+}
 
 func (r *reportSession) Data(body io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -202,7 +230,7 @@ func (s *Server) ReportServer(addr string) *smtp.Server {
 	srv.LMTP = true
 	srv.Network = "tcp"
 	srv.Domain = s.cfg.MailHostname
-	srv.MaxMessageBytes = maxReportMessage
+	srv.MaxMessageBytes = maxListMessage
 	srv.ReadTimeout = time.Minute
 	srv.WriteTimeout = time.Minute
 	return srv

@@ -1,8 +1,13 @@
 package mail
 
 import (
+	"bytes"
+	"html"
+	"io"
 	"net/url"
+	"strings"
 
+	"github.com/emersion/go-message/mail"
 	"github.com/microcosm-cc/bluemonday"
 )
 
@@ -49,4 +54,41 @@ func SanitizeHTML(html string) string {
 
 func SanitizePreviewHTML(html string) string {
 	return previewPolicy.Sanitize(html)
+}
+
+func TextPreview(raw []byte, limit int) string {
+	mr, _ := mail.CreateReader(bytes.NewReader(raw))
+	if mr == nil {
+		return ""
+	}
+	var htmlText string
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		h, ok := part.Header.(*mail.InlineHeader)
+		if !ok {
+			continue
+		}
+		t, _, _ := h.ContentType()
+		if t != "text/plain" && t != "text/html" {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(part.Body, 256<<10))
+		if t == "text/plain" {
+			return clip(strings.TrimSpace(string(body)), limit)
+		}
+		if htmlText == "" {
+			htmlText = strings.Join(strings.Fields(html.UnescapeString(bluemonday.StrictPolicy().Sanitize(string(body)))), " ")
+		}
+	}
+	return clip(htmlText, limit)
+}
+
+func clip(s string, limit int) string {
+	if r := []rune(s); len(r) > limit {
+		return strings.TrimSpace(string(r[:limit])) + "…"
+	}
+	return s
 }

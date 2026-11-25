@@ -97,7 +97,7 @@ func TestMailFlowRules(t *testing.T) {
 		Preview string `json:"preview"`
 	}
 	waitFor(t, "the message to wait for alice", func() bool {
-		w.alice.must("GET", "/me/held-messages", nil, &waiting, 200)
+		w.alice.must("GET", "/me/mail-flow/held", nil, &waiting, 200)
 		return len(waiting) == 1 && waiting[0].Subject == held
 	})
 	if !strings.Contains(waiting[0].Preview, "please pay") {
@@ -106,10 +106,10 @@ func TestMailFlowRules(t *testing.T) {
 	if imapFindSubject(t, ic, "INBOX", held) != nil {
 		t.Fatal("held message was delivered before approval")
 	}
-	if code := w.bob.do("POST", "/held-messages/"+waiting[0].ID+"/approve", nil, nil); code != 404 {
+	if code := w.bob.do("POST", "/mail-flow/held/"+waiting[0].ID+"/approve", nil, nil); code != 404 {
 		t.Fatalf("non-approver approved: %d", code)
 	}
-	w.alice.must("POST", "/held-messages/"+waiting[0].ID+"/approve", nil, nil, 204)
+	w.alice.must("POST", "/mail-flow/held/"+waiting[0].ID+"/approve", nil, nil, 204)
 	waitFor(t, "the approved message", func() bool { return imapFindSubject(t, ic, "INBOX", held) != nil })
 
 	var audit []struct {

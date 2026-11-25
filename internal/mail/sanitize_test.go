@@ -240,3 +240,20 @@ func TestForwardPolicy(t *testing.T) {
 		t.Errorf("blocked destination compiled or allowed one dropped:\n%s", script)
 	}
 }
+
+func TestTextPreview(t *testing.T) {
+	plain := "From: a@example.com\r\nSubject: hi\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n  Hello there, team.\r\n"
+	if got := TextPreview([]byte(plain), 100); got != "Hello there, team." {
+		t.Errorf("plain preview %q", got)
+	}
+	if got := TextPreview([]byte(plain), 5); got != "Hello…" {
+		t.Errorf("clipped preview %q", got)
+	}
+	html := "From: a@example.com\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<p>Pay <b>now</b> &amp; win</p><script>x()</script>\r\n--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\nPDF\r\n--b--\r\n"
+	if got := TextPreview([]byte(html), 100); got != "Pay now & win" {
+		t.Errorf("html preview %q", got)
+	}
+	if got := TextPreview([]byte("not a message"), 100); got != "" {
+		t.Errorf("garbage preview %q", got)
+	}
+}

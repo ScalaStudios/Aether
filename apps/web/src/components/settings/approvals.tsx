@@ -10,13 +10,13 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
-import type { HeldMessage } from "@/lib/types"
+import type { FlowHeldMessage } from "@/lib/types"
 
-export function HeldMessages({ queryKey, path, hideWhenEmpty }: { queryKey: unknown[]; path: string; hideWhenEmpty?: boolean }) {
+export function FlowApprovals({ queryKey, path, hideWhenEmpty }: { queryKey: unknown[]; path: string; hideWhenEmpty?: boolean }) {
   const qc = useQueryClient()
-  const held = useQuery({ queryKey, queryFn: () => api<HeldMessage[]>(path) })
+  const held = useQuery({ queryKey, queryFn: () => api<FlowHeldMessage[]>(path) })
   const decide = useMutation({
-    mutationFn: ({ id, approve }: { id: string; approve: boolean }) => api(`/held-messages/${id}/${approve ? "approve" : "reject"}`, { method: "POST" }),
+    mutationFn: ({ id, approve }: { id: string; approve: boolean }) => api(`/mail-flow/held/${id}/${approve ? "approve" : "reject"}`, { method: "POST" }),
     onSuccess: (_, { approve }) => {
       toast.success(approve ? "Approved and sent on" : "Rejected; the message was discarded")
       qc.invalidateQueries({ queryKey })
@@ -28,7 +28,7 @@ export function HeldMessages({ queryKey, path, hideWhenEmpty }: { queryKey: unkn
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title="Messages waiting for approval"
+        title="Messages held by mail flow rules"
         description="A mail flow rule holds these messages until someone approves them. Approved messages are delivered as they are; rejected and unanswered ones are discarded after 7 days without telling the sender."
       />
       <QueryView query={held} empty={<EmptyState icon={Inbox} title="Nothing is waiting" description="Messages held by a rule that sends for approval appear here." />}>

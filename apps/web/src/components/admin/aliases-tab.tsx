@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Forward, Pencil, Plus, Trash2, Users } from "lucide-react"
+import { Forward, ListTree, Pencil, Plus, Trash2, Users } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -13,6 +13,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
+import { MultiSelect } from "@/components/multi-select"
 import { SectionHeader } from "@/components/page-header"
 import { RecipientInput } from "@/components/recipient-input"
 import { SegmentedControl } from "@/components/segmented-control"
@@ -20,13 +21,14 @@ import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { plural } from "@/lib/format"
 import { domainsQuery, membersQuery } from "@/lib/queries"
-import type { AcceptFrom, Alias, Member } from "@/lib/types"
+import type { AcceptFrom, Alias, DirectoryGroup, Member, ResolvedMember } from "@/lib/types"
 
 type Kind = Alias["kind"]
 
@@ -42,21 +44,29 @@ const schema = z
       .toLowerCase()
       .regex(/^([a-z0-9]([a-z0-9._+-]*[a-z0-9])?)?$/, "Use letters, digits, dots, hyphens, plus signs or underscores."),
     name: z.string().trim().max(200, "Use 200 characters or fewer."),
-    destinations: addresses.min(1, "Add at least one address."),
+    destinations: addresses,
     active: z.boolean(),
     acceptFrom: z.enum(["anyone", "organization", "members", "allowlist"]),
     allowedSenders: addresses,
     sendAs: addresses,
     owners: addresses,
+    groups: z.array(z.string()),
+    memberDomains: z.array(z.string()),
+    moderated: z.boolean(),
+    moderators: addresses,
+    moderationExempt: addresses,
   })
+  .refine((v) => v.kind === "list" || v.destinations.length > 0, { message: "Add at least one address.", path: ["destinations"] })
+  .refine((v) => v.kind === "alias" || v.destinations.length + v.groups.length + v.memberDomains.length > 0, { message: "Add at least one member, group or domain.", path: ["destinations"] })
   .refine((v) => v.kind === "list" || v.destinations.length <= 100, { message: "An alias forwards to up to 100 addresses. Make it a distribution list for more.", path: ["destinations"] })
   .refine((v) => v.destinations.length <= 5000, { message: "A list can have up to 5,000 members.", path: ["destinations"] })
   .refine((v) => v.kind === "alias" || v.localPart !== "", { message: "Enter the list’s address. Only an alias can be a catch-all.", path: ["localPart"] })
   .refine((v) => v.kind === "alias" || v.acceptFrom !== "allowlist" || v.allowedSenders.length > 0, { message: "Add at least one address or @domain.", path: ["allowedSenders"] })
+  .refine((v) => v.kind === "alias" || !v.moderated || v.moderators.length > 0 || v.owners.length > 0, { message: "Add a moderator, or an owner to approve messages.", path: ["moderators"] })
 
 type Values = z.infer<typeof schema>
 
-const blank: Values = { kind: "alias", domainId: "", localPart: "", name: "", destinations: [], active: true, acceptFrom: "organization", allowedSenders: [], sendAs: [], owners: [] }
+const blank: Values = { kind: "alias", domainId: "", localPart: "", name: "", destinations: [], active: true, acceptFrom: "organization", allowedSenders: [], sendAs: [], owners: [], groups: [], memberDomains: [], moderated: false, moderators: [], moderationExempt: [] }
 
 const kinds = [
   { value: "alias" as const, label: "Alias" },
@@ -83,6 +93,9 @@ const fieldErrors: Record<string, keyof Values> = {
   invalid_destinations: "destinations",
   invalid_send_as: "sendAs",
   invalid_owners: "owners",
+  invalid_moderators: "moderators",
+  invalid_groups: "groups",
+  invalid_member_domains: "memberDomains",
 }
 
 const aliasesQuery = (orgId: string) =>
@@ -91,10 +104,21 @@ const aliasesQuery = (orgId: string) =>
     queryFn: () => api<Alias[]>(`/organizations/${orgId}/aliases`),
   })
 
+const directoryGroupsQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["directory-groups", orgId],
+    queryFn: () => api<DirectoryGroup[]>(`/organizations/${orgId}/directory-groups`),
+  })
+
 const toAddresses = (list: string[]) => list.map((address) => ({ address }))
 
 function toValues(target: Alias | Kind, people: Member[]): Values {
   if (typeof target === "string") return { ...blank, kind: target }
+  const toPeople = (ids: string[]) =>
+    ids.map((id) => {
+      const person = people.find((p) => p.userId === id)
+      return person ? { name: person.displayName || undefined, address: person.email } : { address: id }
+    })
   return {
     kind: target.kind,
     domainId: target.domainId,
@@ -105,10 +129,12 @@ function toValues(target: Alias | Kind, people: Member[]): Values {
     acceptFrom: target.acceptFrom,
     allowedSenders: toAddresses(target.allowedSenders),
     sendAs: toAddresses(target.sendAs),
-    owners: target.owners.map((id) => {
-      const person = people.find((p) => p.userId === id)
-      return person ? { name: person.displayName || undefined, address: person.email } : { address: id }
-    }),
+    owners: toPeople(target.owners),
+    groups: target.groups,
+    memberDomains: target.memberDomains,
+    moderated: target.moderated,
+    moderators: toPeople(target.moderators),
+    moderationExempt: toAddresses(target.moderationExempt),
   }
 }
 
@@ -117,10 +143,12 @@ export function AliasesTab({ orgId }: { orgId: string }) {
   const aliases = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "alias") })
   const lists = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "list") })
   const domains = useQuery(domainsQuery(orgId))
+  const groups = useQuery(directoryGroupsQuery(orgId))
   const [editing, setEditing] = useState<Alias | Kind | null>(null)
+  const [viewing, setViewing] = useState<Alias | null>(null)
   const [deleting, setDeleting] = useState<Alias | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: blank })
-  const [kind, acceptFrom] = useWatch({ control: form.control, name: ["kind", "acceptFrom"] })
+  const [kind, acceptFrom, moderated] = useWatch({ control: form.control, name: ["kind", "acceptFrom", "moderated"] })
   const errors = form.formState.errors
   const existing = typeof editing === "object" ? editing : null
 
@@ -140,11 +168,16 @@ export function AliasesTab({ orgId }: { orgId: string }) {
     mutationFn: async (v: Values) => {
       const list = v.kind === "list"
       const people = list ? await qc.ensureQueryData(membersQuery(orgId)) : []
-      const owners = list ? v.owners.map((o) => ({ ...o, id: people.find((p) => p.email.toLowerCase() === o.address.toLowerCase())?.userId })) : []
-      const outside = owners.filter((o) => !o.id).map((o) => o.address)
-      if (outside.length) {
-        throw new ApiError(422, "invalid_owners", `${outside.join(", ")} ${outside.length === 1 ? "isn’t a member" : "aren’t members"} of this organization. Add them under Members first.`)
+      const userIds = (entries: Values["owners"], code: string) => {
+        const resolved = entries.map((o) => ({ ...o, id: people.find((p) => p.email.toLowerCase() === o.address.toLowerCase())?.userId }))
+        const outside = resolved.filter((o) => !o.id).map((o) => o.address)
+        if (outside.length) {
+          throw new ApiError(422, code, `${outside.join(", ")} ${outside.length === 1 ? "isn’t a member" : "aren’t members"} of this organization. Add them under Members first.`)
+        }
+        return resolved.map((o) => o.id)
       }
+      const owners = list ? userIds(v.owners, "invalid_owners") : []
+      const moderated = list && v.moderated
       const body = {
         kind: v.kind,
         name: list ? v.name : undefined,
@@ -152,7 +185,12 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         acceptFrom: list ? v.acceptFrom : "anyone",
         allowedSenders: list && v.acceptFrom === "allowlist" ? v.allowedSenders.map((a) => a.address) : [],
         sendAs: list ? v.sendAs.map((a) => a.address) : [],
-        owners: owners.map((o) => o.id),
+        owners,
+        groups: list ? v.groups : [],
+        memberDomains: list ? v.memberDomains : [],
+        moderated,
+        moderators: moderated ? userIds(v.moderators, "invalid_moderators") : [],
+        moderationExempt: moderated ? v.moderationExempt.map((a) => a.address) : [],
       }
       return existing
         ? api<Alias>(`/aliases/${existing.id}`, { method: "PATCH", body: { ...body, active: v.active } })
@@ -162,6 +200,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
     onSuccess: (saved) => {
       toast.success(existing ? `Saved ${label(saved)}` : `Created ${label(saved)}`)
       qc.invalidateQueries({ queryKey: ["aliases", orgId] })
+      qc.invalidateQueries({ queryKey: ["list-members", saved.id] })
       setEditing(null)
     },
     onError: (error) => {
@@ -181,6 +220,11 @@ export function AliasesTab({ orgId }: { orgId: string }) {
 
   const actions = (a: Alias) => (
     <div className="flex gap-1">
+      {a.kind === "list" && (
+        <IconButton label={`Show the members of ${label(a)}`} size="icon-sm" onClick={() => setViewing(a)}>
+          <ListTree />
+        </IconButton>
+      )}
       <IconButton label={`Edit ${label(a)}`} size="icon-sm" onClick={() => open(a)}>
         <Pencil />
       </IconButton>
@@ -254,7 +298,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                   <TableHead>List</TableHead>
                   <TableHead>Members</TableHead>
                   <TableHead>Who can send</TableHead>
-                  <TableHead className="w-20">
+                  <TableHead className="w-28">
                     <span className="sr-only">Actions</span>
                   </TableHead>
                 </TableRow>
@@ -268,10 +312,11 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                           <span className="truncate font-medium">{a.name || a.address}</span>
                           {a.name && <span className="truncate font-mono text-sm text-fg-tertiary">{a.address}</span>}
                         </div>
+                        {a.moderated && <StatusBadge tone="info">Moderated</StatusBadge>}
                         {!a.active && <StatusBadge tone="neutral">Inactive</StatusBadge>}
                       </div>
                     </TableCell>
-                    <TableCell>{plural(a.destinations.length, "member")}</TableCell>
+                    <TableCell>{[plural(a.destinations.length, "member"), a.groups.length && plural(a.groups.length, "group"), a.memberDomains.length && plural(a.memberDomains.length, "domain")].filter(Boolean).join(" · ")}</TableCell>
                     <TableCell>{senders[a.acceptFrom].label}</TableCell>
                     <TableCell>{actions(a)}</TableCell>
                   </TableRow>
@@ -324,13 +369,49 @@ export function AliasesTab({ orgId }: { orgId: string }) {
             <Field
               id="alias-destinations"
               label={kind === "list" ? "Members" : "Destinations"}
-              hint={kind === "list" ? "Mailboxes, other lists or outside addresses. Press Enter or type a comma after each one." : "Press Enter or type a comma after each address."}
+              hint={kind === "list" ? "Added by hand: mailboxes, other lists or outside addresses. Press Enter or type a comma after each one." : "Press Enter or type a comma after each address."}
               error={fieldState.error?.message}
             >
               <RecipientInput id="alias-destinations" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" suggest />
             </Field>
           )}
         />
+        {kind === "list" && (
+          <>
+            <Controller
+              control={form.control}
+              name="groups"
+              render={({ field, fieldState }) => (
+                <Field id="alias-groups" label="Groups" hint="Groups from your identity provider. People join and leave the list as they join and leave the group." error={fieldState.error?.message}>
+                  <MultiSelect
+                    id="alias-groups"
+                    value={field.value}
+                    onChange={field.onChange}
+                    invalid={!!fieldState.error}
+                    placeholder={groups.isPending ? "Loading groups…" : groups.isError ? "Groups could not be loaded" : groups.data?.length ? "Choose groups" : "No groups provisioned over SCIM yet"}
+                    options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name, hint: `${g.provider} · ${plural(g.members, "member")} here` }))}
+                  />
+                </Field>
+              )}
+            />
+            <Controller
+              control={form.control}
+              name="memberDomains"
+              render={({ field, fieldState }) => (
+                <Field id="alias-member-domains" label="Everyone on these domains" hint="Every active personal mailbox on the domains you choose, including mailboxes created later." error={fieldState.error?.message}>
+                  <MultiSelect
+                    id="alias-member-domains"
+                    value={field.value}
+                    onChange={field.onChange}
+                    invalid={!!fieldState.error}
+                    placeholder={domains.isPending ? "Loading domains…" : domains.data?.length ? "Choose domains" : "Add a domain first"}
+                    options={(domains.data ?? []).map((d) => ({ value: d.id, label: `@${d.name}` }))}
+                  />
+                </Field>
+              )}
+            />
+          </>
+        )}
         {existing && <SwitchField control={form.control} name="active" id="alias-active" label="Active" hint="Turn it off to stop forwarding mail without deleting it." />}
         {kind === "list" && (
           <>
@@ -383,9 +464,40 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                 </Field>
               )}
             />
+            <SwitchField
+              control={form.control}
+              name="moderated"
+              id="alias-moderated"
+              label="Hold messages for approval"
+              hint="A moderator approves each message before it reaches the members. Messages nobody approves within 5 days are discarded, and the sender is told."
+            />
+            {moderated && (
+              <>
+                <Controller
+                  control={form.control}
+                  name="moderators"
+                  render={({ field, fieldState }) => (
+                    <Field id="alias-moderators" label="Moderators" hint="People in this organization who approve messages from Settings. Leave empty to let the owners approve." error={fieldState.error?.message}>
+                      <RecipientInput id="alias-moderators" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" suggest />
+                    </Field>
+                  )}
+                />
+                <Controller
+                  control={form.control}
+                  name="moderationExempt"
+                  render={({ field, fieldState }) => (
+                    <Field id="alias-exempt" label="Senders who skip approval" hint="Addresses, or @example.com for everyone at a domain. Moderators and owners always skip approval." error={fieldState.error?.message}>
+                      <RecipientInput id="alias-exempt" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="@example.com" allowDomains />
+                    </Field>
+                  )}
+                />
+              </>
+            )}
           </>
         )}
       </FormDialog>
+
+      {viewing && <ResolvedMembersDialog list={viewing} onClose={() => setViewing(null)} />}
 
       <ConfirmDialog
         open={!!deleting}
@@ -397,5 +509,56 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         onConfirm={() => deleting && remove.mutate(deleting)}
       />
     </div>
+  )
+}
+
+function ResolvedMembersDialog({ list, onClose }: { list: Alias; onClose: () => void }) {
+  const members = useQuery({ queryKey: ["list-members", list.id], queryFn: () => api<ResolvedMember[]>(`/aliases/${list.id}/members`) })
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[720px]">
+        <DialogHeader>
+          <DialogTitle>{list.name || "Members"}</DialogTitle>
+          <DialogDescription>
+            Who receives mail sent to <span className="font-mono">{list.address}</span> right now, including people from groups and domains. Lists among the members are expanded when mail is delivered.
+          </DialogDescription>
+        </DialogHeader>
+        <QueryView query={members} empty={<EmptyState icon={Users} title="No members right now" description="Nobody receives mail sent to this list. Add members, a group with people in it, or a domain." />}>
+          {(items) => (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Member</TableHead>
+                  <TableHead>Through</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((m) => (
+                  <TableRow key={m.address}>
+                    <TableCell>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium">{m.name || m.address}</span>
+                        {m.name && <span className="truncate font-mono text-sm text-fg-tertiary">{m.address}</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      <div className="flex flex-wrap gap-1">
+                        {m.direct && <StatusBadge tone="neutral">Added by hand</StatusBadge>}
+                        {m.groups.map((g) => (
+                          <StatusBadge key={g} tone="info">
+                            {g}
+                          </StatusBadge>
+                        ))}
+                        {m.domain && <StatusBadge tone="info">@{m.address.split("@")[1]}</StatusBadge>}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </QueryView>
+      </DialogContent>
+    </Dialog>
   )
 }
