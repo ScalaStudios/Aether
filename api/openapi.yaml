@@ -644,6 +644,34 @@ paths:
       responses:
         "204": { description: "Deleted, including its aliases" }
         "409": { $ref: "#/components/responses/Error" }
+  /domains/{domainId}/coexistence:
+    put:
+      tags: [domains]
+      summary: Set split delivery and select dual-delivery mailboxes
+      parameters: [{ $ref: "#/components/parameters/domainId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host: { type: string, maxLength: 253, description: Direct legacy SMTP hostname on port 25. An empty string disables coexistence. }
+                dualDeliveryMailboxIds:
+                  type: array
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+                  description: Active mailboxes on this domain that receive a second copy on the legacy server. Defaults to no mailboxes.
+      responses:
+        "200":
+          description: Updated domain
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /domains/{domainId}/dns:
     get:
       tags: [domains]
@@ -3241,7 +3269,7 @@ components:
         html: { type: string }
     Domain:
       type: object
-      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, aliasOf, aliasSendAs, createdAt]
+      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, aliasOf, aliasSendAs, createdAt, coexistenceHost, dualDeliveryMailboxIds]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -3251,6 +3279,10 @@ components:
         verificationToken: { type: string }
         dkimSelector: { type: string }
         dkimRecord: { type: string, description: TXT value to publish at <selector>._domainkey.<domain> }
+        coexistenceHost: { type: string, description: Direct legacy SMTP hostname. An empty string means coexistence is off. }
+        dualDeliveryMailboxIds:
+          type: array
+          items: { type: string, format: uuid }
         active: { type: boolean }
         aliasOf: { type: [string, "null"], format: uuid, description: The domain this alias domain points to, or null for a regular domain }
         aliasSendAs: { type: boolean }

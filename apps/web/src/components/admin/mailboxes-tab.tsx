@@ -30,10 +30,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { mailboxesQuery } from "@/lib/queries"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes, plural } from "@/lib/format"
-import { organizationsQuery } from "@/lib/queries"
+import { mailboxesQuery, organizationsQuery } from "@/lib/queries"
 import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization, Protocol } from "@/lib/types"
 
 const MB = 1024 * 1024

@@ -1,0 +1,1 @@
+/\.aether-coexistence\.invalid\.?$/ REJECT 5.7.1 Reserved recipient domain

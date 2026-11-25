@@ -24,9 +24,9 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { api } from "@/lib/api"
+import { api, errorMessage } from "@/lib/api"
 import { formatDate, formatPercent, plural } from "@/lib/format"
-import { domainsQuery } from "@/lib/queries"
+import { domainsQuery, mailboxesQuery } from "@/lib/queries"
 import type { DMARCSource, DMARCSummary, DNSRecord, DNSStatus, Domain } from "@/lib/types"
 
 const schema = z.object({
@@ -135,7 +135,10 @@ export function DomainsTab({ orgId }: { orgId: string }) {
                     {d.aliasOf && <span className="block text-sm text-fg-tertiary">Alias of {domainName(d.aliasOf)}</span>}
                   </TableCell>
                   <TableCell>
-                    <DomainVerifiedBadge domain={d} />
+                    <div className="flex flex-wrap gap-2">
+                      <DomainVerifiedBadge domain={d} />
+                      {d.coexistenceHost && <StatusBadge tone="warning">Coexistence on</StatusBadge>}
+                    </div>
                   </TableCell>
                   <TableCell>{formatDate(d.createdAt)}</TableCell>
                   <TableCell>
@@ -204,6 +207,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
   const dns = useQuery({ queryKey: ["dns", domainId], queryFn: () => api<{ records: DNSRecord[] }>(`/domains/${domainId}/dns`) })
   const [deleting, setDeleting] = useState(false)
   const [reporting, setReporting] = useState(false)
+  const [coexistence, setCoexistence] = useState(false)
 
   const verify = useMutation({
     mutationFn: () => api<Domain>(`/domains/${domainId}/verify`, { method: "POST" }),
@@ -255,6 +259,20 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
               <Label htmlFor="domain-send-as">Allow sending from this domain</Label>
               <p className="text-sm text-fg-tertiary">People can send as their address on this alias domain.</p>
             </div>
+          </div>
+        )}
+        {d?.verified && d.active && (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-sunken p-4">
+            <div className="flex flex-col gap-2">
+              <p className="font-semibold">Mail routing</p>
+              {d.coexistenceHost && (
+                <p className="text-sm text-fg-secondary">
+                  <StatusBadge tone="warning">Coexistence on</StatusBadge>{" "}
+                  Unknown recipients are sent to <span className="font-mono break-all">{d.coexistenceHost}</span>.
+                </p>
+              )}
+            </div>
+            <Button variant="secondary" onClick={() => setCoexistence(true)}>Configure coexistence</Button>
           </div>
         )}
         <QueryView query={dns} isEmpty={(data) => data.records.length === 0} empty={<p className="text-fg-secondary">No DNS records are required for this domain.</p>}>
@@ -311,6 +329,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
             )}
           </div>
         </DialogFooter>
+        {d && coexistence && <CoexistenceDialog domain={d} onClose={() => setCoexistence(false)} />}
         {d && reporting && <DmarcDialog domainId={domainId} domainName={d.name} onClose={() => setReporting(false)} />}
         {d && (
           <ConfirmDialog
@@ -326,6 +345,90 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function CoexistenceDialog({ domain, onClose }: { domain: Domain; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [enabled, setEnabled] = useState(Boolean(domain.coexistenceHost))
+  const [host, setHost] = useState(domain.coexistenceHost)
+  const [selected, setSelected] = useState(domain.dualDeliveryMailboxIds)
+  const mailboxes = useQuery({
+    ...mailboxesQuery(domain.orgId),
+    select: (items) => items.filter((mailbox) => mailbox.active && mailbox.domainId === domain.id),
+    enabled,
+  })
+  const save = useMutation({
+    mutationFn: () =>
+      api<Domain>(`/domains/${domain.id}/coexistence`, {
+        method: "PUT",
+        body: {
+          host: enabled ? host : "",
+          dualDeliveryMailboxIds: enabled ? selected.filter((id) => mailboxes.data?.some((mailbox) => mailbox.id === id)) : [],
+        },
+      }),
+    onSuccess: (updated) => {
+      qc.setQueryData(["domain", domain.id], updated)
+      qc.invalidateQueries({ queryKey: ["domains", domain.orgId] })
+      qc.invalidateQueries({ queryKey: ["audit", domain.orgId] })
+      toast.success(updated.coexistenceHost ? "Coexistence settings saved" : "Coexistence disabled")
+      onClose()
+    },
+  })
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title="Mail coexistence"
+      description="Use the legacy server’s direct SMTP hostname. Keep the loop protection header intact if the legacy server forwards mail back to Aether."
+      submitLabel="Save coexistence"
+      pending={save.isPending}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (enabled && (!host.trim() || !mailboxes.isSuccess)) {
+          toast.error(host.trim() ? "Wait for the mailbox list to load." : "Enter the legacy SMTP hostname.")
+          return
+        }
+        save.mutate()
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <Switch id="coexistence-enabled" checked={enabled} onCheckedChange={setEnabled} disabled={save.isPending} />
+        <Label htmlFor="coexistence-enabled">Enable coexistence</Label>
+      </div>
+      {enabled && (
+        <>
+          <Field id="coexistence-host" label="Legacy SMTP hostname (required)">
+            <Input id="coexistence-host" name="host" required value={host} onChange={(event) => setHost(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={save.isPending} />
+          </Field>
+          <fieldset className="flex min-w-0 flex-col gap-2" disabled={save.isPending}>
+            <legend className="mb-2 text-label text-fg-secondary">Dual delivery</legend>
+            <p className="text-sm text-fg-secondary">Select the mailboxes that should also receive a copy on the legacy server.</p>
+            <QueryView query={mailboxes} empty={<p className="text-sm text-fg-secondary">No active mailboxes on this domain.</p>}>
+              {(items) => (
+                <div className="max-h-64 overflow-y-auto">
+                  {items.map((mailbox) => (
+                    <label key={mailbox.id} className="flex min-h-12 items-center gap-2 px-2 text-sm">
+                      <input
+                        type="checkbox"
+                        name="dualDeliveryMailboxIds"
+                        value={mailbox.id}
+                        className="accent-primary"
+                        checked={selected.includes(mailbox.id)}
+                        onChange={(event) => setSelected(event.target.checked ? [...selected, mailbox.id] : selected.filter((id) => id !== mailbox.id))}
+                      />
+                      <span className="font-mono break-all">{mailbox.address}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </QueryView>
+          </fieldset>
+        </>
+      )}
+      {save.isError && <p role="alert" className="text-sm text-danger">{errorMessage(save.error)}</p>}
+    </FormDialog>
   )
 }
 

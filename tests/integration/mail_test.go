@@ -5,9 +5,13 @@ package integration
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -626,4 +630,172 @@ func TestOutboundRouting(t *testing.T) {
 			expect(inbox, outboundDelivery{"alice@" + a.domain, recipient, "", mode != "none"})
 		})
 	}
+}
+
+func TestDomainCoexistenceSettings(t *testing.T) {
+	w := setupWorld(t)
+	path := "/domains/" + w.domainID + "/coexistence"
+	var domain struct {
+		CoexistenceHost string   `json:"coexistenceHost"`
+		DualDelivery    []string `json:"dualDeliveryMailboxIds"`
+	}
+	w.admin.must("PUT", path, map[string]any{"host": "[smtp.example.com]:25"}, nil, 422)
+	w.admin.must("PUT", path, map[string]any{"host": w.domain}, nil, 422)
+	w.admin.must("PUT", path, map[string]any{"host": "legacy.example.com", "dualDeliveryMailboxIds": []string{"00000000-0000-0000-0000-000000000000"}}, nil, 422)
+	settings := map[string]any{"host": " LEGACY.example.com. ", "dualDeliveryMailboxIds": []string{w.aliceMailbox}}
+	w.admin.must("PUT", path, settings, &domain, 200)
+	w.admin.must("GET", "/domains/"+w.domainID, nil, &domain, 200)
+	if domain.CoexistenceHost != "legacy.example.com" || !slices.Equal(domain.DualDelivery, []string{w.aliceMailbox}) {
+		t.Fatalf("coexistence settings: %+v", domain)
+	}
+	w.admin.must("PUT", path, settings, nil, 200)
+	w.admin.must("PUT", path, map[string]string{"host": ""}, &domain, 200)
+	if domain.CoexistenceHost != "" || len(domain.DualDelivery) != 0 {
+		t.Fatalf("disabled coexistence settings: %+v", domain)
+	}
+	var events []struct {
+		Action   string `json:"action"`
+		TargetID string `json:"targetId"`
+	}
+	w.admin.must("GET", "/organizations/"+w.orgID+"/audit", nil, &events, 200)
+	var transitions []string
+	for _, event := range events {
+		if event.TargetID == w.domainID && strings.HasPrefix(event.Action, "domain.coexistence.") {
+			transitions = append(transitions, event.Action)
+		}
+	}
+	if !slices.Equal(transitions, []string{"domain.coexistence.disable", "domain.coexistence.enable"}) {
+		t.Fatalf("coexistence audit transitions: %v", transitions)
+	}
+}
+
+func TestDomainCoexistenceRouting(t *testing.T) {
+	legacyHost := env(t, "AETHER_TEST_COEXISTENCE_HOST", "")
+	legacyInbox := env(t, "AETHER_TEST_COEXISTENCE_INBOX", "")
+	w := setupWorld(t)
+	smtpAddr := env(t, "AETHER_TEST_SMTP", "postfix:25")
+	path := "/domains/" + w.domainID + "/coexistence"
+	alice, bob, old := "alice@"+w.domain, "bob@"+w.domain, "legacy@"+w.domain
+	from := "sender@external.example"
+
+	send := func(recipient, message string) error {
+		return submit(t, smtpAddr, "", "", from, []string{recipient}, message, false)
+	}
+	assertRejected := func(recipient, reason string) {
+		t.Helper()
+		if err := send(recipient, rfc822(from, recipient, "rejected", "rejected")); err == nil || !strings.Contains(err.Error(), reason) {
+			t.Fatalf("SMTP accepted %s or returned the wrong response: %v", recipient, err)
+		}
+	}
+	assertRejected(old, "User unknown")
+	w.admin.must("PUT", path, map[string]any{"host": legacyHost, "dualDeliveryMailboxIds": []string{w.aliceMailbox}}, nil, 200)
+	assertRejected("outsider@example.org", "Relay access denied")
+	assertRejected("legacy@child."+w.domain, "Relay access denied")
+	assertRejected(alice+".aether-coexistence.invalid", "Relay access denied")
+	waitFor(t, "authenticated submission to the internal address to be refused", func() bool {
+		err := submit(t, env(t, "AETHER_TEST_SUBMISSION", "postfix:587"), alice, w.aliceAppPassword, alice,
+			[]string{alice + ".aether-coexistence.invalid"}, rfc822(alice, alice, "reserved route", "reserved route"), false)
+		if err == nil {
+			t.Fatal("authenticated submission accepted the internal address")
+		}
+		return strings.Contains(err.Error(), "Reserved recipient domain")
+	})
+
+	var restricted aliasBody
+	aliases := "/organizations/" + w.orgID + "/aliases"
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "restricted", "kind": "list", "name": "Restricted",
+		"destinations": []string{alice}, "acceptFrom": "organization"}, &restricted, 201)
+	assertRejected(restricted.Address, "does not accept mail")
+
+	var paused idOnly
+	w.admin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": "paused", "password": "paused-integration-pw"}, &paused, 201)
+	w.admin.must("PATCH", "/mailboxes/"+paused.ID, map[string]bool{"active": false}, nil, 200)
+	assertRejected("paused+tag@"+w.domain, "User unknown")
+
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "inner", "destinations": []string{alice}}, nil, 201)
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "legacy-alias", "destinations": []string{old}}, nil, 201)
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "outer", "kind": "list", "name": "Outer",
+		"destinations": []string{"inner@" + w.domain}}, nil, 201)
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	fetchLegacy := func(path string) []byte {
+		t.Helper()
+		res, err := httpClient.Get(legacyInbox + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		body, err := io.ReadAll(res.Body)
+		if err != nil || res.StatusCode != http.StatusOK {
+			t.Fatalf("legacy inbox %s: HTTP %d, %v", path, res.StatusCode, err)
+		}
+		return body
+	}
+	type legacyMessage struct {
+		ID  string
+		Bcc []struct{ Address string }
+	}
+	searchLegacy := func(subject string) []legacyMessage {
+		t.Helper()
+		var result struct{ Messages []legacyMessage }
+		if err := json.Unmarshal(fetchLegacy("/api/v1/search?query="+url.QueryEscape("subject:"+subject)), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result.Messages
+	}
+	sendMessage := func(recipient string) string {
+		t.Helper()
+		subject := "coexistence-" + randomSuffix()
+		if err := send(recipient, rfc822(from, "undisclosed-recipients:;", subject, "coexistence")); err != nil {
+			t.Fatalf("send to %s: %v", recipient, err)
+		}
+		return subject
+	}
+	localSubject := sendMessage(bob)
+	splitSubject := sendMessage(old)
+	aliasSubject := sendMessage("legacy-alias@" + w.domain)
+	dualSubject := sendMessage(alice)
+	taggedSubject := sendMessage("alice+migration@" + w.domain)
+	nestedSubject := sendMessage("outer@" + w.domain)
+
+	for _, subject := range []string{dualSubject, taggedSubject, nestedSubject} {
+		waitFor(t, "local copy of "+subject, func() bool { return findInAPI(w.alice, w.aliceMailbox, "INBOX", subject) != 0 })
+	}
+	waitFor(t, "local-only delivery", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", localSubject) != 0 })
+	var splitRaw string
+	for _, delivery := range []struct{ subject, recipient string }{
+		{splitSubject, old}, {aliasSubject, old}, {dualSubject, alice}, {taggedSubject, "alice+migration@" + w.domain}, {nestedSubject, alice},
+	} {
+		var messages []legacyMessage
+		waitFor(t, "legacy delivery to "+delivery.recipient, func() bool {
+			messages = searchLegacy(delivery.subject)
+			return len(messages) > 0
+		})
+		if len(messages) != 1 || len(messages[0].Bcc) != 1 || messages[0].Bcc[0].Address != delivery.recipient {
+			t.Fatalf("legacy delivery to %s: %+v", delivery.recipient, messages)
+		}
+		raw := string(fetchLegacy("/api/v1/message/" + messages[0].ID + "/raw"))
+		if !strings.Contains(raw, "X-Aether-Coexistence:") {
+			t.Fatalf("legacy copy for %s did not carry the loop marker", delivery.recipient)
+		}
+		if delivery.subject == splitSubject {
+			splitRaw = raw
+		}
+	}
+	if messages := searchLegacy(localSubject); len(messages) != 0 {
+		t.Fatalf("non-selected mailbox leaked to legacy: %+v", messages)
+	}
+	if err := send(old, splitRaw); err == nil || !strings.Contains(err.Error(), "Coexistence routing loop") {
+		t.Fatalf("returning legacy message reached split routing again: %v", err)
+	}
+	var catchAll idOnly
+	w.admin.must("POST", aliases, map[string]any{"domainId": w.domainID, "localPart": "", "destinations": []string{bob}}, &catchAll, 201)
+	catchAllSubject := sendMessage(old)
+	waitFor(t, "local catch-all delivery", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", catchAllSubject) != 0 })
+	if messages := searchLegacy(catchAllSubject); len(messages) != 0 {
+		t.Fatalf("catch-all leaked to legacy: %+v", messages)
+	}
+	w.admin.must("DELETE", "/aliases/"+catchAll.ID, nil, nil, 204)
+	w.admin.must("PUT", path, map[string]string{"host": ""}, nil, 200)
+	assertRejected(old, "User unknown")
 }

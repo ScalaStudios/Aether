@@ -178,6 +178,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/organizations/{orgId}/domains", s.createDomain)
 	authed("GET /api/v1/domains/{domainId}", s.getDomain)
 	authed("PATCH /api/v1/domains/{domainId}", s.updateDomain)
+	authed("PUT /api/v1/domains/{domainId}/coexistence", s.setDomainCoexistence)
 	authed("DELETE /api/v1/domains/{domainId}", s.deleteDomain)
 	authed("GET /api/v1/domains/{domainId}/dns", s.domainDNS)
 	authed("POST /api/v1/domains/{domainId}/verify", s.verifyDomain)

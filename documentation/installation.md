@@ -174,6 +174,19 @@ Postfix also calls the API's [mailbox access audit](mailbox-auditing.md) milter 
 
 Moderated lists also need the API to submit mail on Postfix's internal port 10025. Compose gives the API `AETHER_SIEVE_RELAY_PASSWORD`; if the API runs elsewhere, set it there together with `AETHER_SIEVE_RELAY_ADDR` (default `postfix:10025`), and make sure Dovecot's `allow_nets` for the relay login includes the API's network.
 
+## Coexistence during a migration
+
+Coexistence lets a domain move to Aether one mailbox at a time. Point the domain's MX at Aether, then open the domain under **Administration → Domains**, select **Configure coexistence** and enter the old server's direct SMTP hostname, for example the Microsoft 365 or Google Workspace MX host for the domain. `PUT /api/v1/domains/{domainId}/coexistence` does the same through the API.
+
+While coexistence is on:
+
+- Mail for an address that exists in Aether, as an active mailbox, alias, list or catch-all, is delivered here as usual.
+- Mail for any other address on the domain is accepted and relayed to the old server on port 25 instead of being rejected. Addresses of deactivated mailboxes and aliases are still rejected.
+- Mailboxes selected under **Dual delivery** keep their Aether copy and also get a copy on the old server, which is useful during a test period.
+- The domain list and domain page show **Coexistence on**, and turning it on or off records a `domain.coexistence.enable` or `domain.coexistence.disable` audit event.
+
+The relayed mail goes straight to the old server, even when an outbound relay is configured, so the host must be reachable on port 25. The old server must still accept mail for the domain, and it should trust Aether's address as an inbound gateway, because the relayed messages fail SPF there. Each relayed message carries an `X-Aether-Coexistence` header with a value unique to the installation; if the old server sends it back to Aether, Postfix rejects it as a routing loop, so keep that header intact on the old server. Because every address on the domain is accepted, a message for an address the old server does not know bounces from Aether to its sender. Turn coexistence off once every mailbox has moved.
+
 ## Dovecot management API
 
 Dovecot serves its doveadm HTTP API on port 8089 inside the Compose network, protected by `AETHER_DOVECOT_API_KEY`, which `setup.sh` generates. The API uses it to end a member's IMAP sessions when their shared mailbox access changes. Only the API and the Dovecot containers receive the key, and neither starts without it; Postfix does not get it. Never publish the port: the key allows every doveadm command, including reading any mailbox. If the API runs elsewhere, set `AETHER_DOVECOT_API_URL` (default `http://dovecot:8089`) and open the port to the API only.

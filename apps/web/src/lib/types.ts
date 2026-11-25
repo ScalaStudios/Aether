@@ -95,6 +95,8 @@ export interface Domain {
   verificationToken: string
   dkimSelector: string
   dkimRecord: string
+  coexistenceHost: string
+  dualDeliveryMailboxIds: string[]
   active: boolean
   aliasOf: string | null
   aliasSendAs: boolean

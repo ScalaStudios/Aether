@@ -51,14 +51,17 @@ type domain struct {
 	AliasOf           *string    `json:"aliasOf"`
 	AliasSendAs       bool       `json:"aliasSendAs"`
 	CreatedAt         time.Time  `json:"createdAt"`
+	CoexistenceHost   string     `json:"coexistenceHost"`
+	DualDeliveryIDs   []string   `json:"dualDeliveryMailboxIds"`
 }
 
-const domainColumns = `id, org_id, name, verified_at, verification_token, dkim_selector, dkim_public_key, active, alias_of, alias_send_as, created_at`
+const domainColumns = `id, org_id, name, verified_at, verification_token, dkim_selector, dkim_public_key, active, alias_of, alias_send_as, created_at, coexistence_host,
+	ARRAY(SELECT m.id::text FROM mailboxes m WHERE m.domain_id = domains.id AND m.coexistence_dual AND m.active ORDER BY m.id)`
 
 func scanDomain(row pgx.Row) (*domain, error) {
 	d := &domain{}
 	var pub string
-	if err := row.Scan(&d.ID, &d.OrgID, &d.Name, &d.VerifiedAt, &d.VerificationToken, &d.DKIMSelector, &pub, &d.Active, &d.AliasOf, &d.AliasSendAs, &d.CreatedAt); err != nil {
+	if err := row.Scan(&d.ID, &d.OrgID, &d.Name, &d.VerifiedAt, &d.VerificationToken, &d.DKIMSelector, &pub, &d.Active, &d.AliasOf, &d.AliasSendAs, &d.CreatedAt, &d.CoexistenceHost, &d.DualDeliveryIDs); err != nil {
 		return nil, err
 	}
 	d.Verified = d.VerifiedAt != nil

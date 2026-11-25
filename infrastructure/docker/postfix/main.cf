@@ -17,13 +17,13 @@ message_size_limit = 52428800
 mailbox_size_limit = 0
 
 virtual_mailbox_domains = pgsql:/etc/postfix/pgsql/domains.cf
-virtual_mailbox_maps = pgsql:/etc/postfix/pgsql/mailboxes.cf
+virtual_mailbox_maps = pgsql:/etc/postfix/pgsql/mailboxes.cf, pgsql:/etc/postfix/pgsql/coexist-recipients.cf
 virtual_alias_domains = $myhostname
 virtual_alias_maps = pgsql:/etc/postfix/pgsql/aliases.cf, pgsql:/etc/postfix/pgsql/tagged-mail.cf, tcp:127.0.0.1:10002
 virtual_transport = mailbox-lmtp:inet:dovecot:24
 mailbox-lmtp_destination_recipient_limit = 1
 relay_domains = aether-reports.internal
-transport_maps = inline:{ aether-reports.internal=lmtp:inet:__REPORTS__ }, pgsql:/etc/postfix/pgsql/outbound-transports.cf
+transport_maps = pgsql:/etc/postfix/pgsql/coexist-transports.cf, regexp:/etc/postfix/coexist_transport_guard, inline:{ aether-reports.internal=lmtp:inet:__REPORTS__ }, pgsql:/etc/postfix/pgsql/outbound-transports.cf
 sender_dependent_default_transport_maps = pgsql:/etc/postfix/pgsql/outbound-relays.cf
 smtpd_sender_login_maps = pgsql:/etc/postfix/pgsql/senders.cf
 sender_canonical_maps = pgsql:/etc/postfix/pgsql/hosted-senders.cf, tcp:127.0.0.1:10001
@@ -54,11 +54,12 @@ disable_vrfy_command = yes
 strict_rfc821_envelopes = yes
 smtpd_client_restrictions = permit_mynetworks, permit_sasl_authenticated
 smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
-smtpd_recipient_restrictions = reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unlisted_recipient, check_policy_service { inet:__POLICY__, default_action=DUNNO, policy_context=senders }, check_recipient_access pgsql:/etc/postfix/pgsql/restricted-lists.cf, check_recipient_access pgsql:/etc/postfix/pgsql/tagged-rejects.cf
+smtpd_recipient_restrictions = check_recipient_access regexp:/etc/postfix/coexist_recipient_guard, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unlisted_recipient, check_policy_service { inet:__POLICY__, default_action=DUNNO, policy_context=senders }, check_recipient_access pgsql:/etc/postfix/pgsql/restricted-lists.cf, check_recipient_access pgsql:/etc/postfix/pgsql/tagged-rejects.cf
 smtpd_restriction_classes = aether_list_policy
 aether_list_policy = check_policy_service inet:__POLICY__
 smtpd_sender_restrictions = reject_non_fqdn_sender
 smtpd_data_restrictions = reject_unauth_pipelining
+nested_header_checks =
 
 smtpd_milters = { inet:__MILTER__, default_action=tempfail }, inet:rspamd:11332, { inet:__MILTER_AFTER__, default_action=tempfail }, { inet:__AUDIT_MILTER__, default_action=accept }
 non_smtpd_milters = $smtpd_milters
@@ -66,6 +67,6 @@ milter_protocol = 6
 milter_default_action = accept
 milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
 milter_header_checks = regexp:/etc/postfix/milter_header_checks, regexp:/etc/postfix/trace_milter_header_checks
-header_checks = regexp:/etc/postfix/trace_header_checks
+header_checks = regexp:/etc/postfix/trace_header_checks, regexp:/etc/postfix/coexist_loop_check
 
 smtp_dns_support_level = dnssec

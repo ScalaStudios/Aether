@@ -25,13 +25,18 @@ hosts = ${DB_HOST}
 user = aether_mail
 password = ${AETHER_MAIL_DB_PASSWORD}
 dbname = ${DB_NAME}
-query = $2
+query = $(printf '%s' "$2" | tr '\n' ' ')
 MAP
   chgrp postfix "/etc/postfix/pgsql/$1.cf"
 }
 write_map domains "SELECT 1 FROM mail_domains WHERE name = '%s'"
 write_map mailboxes "SELECT 1 FROM mail_users WHERE address = '%s'"
-write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s'"
+write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s' UNION ALL SELECT address || '.aether-coexistence.invalid' FROM mail_coexistence_dual WHERE address = '%s'"
+write_map coexist-recipients "SELECT 1 FROM mail_coexistence_domains WHERE name = '%d' AND '%u' <> '' AND NOT EXISTS (SELECT 1 FROM mail_coexistence_reserved WHERE address IN ('%s', split_part('%u', '+', 1) || '@' || '%d'))"
+write_map coexist-transports "SELECT 'coexist:[' || c.host || ']:25' FROM mail_coexistence_domains c WHERE
+  (c.name = '%d' AND NOT EXISTS (SELECT 1 FROM mail_aliases WHERE address IN ('%s', split_part('%u', '+', 1) || '@' || '%d'))
+    AND NOT EXISTS (SELECT 1 FROM mail_coexistence_reserved WHERE address IN ('%s', split_part('%u', '+', 1) || '@' || '%d')))
+  OR (c.name || '.aether-coexistence.invalid' = '%d' AND EXISTS (SELECT 1 FROM mail_coexistence_dual WHERE address IN ('%u' || '@' || c.name, split_part('%u', '+', 1) || '@' || c.name)))"
 write_map senders "SELECT login FROM mail_senders WHERE sender = '%s'"
 write_map restricted-lists "SELECT 'aether_list_policy' FROM mail_restricted_lists WHERE address = '%s' UNION ALL SELECT '550 5.1.1 Address unavailable' FROM mail_unavailable_personal_aliases WHERE address = '%s'"
 write_map journal "SELECT archive_address FROM mail_journal WHERE match = '%s'"
@@ -52,6 +57,11 @@ chgrp postfix /etc/postfix/master.cf
 
 srs_secret=/var/spool/postfix/srs.secret
 [ -s "$srs_secret" ] || (umask 077 && head -c 32 /dev/urandom | base64 > "$srs_secret")
+loop_secret=/var/spool/postfix/coexist.secret
+[ -s "$loop_secret" ] || (umask 077 && head -c 24 /dev/urandom | base64 > "$loop_secret")
+loop_marker=$(tr '+/' '-_' < "$loop_secret")
+printf '/^Date[[:space:]]*:/ PREPEND X-Aether-Coexistence: %s\n' "$loop_marker" > /etc/postfix/coexist_loop_stamp
+printf '/^X-Aether-Coexistence:[[:space:]]*%s[[:space:]]*$/ REJECT 5.4.6 Coexistence routing loop\n' "$loop_marker" > /etc/postfix/coexist_loop_check
 postsrsd -s"$srs_secret" -d"$AETHER_MAIL_HOSTNAME" -l127.0.0.1 -4 -upostsrsd -D
 
 if [ -n "${AETHER_RELAYHOST:-}" ] && [ -n "${AETHER_RELAY_USER:-}" ]; then

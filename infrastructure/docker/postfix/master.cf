@@ -7,7 +7,7 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_sender_restrictions=reject_non_fqdn_sender,reject_sender_login_mismatch
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
-  -o smtpd_recipient_restrictions=reject_non_fqdn_recipient,check_recipient_access,pgsql:/etc/postfix/pgsql/restricted-lists.cf,check_recipient_access,pgsql:/etc/postfix/pgsql/tagged-rejects.cf
+  -o smtpd_recipient_restrictions=check_recipient_access,regexp:/etc/postfix/coexist_recipient_guard,reject_non_fqdn_recipient,check_recipient_access,pgsql:/etc/postfix/pgsql/restricted-lists.cf,check_recipient_access,pgsql:/etc/postfix/pgsql/tagged-rejects.cf
   -o milter_macro_daemon_name=ORIGINATING
 submissions inet n      -       n       -       -       smtpd
   -o syslog_name=postfix/submissions
@@ -17,7 +17,7 @@ submissions inet n      -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_sender_restrictions=reject_non_fqdn_sender,reject_sender_login_mismatch
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
-  -o smtpd_recipient_restrictions=reject_non_fqdn_recipient,check_recipient_access,pgsql:/etc/postfix/pgsql/restricted-lists.cf,check_recipient_access,pgsql:/etc/postfix/pgsql/tagged-rejects.cf
+  -o smtpd_recipient_restrictions=check_recipient_access,regexp:/etc/postfix/coexist_recipient_guard,reject_non_fqdn_recipient,check_recipient_access,pgsql:/etc/postfix/pgsql/restricted-lists.cf,check_recipient_access,pgsql:/etc/postfix/pgsql/tagged-rejects.cf
   -o milter_macro_daemon_name=ORIGINATING
 10025     inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/sieve-relay
@@ -26,12 +26,13 @@ submissions inet n      -       n       -       -       smtpd
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
   -o smtpd_sender_restrictions=
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
-  -o smtpd_recipient_restrictions=reject_non_fqdn_recipient,aether_list_policy
+  -o smtpd_recipient_restrictions=check_recipient_access,regexp:/etc/postfix/coexist_recipient_guard,reject_non_fqdn_recipient,aether_list_policy
   -o milter_macro_daemon_name=ORIGINATING
 pickup    unix  n       -       n       60      1       pickup
 cleanup   unix  n       -       n       -       0       cleanup
 submission-cleanup unix n -     n       -       0       cleanup
-  -o header_checks=regexp:/etc/postfix/submission_header_checks
+  -o header_checks=regexp:/etc/postfix/submission_header_checks,regexp:/etc/postfix/coexist_loop_check
+  -o nested_header_checks=regexp:/etc/postfix/submission_header_checks
 qmgr      unix  n       -       n       300     1       qmgr
 tlsmgr    unix  -       -       n       1000?   1       tlsmgr
 rewrite   unix  -       -       n       -       -       trivial-rewrite
@@ -43,6 +44,13 @@ flush     unix  n       -       n       1000?   0       flush
 proxymap  unix  -       -       n       -       -       proxymap
 proxywrite unix -       -       n       -       1       proxymap
 smtp      unix  -       -       n       -       -       smtp
+coexist   unix  -       -       n       -       -       smtp
+  -o smtp_generic_maps=regexp:/etc/postfix/coexist_generic
+  -o smtp_header_checks=regexp:/etc/postfix/coexist_loop_stamp
+  -o smtp_sasl_auth_enable=no
+  -o smtp_tls_security_level=may
+  -o smtp_tls_policy_maps=
+  -o smtp_fallback_relay=
 relay     unix  -       -       n       -       -       smtp
   -o syslog_name=postfix/$service_name
 smtp-tls  unix  -       -       n       -       -       smtp
