@@ -467,6 +467,11 @@ func (s *Server) domainDNS(w http.ResponseWriter, r *http.Request, p *principal)
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	records := s.expectedRecords(d, keys)
+	s.checkRecords(ctx, records)
+	writeJSON(w, http.StatusOK, map[string]any{"records": records})
+}
+
+func (s *Server) checkRecords(ctx context.Context, records []dnsRecord) {
 	done := make(chan struct{}, len(records))
 	for i := range records {
 		go func() {
@@ -477,7 +482,6 @@ func (s *Server) domainDNS(w http.ResponseWriter, r *http.Request, p *principal)
 	for range records {
 		<-done
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"records": records})
 }
 
 func (s *Server) verifyDomain(w http.ResponseWriter, r *http.Request, p *principal) {

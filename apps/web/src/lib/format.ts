@@ -32,6 +32,17 @@ export function plural(count: number, noun: string, many = `${noun}s`) {
   return `${count.toLocaleString()} ${count === 1 ? noun : many}`
 }
 
+export function formatDuration(seconds: number) {
+  const [size, noun] = seconds >= 86_400 ? [86_400, "day"] : seconds >= 3600 ? [3600, "hour"] : seconds >= 60 ? [60, "minute"] : [1, "second"]
+  return plural(Math.round((seconds / size) * 10) / 10, noun)
+}
+
+export function formatMeasure(value: number, unit: string) {
+  if (unit === "seconds") return formatDuration(value)
+  const rounded = Math.round(value * 10) / 10
+  return unit === "percent" ? `${rounded}%` : plural(rounded, unit.replace(/s$/, ""))
+}
+
 export function formatPercent(part: number, total: number) {
   return `${total ? Math.round((part / total) * 100) : 0}%`
 }

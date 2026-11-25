@@ -207,6 +207,19 @@ func TestTenantIsolation(t *testing.T) {
 			t.Errorf("org admin GET %s returned %d, want 403", path, got)
 		}
 	}
+	for _, call := range []struct{ method, path string }{
+		{"GET", "/admin/alerts/rules"},
+		{"PATCH", "/admin/alerts/rules/mail_queue_size"},
+		{"GET", "/admin/alerts"},
+		{"POST", "/admin/alerts/test"},
+		{"GET", "/admin/alerts/00000000-0000-0000-0000-000000000000"},
+		{"POST", "/admin/alerts/00000000-0000-0000-0000-000000000000/acknowledge"},
+		{"POST", "/admin/alerts/00000000-0000-0000-0000-000000000000/resolve"},
+	} {
+		if got := orgAdmin.do(call.method, call.path, map[string]any{}, nil); got != 403 {
+			t.Errorf("org admin called %s %s: %d", call.method, call.path, got)
+		}
+	}
 
 	member := b.bob
 	if got := member.do("GET", "/organizations/"+b.orgID+"/mailboxes", nil, nil); got != 403 {

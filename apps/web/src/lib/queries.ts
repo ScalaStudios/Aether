@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 
 import { api } from "@/lib/api"
-import type { Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Label, Mailbox, Member, Organization, PersonalAliasPolicy, SavedSearch, OrgRole, SignatureSettings } from "@/lib/types"
+import type { AlertList, AlertRule, Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Label, Mailbox, Member, Organization, PersonalAliasPolicy, SavedSearch, OrgRole, SignatureSettings } from "@/lib/types"
 
 export const myMailboxesQuery = queryOptions({
   queryKey: ["my-mailboxes"],
@@ -106,3 +106,15 @@ export const personalAliasPolicyQuery = (orgId: string) =>
     queryKey: ["personal-alias-policy", orgId],
     queryFn: () => api<PersonalAliasPolicy>(`/organizations/${orgId}/personal-alias-policy`),
   })
+
+export const alertSummaryQuery = queryOptions({
+  queryKey: ["alerts", "summary"],
+  queryFn: () => api<AlertList>("/admin/alerts", { query: { status: "firing", limit: 1 } }),
+  select: (data) => data.summary,
+  refetchInterval: 60_000,
+})
+
+export const alertRulesQuery = queryOptions({
+  queryKey: ["alert-rules"],
+  queryFn: () => api<AlertRule[]>("/admin/alerts/rules"),
+})

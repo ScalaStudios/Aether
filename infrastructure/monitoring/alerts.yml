@@ -17,3 +17,129 @@ groups:
         annotations:
           summary: A message has waited in the Postfix queue for more than 4 hours
           description: Open Administration → Mail queue to see why the oldest message is still waiting. Held messages are not counted.
+
+  - name: aether-mail
+    rules:
+      - alert: AetherDeliveryFailuresHigh
+        expr: sum(increase(postfix_smtp_messages_processed_total{status=~"bounced|deferred"}[15m])) >= 10 or sum(increase(aether_mail_send_total{result="rejected"}[15m])) >= 10
+        for: 5m
+        labels:
+          severity: critical
+          category: mail
+        annotations:
+          summary: Outbound mail delivery failures elevated
+          description: "{{ $value | printf \"%.0f\" }} delivery failures were recorded over the last 15 minutes."
+
+      - alert: AetherRateLimitedSenders
+        expr: increase(aether_mail_rate_limited_total[15m]) >= 1 or sum(increase(rspamd_actions_total{type="soft reject"}[15m])) >= 1
+        for: 2m
+        labels:
+          severity: warning
+          category: mail
+        annotations:
+          summary: Outbound sender rate limiting triggered
+          description: "{{ $value | printf \"%.0f\" }} sender rate-limit events occurred in the last 15 minutes."
+
+      - alert: AetherMailBackendErrorsHigh
+        expr: rate(aether_mail_backend_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: mail
+        annotations:
+          summary: Aether mail backend error rate elevated
+          description: Requests from Aether API to IMAP, submission, or ManageSieve are failing at {{ $value | printf "%.2f" }}/s.
+
+  - name: aether-security-dns
+    rules:
+      - alert: AetherTLSCertificateExpiringSoon
+        expr: aether_tls_cert_expiry_seconds > 0 and aether_tls_cert_expiry_seconds <= 14 * 86400
+        for: 15m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: Mail TLS certificate expires within 14 days
+          description: The mail server TLS certificate expires in {{ $value | humanizeDuration }}.
+
+      - alert: AetherTLSCertificateExpired
+        expr: aether_tls_cert_expiry_seconds < 0
+        for: 5m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: Mail TLS certificate has expired
+          description: The mail server TLS certificate is expired. Renew and reload Postfix, Dovecot, and API immediately.
+
+      - alert: AetherDomainDNSCheckFailing
+        expr: aether_domains_dns_failing > 0
+        for: 15m
+        labels:
+          severity: warning
+          category: dns
+        annotations:
+          summary: One or more verified domains failed DNS checks
+          description: "{{ $value | printf \"%.0f\" }} active verified domain(s) have missing, mismatched, or errored MX/SPF/DKIM/DMARC records."
+
+      - alert: AetherDMARCFailureRateHigh
+        expr: aether_dmarc_failing_domains > 0
+        for: 15m
+        labels:
+          severity: warning
+          category: dns
+        annotations:
+          summary: One or more domains have an elevated DMARC failure rate
+          description: "{{ $value | printf \"%.0f\" }} active verified domain(s) exceeded the configured DMARC alignment failure threshold."
+
+  - name: aether-dovecot-storage
+    rules:
+      - alert: AetherDovecotACLBacklogHigh
+        expr: aether_mail_acl_backlog_seconds >= 300
+        for: 5m
+        labels:
+          severity: warning
+          category: dovecot
+        annotations:
+          summary: Dovecot ACL reconciliation backlog is high
+          description: The oldest pending shared-mailbox ACL reconciliation has waited {{ $value | printf "%.0f" }} seconds.
+
+      - alert: AetherDovecotKickBacklogHigh
+        expr: aether_mail_kick_backlog_seconds >= 120
+        for: 2m
+        labels:
+          severity: critical
+          category: dovecot
+        annotations:
+          summary: Dovecot session kick backlog is high
+          description: The oldest pending IMAP session kick has waited {{ $value | printf "%.0f" }} seconds.
+
+      - alert: AetherVmailDiskUsageHigh
+        expr: aether_disk_usage_percent{volume="vmail"} >= 85
+        for: 10m
+        labels:
+          severity: critical
+          category: storage
+        annotations:
+          summary: Mail storage (vmail) disk usage is high
+          description: The vmail storage volume is at {{ $value | printf "%.1f" }}% utilization.
+
+      - alert: AetherPgdataDiskUsageHigh
+        expr: aether_disk_usage_percent{volume="pgdata"} >= 85
+        for: 10m
+        labels:
+          severity: critical
+          category: storage
+        annotations:
+          summary: Database (pgdata) disk usage is high
+          description: The pgdata storage volume is at {{ $value | printf "%.1f" }}% utilization.
+
+      - alert: AetherAPIDown
+        expr: up{job="aether-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: system
+        annotations:
+          summary: Aether API metrics scrape is down
+          description: Prometheus cannot scrape the Aether API metrics endpoint.

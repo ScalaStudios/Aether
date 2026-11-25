@@ -30,8 +30,18 @@ var (
 	subscriptionRefresh = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_calendar_subscription_refresh_total", Help: "Calendar subscription refreshes by result."}, []string{"result"})
 )
 
+var (
+	mailRateLimited   = prometheus.NewCounter(prometheus.CounterOpts{Name: "aether_mail_rate_limited_total", Help: "Outbound mail send attempts rejected by rate limiting."})
+	tlsCertExpiry     = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_tls_cert_expiry_seconds", Help: "Seconds remaining until the mail TLS certificate expires."})
+	domainsDNSFailing = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_domains_dns_failing", Help: "Number of active verified domains failing required DNS checks."})
+	dmarcFailDomains  = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_dmarc_failing_domains", Help: "Number of active verified domains exceeding the DMARC failure rate threshold."})
+	diskUsagePercent  = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "aether_disk_usage_percent", Help: "Measured disk usage percentage by storage volume."}, []string{"volume"})
+	alertsFiring      = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "aether_alerts_firing", Help: "Number of active alerts by rule and severity."}, []string{"rule", "severity"})
+)
+
 func init() {
 	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned, queueMessages, queueOldest, authBlocks, reportsSent, idleWatches, notifySent, subscriptionRefresh,
+		mailRateLimited, tlsCertExpiry, domainsDNSFailing, dmarcFailDomains, diskUsagePercent, alertsFiring,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 }
 

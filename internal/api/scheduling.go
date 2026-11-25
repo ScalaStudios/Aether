@@ -404,6 +404,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	}
 	if err := s.mail.Send(address, fromAddress, recipients, raw); err != nil {
 		mailSends.WithLabelValues("rejected").Inc()
+		s.recordAlertEvent(ctx, "delivery_failures", address)
 		s.log.Warn("scheduled send failed", "mailbox", mailboxID, "attempt", attempts+1, "err", err)
 		if attempts+1 >= maxSendAttempts {
 			tx.Exec(ctx, `UPDATE scheduled_messages SET attempts = attempts + 1, error = $2 WHERE id = $1`, id, "The mail server did not accept the message: "+err.Error())

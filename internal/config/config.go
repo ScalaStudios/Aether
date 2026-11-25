@@ -79,6 +79,15 @@ type Config struct {
 	AuditOTLPEndpoint     string
 	AuditOTLPHeaders      map[string]string
 	AuditOTLPServiceName  string
+	AlertEvalInterval     time.Duration
+	AlertFrom             string
+	PostfixExporterURL    string
+	RspamdMetricsURL      string
+	RspamdMetricsPassword string
+	VmailPath             string
+	PgdataPath            string
+	PgdataMaxBytes        int64
+	ClamAVAddr            string
 }
 
 func Load() (*Config, error) {
@@ -131,6 +140,14 @@ func Load() (*Config, error) {
 		AuditSyslogNetwork:    strings.ToLower(strings.TrimSpace(env("AETHER_AUDIT_SYSLOG_NETWORK", "udp"))),
 		AuditSyslogAppName:    strings.TrimSpace(env("AETHER_AUDIT_SYSLOG_APP_NAME", "aether")),
 		AuditOTLPServiceName:  strings.TrimSpace(env("OTEL_SERVICE_NAME", "aether-api")),
+		AlertEvalInterval:     60 * time.Second,
+		AlertFrom:             strings.ToLower(strings.TrimSpace(os.Getenv("AETHER_ALERT_FROM"))),
+		PostfixExporterURL:    strings.TrimSpace(os.Getenv("AETHER_POSTFIX_EXPORTER_URL")),
+		RspamdMetricsURL:      strings.TrimSpace(os.Getenv("AETHER_RSPAMD_METRICS_URL")),
+		RspamdMetricsPassword: os.Getenv("AETHER_RSPAMD_METRICS_PASSWORD"),
+		VmailPath:             strings.TrimSpace(os.Getenv("AETHER_VMAIL_PATH")),
+		PgdataPath:            strings.TrimSpace(os.Getenv("AETHER_PGDATA_PATH")),
+		ClamAVAddr:            strings.TrimSpace(os.Getenv("AETHER_CLAMAV_ADDR")),
 	}
 	var errs []error
 	var err error
@@ -142,6 +159,22 @@ func Load() (*Config, error) {
 	}
 	if c.MaxStorageBytes, err = envInt64("AETHER_MAX_STORAGE_BYTES", 100<<30, 0, 100<<40); err != nil {
 		errs = append(errs, err)
+	}
+	if raw := strings.TrimSpace(os.Getenv("AETHER_ALERT_EVAL_INTERVAL")); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < 10*time.Second {
+			errs = append(errs, errors.New("AETHER_ALERT_EVAL_INTERVAL must be a duration of at least 10s"))
+		} else {
+			c.AlertEvalInterval = d
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("AETHER_PGDATA_MAX_BYTES")); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n <= 0 {
+			errs = append(errs, errors.New("AETHER_PGDATA_MAX_BYTES must be a positive integer"))
+		} else {
+			c.PgdataMaxBytes = n
+		}
 	}
 	if c.DatabaseURL == "" {
 		errs = append(errs, errors.New("AETHER_DATABASE_URL is required"))

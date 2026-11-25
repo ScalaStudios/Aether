@@ -1728,3 +1728,68 @@ export interface OrgSecuritySettings {
   notifyAdmins: boolean
   failedSignInThreshold: number
 }
+
+export type AlertSeverity = "info" | "warning" | "critical"
+
+export type AlertStatus = "firing" | "acknowledged" | "resolved"
+
+export type AlertCategory = "mail" | "security" | "dns" | "dovecot" | "storage"
+
+export interface Alert {
+  id: string
+  ruleKey: string
+  ruleName: string
+  targetLabel: string
+  severity: AlertSeverity
+  status: AlertStatus
+  title: string
+  message: string
+  currentValue: number | null
+  thresholdValue: number | null
+  unit: string
+  details: Record<string, unknown>
+  occurrences: number
+  firedAt: string
+  lastSeenAt: string
+  lastNotifiedAt: string | null
+  acknowledgedAt: string | null
+  acknowledgedByEmail: string | null
+  resolvedAt: string | null
+  resolvedByEmail: string | null
+}
+
+export interface AlertSummary {
+  firing: number
+  acknowledged: number
+  resolved: number
+}
+
+export interface AlertList {
+  alerts: Alert[]
+  summary: AlertSummary
+}
+
+export interface AlertRule {
+  key: string
+  name: string
+  description: string
+  category: AlertCategory
+  scope: "platform" | "domain"
+  severity: AlertSeverity
+  enabled: boolean
+  threshold: number
+  unit: string
+  comparator: "gte" | "lte"
+  cooldownSeconds: number
+  notifyEmail: boolean
+  notifyWebhook: boolean
+  emailRecipients: string[]
+  lastEvaluatedAt: string | null
+}
+
+export interface AlertTestResult {
+  emailSent: boolean
+  emailRecipients: string[]
+  emailError: string | null
+  webhooksQueued: number
+}

@@ -57,6 +57,7 @@ type Server struct {
 	imageClient        *http.Client
 	exportWake         chan struct{}
 	securityNotifyWake chan struct{}
+	alerts             *alertState
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
@@ -68,7 +69,7 @@ func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Clien
 		sinks = append(sinks, audit.NewOTLPSink(cfg.AuditOTLPEndpoint, cfg.AuditOTLPHeaders, cfg.AuditOTLPServiceName))
 	}
 	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), auditOut: audit.NewDispatcher(log, sinks...), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
-		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(), exportWake: make(chan struct{}, 1), securityNotifyWake: make(chan struct{}, 1),
+		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(), exportWake: make(chan struct{}, 1), securityNotifyWake: make(chan struct{}, 1), alerts: newAlertState(),
 	}
 }
 
@@ -511,6 +512,13 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/admin/webhooks/{webhookId}", s.deleteAdminWebhook)
 	authed("GET /api/v1/admin/webhooks/{webhookId}/deliveries", s.listAdminWebhookDeliveries)
 	authed("POST /api/v1/admin/webhooks/{webhookId}/test", s.testAdminWebhook)
+	authed("GET /api/v1/admin/alerts/rules", s.listAlertRules)
+	authed("PATCH /api/v1/admin/alerts/rules/{ruleKey}", s.updateAlertRule)
+	authed("GET /api/v1/admin/alerts", s.listAlerts)
+	authed("POST /api/v1/admin/alerts/test", s.testAlert)
+	authed("GET /api/v1/admin/alerts/{alertId}", s.getAlert)
+	authed("POST /api/v1/admin/alerts/{alertId}/acknowledge", s.acknowledgeAlert)
+	authed("POST /api/v1/admin/alerts/{alertId}/resolve", s.resolveAlert)
 
 	return instrument(securityHeaders(mux))
 }

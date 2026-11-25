@@ -92,23 +92,25 @@ func signWebhook(secret, body []byte, at time.Time) string {
 	return "t=" + ts + ",v1=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func (s *Server) enqueueWebhooks(ctx context.Context, orgID *string, event string, payload map[string]any) {
-	if err := enqueueWebhooks(ctx, s.db, orgID, event, payload); err != nil {
+func (s *Server) enqueueWebhooks(ctx context.Context, orgID *string, event string, payload map[string]any) int64 {
+	n, err := enqueueWebhooks(ctx, s.db, orgID, event, payload)
+	if err != nil {
 		s.log.Error("queueing webhooks failed", "event", event, "err", err)
 	}
+	return n
 }
 
 func enqueueWebhooks(ctx context.Context, db interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, orgID *string, event string, payload map[string]any) error {
+}, orgID *string, event string, payload map[string]any) (int64, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = db.Exec(ctx, `
+	tag, err := db.Exec(ctx, `
 		INSERT INTO webhook_deliveries (webhook_id, event, payload)
 		SELECT id, $2, $3 FROM webhooks WHERE org_id IS NOT DISTINCT FROM $1::uuid AND active AND ($2 = ANY (events) OR '*' = ANY (events))`, orgID, event, body)
-	return err
+	return tag.RowsAffected(), err
 }
 
 func (s *Server) deliverWebhooks(ctx context.Context) {

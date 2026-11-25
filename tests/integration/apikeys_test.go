@@ -70,20 +70,21 @@ func TestAPIKeysAndWebhooks(t *testing.T) {
 	}
 }
 
-func testWebhookDelivery(t *testing.T, key *apiClient, orgID, domainID, domain string) {
+type receivedWebhook struct {
+	event, signature string
+	body             []byte
+}
+
+func webhookReceiver(t *testing.T, buffer int) (string, <-chan receivedWebhook) {
 	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
-	type received struct {
-		event, signature string
-		body             []byte
-	}
-	got := make(chan received, 10)
+	t.Cleanup(func() { ln.Close() })
+	got := make(chan receivedWebhook, buffer)
 	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		got <- received{r.Header.Get("Aether-Event"), r.Header.Get("Aether-Signature"), body}
+		got <- receivedWebhook{r.Header.Get("Aether-Event"), r.Header.Get("Aether-Signature"), body}
 	}))
 	var ip string
 	addrs, _ := net.InterfaceAddrs()
@@ -93,7 +94,11 @@ func testWebhookDelivery(t *testing.T, key *apiClient, orgID, domainID, domain s
 			break
 		}
 	}
-	target := "http://" + net.JoinHostPort(ip, strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)) + "/hook"
+	return "http://" + net.JoinHostPort(ip, strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)) + "/hook", got
+}
+
+func testWebhookDelivery(t *testing.T, key *apiClient, orgID, domainID, domain string) {
+	target, got := webhookReceiver(t, 10)
 
 	var hook struct {
 		Webhook struct{ ID string }
@@ -104,7 +109,7 @@ func testWebhookDelivery(t *testing.T, key *apiClient, orgID, domainID, domain s
 		"domainId": domainID, "localPart": "hooked", "displayName": "Hooked", "password": "hooked-integration-pw",
 	}, nil, 201)
 
-	var r received
+	var r receivedWebhook
 	select {
 	case r = <-got:
 	case <-time.After(40 * time.Second):

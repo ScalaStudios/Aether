@@ -204,9 +204,10 @@ func recordMailEvent(ctx context.Context, tx pgx.Tx, ev maillog.Event) error {
 	if ev.Type == maillog.Bounced {
 		data["suppressed"] = suppressed
 	}
-	return enqueueWebhooks(ctx, tx, &orgID, ev.Type, map[string]any{
+	_, err = enqueueWebhooks(ctx, tx, &orgID, ev.Type, map[string]any{
 		"id": hex.EncodeToString(sum[:16]), "type": ev.Type, "createdAt": ev.Time.UTC(), "organizationId": orgID, "data": data,
 	})
+	return err
 }
 
 func (s *Server) FollowMailLog(ctx context.Context, path string) error {

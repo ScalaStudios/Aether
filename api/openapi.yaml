@@ -31,6 +31,7 @@ tags:
   - name: message-trace
   - name: outbound-routing
   - name: reports
+  - name: alerts
 paths:
   /auth/providers:
     get:
@@ -1966,7 +1967,7 @@ paths:
     post:
       tags: [integrations]
       summary: Create a webhook. The signing secret is returned once.
-      description: "Matching audit and mail delivery events inmailbox.create, domain.verify, the organizationauth.login for accounts whose mailbox is in the organization) are posted to the URL as JSON. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
+      description: "Matching audit and mail delivery events inmailbox.create, domain.verify, the organizationauth.login for accounts whose mailbox is in the organization) are posted to the URL as JSON. Administrator alerts for the organization's domains are posted as alert.firing, alert.acknowledged, alert.resolved and alert.test. Platform-wide alerts go only to webhooks created by a platform administrator that list those event names explicitly; * does not match them. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -5023,6 +5024,119 @@ paths:
       responses:
         "202": { description: Queued }
         "404": { $ref: "#/components/responses/Error" }
+  /admin/alerts/rules:
+    get:
+      tags: [alerts]
+      summary: List built-in administrator alert rules and their settings (platform administrators only)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AlertRule" } }
+        "403": { $ref: "#/components/responses/Error" }
+  /admin/alerts/rules/{ruleKey}:
+    patch:
+      tags: [alerts]
+      summary: Update an administrator alert rule (platform administrators only)
+      parameters:
+        - { name: ruleKey, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertRuleUpdate" }
+      responses:
+        "200":
+          description: Updated rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/alerts:
+    get:
+      tags: [alerts]
+      summary: List active and historical administrator alerts with status counts (platform administrators only)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [active, firing, acknowledged, resolved] } }
+        - { name: rule, in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string, enum: [info, warning, critical] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertList" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/alerts/test:
+    post:
+      tags: [alerts]
+      summary: Send a test alert notification by email and/or webhook (platform administrators only)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertTestRequest" }
+      responses:
+        "200":
+          description: Delivery summary for the test alert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertTestResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/alerts/{alertId}:
+    get:
+      tags: [alerts]
+      summary: Get a single administrator alert by ID (platform administrators only)
+      parameters:
+        - { name: alertId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /admin/alerts/{alertId}/acknowledge:
+    post:
+      tags: [alerts]
+      summary: Acknowledge a firing alert, suppressing re-notification until it resolves (platform administrators only)
+      parameters:
+        - { name: alertId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Acknowledged alert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /admin/alerts/{alertId}/resolve:
+    post:
+      tags: [alerts]
+      summary: Manually resolve an active alert (platform administrators only)
+      parameters:
+        - { name: alertId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Resolved alert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /hooks/identity-providers/{slug}:
     post:
       tags: [identity-providers]
@@ -6891,3 +7005,91 @@ components:
         topSenders: { type: array, items: { $ref: "#/components/schemas/ReportActivity" } }
         topReceivers: { type: array, items: { $ref: "#/components/schemas/ReportActivity" } }
         volumeSeries: { type: array, items: { $ref: "#/components/schemas/VolumePoint" } }
+    AlertRule:
+      type: object
+      required: [key, name, description, category, scope, severity, enabled, threshold, unit, comparator, cooldownSeconds, notifyEmail, notifyWebhook, emailRecipients, lastEvaluatedAt, updatedAt]
+      properties:
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [mail, security, dns, dovecot, storage] }
+        scope: { type: string, enum: [platform, domain] }
+        severity: { type: string, enum: [info, warning, critical] }
+        enabled: { type: boolean }
+        threshold: { type: number, minimum: 0 }
+        unit: { type: string }
+        comparator: { type: string, enum: [gte, lte] }
+        cooldownSeconds: { type: integer, minimum: 60, maximum: 604800 }
+        notifyEmail: { type: boolean }
+        notifyWebhook: { type: boolean }
+        emailRecipients: { type: array, items: { type: string, format: email }, description: Custom recipient email addresses; empty defaults to all active platform administrators, plus organization owners and admins for domain alerts. }
+        lastEvaluatedAt: { type: [string, "null"], format: date-time, description: When the rule last had data to evaluate; null means its data source is not configured. }
+        updatedAt: { type: string, format: date-time }
+    AlertRuleUpdate:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        severity: { type: string, enum: [info, warning, critical] }
+        threshold: { type: number, minimum: 0 }
+        cooldownSeconds: { type: integer, minimum: 60, maximum: 604800 }
+        notifyEmail: { type: boolean }
+        notifyWebhook: { type: boolean }
+        emailRecipients: { type: array, maxItems: 50, items: { type: string, format: email } }
+    Alert:
+      type: object
+      required: [id, ruleKey, ruleName, category, scope, fingerprint, targetType, targetId, targetLabel, severity, status, title, message, unit, details, occurrences, firedAt, lastSeenAt]
+      properties:
+        id: { type: string, format: uuid }
+        ruleKey: { type: string }
+        ruleName: { type: string }
+        category: { type: string, enum: [mail, security, dns, dovecot, storage] }
+        scope: { type: string, enum: [platform, domain] }
+        fingerprint: { type: string }
+        orgId: { type: [string, "null"], format: uuid }
+        targetType: { type: string }
+        targetId: { type: string }
+        targetLabel: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        status: { type: string, enum: [firing, acknowledged, resolved] }
+        title: { type: string }
+        message: { type: string }
+        currentValue: { type: [number, "null"] }
+        thresholdValue: { type: [number, "null"] }
+        unit: { type: string }
+        details: { type: object, additionalProperties: true }
+        occurrences: { type: integer }
+        firedAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        lastNotifiedAt: { type: [string, "null"], format: date-time }
+        acknowledgedAt: { type: [string, "null"], format: date-time }
+        acknowledgedByEmail: { type: [string, "null"] }
+        resolvedAt: { type: [string, "null"], format: date-time }
+        resolvedByEmail: { type: [string, "null"] }
+    AlertSummary:
+      type: object
+      required: [firing, acknowledged, resolved]
+      properties:
+        firing: { type: integer }
+        acknowledged: { type: integer }
+        resolved: { type: integer }
+    AlertList:
+      type: object
+      required: [alerts, summary]
+      properties:
+        alerts: { type: array, items: { $ref: "#/components/schemas/Alert" } }
+        summary: { $ref: "#/components/schemas/AlertSummary" }
+    AlertTestRequest:
+      type: object
+      properties:
+        ruleKey: { type: string, description: Optional built-in rule key to inherit delivery channels and recipients from }
+        notifyEmail: { type: boolean }
+        notifyWebhook: { type: boolean }
+        emailRecipients: { type: array, maxItems: 50, items: { type: string, format: email } }
+    AlertTestResult:
+      type: object
+      required: [emailSent, emailRecipients, emailError, webhooksQueued]
+      properties:
+        emailSent: { type: boolean }
+        emailRecipients: { type: array, items: { type: string, format: email } }
+        emailError: { type: [string, "null"] }
+        webhooksQueued: { type: integer }

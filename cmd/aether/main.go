@@ -179,6 +179,7 @@ func serve(log *slog.Logger) error {
 	go srv.RunSubscriptionRefresh(ctx)
 	go srv.RunMailboxMaintenance(ctx)
 	go srv.RunReportWorkers(ctx)
+	go srv.RunAlertWorker(ctx)
 	httpServer := &http.Server{
 		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Minute, WriteTimeout: 30 * time.Minute, IdleTimeout: 120 * time.Second,

@@ -528,6 +528,8 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	if !s.allow(r.Context(), "send:"+m.ID, 30) {
+		mailRateLimited.Inc()
+		s.recordAlertEvent(r.Context(), "rate_limited_senders", m.Address)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "This mailbox is sending too quickly. Wait a minute before sending again.")
 		return
 	}
@@ -592,6 +594,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if err := s.mail.Send(m.Address, out.From.Address, out.Recipients(), raw); err != nil {
 		s.deleteFileLinks(r.Context(), m.ID, staged.created)
 		mailSends.WithLabelValues("rejected").Inc()
+		s.recordAlertEvent(r.Context(), "delivery_failures", m.Address)
 		s.log.Warn("submission rejected", "mailbox", m.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "send_failed", "The mail server did not accept the message: "+err.Error())
 		return

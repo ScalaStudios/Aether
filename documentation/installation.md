@@ -246,6 +246,35 @@ Two mail services also serve metrics inside the Compose network:
 
 Postfix writes its log to `/var/log/postfix/mail.log` on the `postfix-logs` volume. The container also prints it, so `docker compose logs postfix` still works. It rotates the log daily and keeps 7 days. With the `monitoring` profile, `postfix-exporter` reads that log and the queue, and serves on port 9154: queue depth by queue, outbound results (sent, deferred, bounced), connections, rejections, and failed SMTP sign-ins. The `mail-trace` service reads the same log into the [message trace](message-trace.md), which administrators search under **Administration → Message trace**.
 
+### Alerts
+
+The API checks a set of built-in alert rules every minute (`AETHER_ALERT_EVAL_INTERVAL`, at least `10s`). One API process at a time does the check, under a PostgreSQL advisory lock. Platform administrators list the rules with `GET /api/v1/admin/alerts/rules` and change them with `PATCH /api/v1/admin/alerts/rules/{ruleKey}`: on or off, severity, threshold, how long to wait before notifying again (`cooldownSeconds`), and whether to notify by email, by webhook, or both.
+
+| Rule | Fires when | Data source |
+| --- | --- | --- |
+| `mail_queue_size` | the Postfix queue holds at least 50 messages | `AETHER_POSTFIX_EXPORTER_URL`, for example `http://postfix-exporter:9154/metrics` with the `monitoring` profile |
+| `mail_queue_age` | the oldest queued message is at least 30 minutes old | the same exporter; its ages are grouped by powers of ten, so the rule uses the lower bound of the oldest group |
+| `delivery_failures` | at least 10 bounces, deferrals or rejected submissions in 15 minutes | submissions from Aether Mail and scheduled sends, plus bounces and deferrals from the exporter when it is set |
+| `rate_limited_senders` | at least 1 rate-limited send in 15 minutes | the Aether Mail send limit, plus Rspamd `soft reject` actions when `AETHER_RSPAMD_METRICS_URL` (for example `http://rspamd:11334/metrics`) and `AETHER_RSPAMD_METRICS_PASSWORD` are set |
+| `tls_cert_expiry` | the mail certificate expires within 14 days | the certificate for `AETHER_MAIL_HOSTNAME` in `AETHER_MAIL_TLS_CA_FILE` |
+| `clamav_signature_age` | ClamAV signatures are at least 2 days old | clamd at `AETHER_CLAMAV_ADDR`, given to the API as well as Rspamd |
+| `dns_check_failure` | a verified domain's MX, SPF, DKIM or DMARC record is missing or wrong | live DNS lookups every 10 minutes; a lookup error skips the domain instead of firing |
+| `dmarc_failure_rate` | at least 10% of a domain's reported messages failed DMARC in the last 24 hours | DMARC aggregate reports, from at least 10 messages |
+| `dovecot_acl_backlog` | a shared mailbox has waited at least 5 minutes for its rights to reach Dovecot | the database |
+| `dovecot_kick_backlog` | an IMAP session kick has waited at least 2 minutes | the database |
+| `disk_vmail_usage` | the vmail filesystem is at least 85% full | `AETHER_VMAIL_PATH`, a path inside the API container on the same filesystem as the `vmail` volume |
+| `disk_pgdata_usage` | the database filesystem is at least 85% full | `AETHER_PGDATA_PATH` in the same way, or else the database size against `AETHER_PGDATA_MAX_BYTES` |
+
+A rule whose data source is not set never fires; its `lastEvaluatedAt` stays `null`. An alert resolves by itself when the value is back under the threshold, and when its rule is turned off.
+
+Alert email is sent from `AETHER_ALERT_FROM`, which must be an active mailbox on a verified domain; without it no alert email is sent. It goes to every active platform administrator, and for domain alerts also to the owners and admins of the domain's organization, unless the rule lists its own `emailRecipients`. Webhooks receive `alert.firing`, `alert.acknowledged`, `alert.resolved` and `alert.test`. Domain alerts go to the webhooks of the domain's organization, including those subscribed to `*`. Platform alerts go only to webhooks created by a platform administrator that list the event name explicitly.
+
+`GET /api/v1/admin/alerts` lists alerts with counts by status. An administrator can acknowledge an alert, which stops further notifications until it resolves, or resolve it by hand. `POST /api/v1/admin/alerts/test` sends a test notification and reports what was delivered.
+
+Platform administrators do the same in Aether under **Administration → Alerts**, which `/admin?tab=alerts` opens directly. The page shows how many alerts are firing, acknowledged and resolved, and a list that filters by status, severity and rule. Opening an alert shows its values and details, with **Acknowledge** and **Resolve**. **Alert rules** below lists the rules by category, each with a switch and an edit dialog for severity, threshold, the wait before notifying again, channels and recipients. A rule that is on but has never been checked is marked **Not configured**, or **Not checked yet** for the two domain rules, which start once a domain is verified. **Send test alert** sends a test notification and shows what happened to the email and to the webhooks. While alerts are firing, the Alerts tab shows their number and the Administration icon carries a dot.
+
+The `monitoring` profile also loads `infrastructure/monitoring/alerts.yml` into Prometheus, with the same default thresholds, for installations that route alerts through Alertmanager. Prometheus evaluates the rules but is not connected to an Alertmanager.
+
 ### Tracing
 
 The API exports OpenTelemetry traces over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in `.env`, for example `http://otel-collector:4318`. Set `OTEL_EXPORTER_OTLP_HEADERS` if the collector needs an API key. Each request becomes a span named after its route, with child spans for PostgreSQL queries and Valkey commands.

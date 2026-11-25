@@ -9,6 +9,7 @@ import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { AlertsTab } from "@/components/admin/alerts-tab"
 import { AliasesTab } from "@/components/admin/aliases-tab"
 import { AttachmentsTab } from "@/components/admin/attachments-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
@@ -56,7 +57,7 @@ import { api } from "@/lib/api"
 import { plural } from "@/lib/format"
 import { hasPerm, isDomainScoped, orgMembership, roleBadgeTone, roleLabel } from "@/lib/permissions"
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
-import { organizationsQuery } from "@/lib/queries"
+import { alertSummaryQuery, organizationsQuery } from "@/lib/queries"
 import type { Organization, Session } from "@/lib/types"
 import { setQueryParams } from "@/lib/utils"
 
@@ -118,6 +119,7 @@ const orgTabs: OrgTabDef[] = [
 const reveal = (tab: HTMLElement | null) => tab?.scrollIntoView({ block: "nearest", inline: "nearest" })
 
 const platformTabs = [
+  { value: "alerts", label: "Alerts" },
   { value: "identity", label: "Identity providers" },
   { value: "mail-queue", label: "Mail queue" },
   { value: "routing", label: "Outbound routing" },
@@ -134,6 +136,7 @@ export function AdminView() {
   const params = useSearchParams()
   const orgId = params.get("org")
   const tab = params.get("tab") ?? "domains"
+  const firing = useQuery({ ...alertSummaryQuery, enabled: !!session?.user.isPlatformAdmin }).data?.firing ?? 0
   const [creating, setCreating] = useState(false)
   const orgSchema = useMemo(
     () =>
@@ -254,6 +257,12 @@ export function AdminView() {
                 platformTabs.map((t) => (
                   <TabsTrigger key={t.value} value={t.value} ref={t.value === active ? reveal : undefined}>
                     {t.label}
+                    {t.value === "alerts" && firing > 0 && (
+                      <span className="text-xs font-semibold tabular-nums text-danger">
+                        {firing}
+                        <span className="sr-only"> firing</span>
+                      </span>
+                    )}
                   </TabsTrigger>
                 ))}
             </TabsList>
@@ -269,6 +278,11 @@ export function AdminView() {
             {platformAdmin && (
               <TabsContent value="identity">
                 <IdentityProvidersTab organizations={orgs.data} />
+              </TabsContent>
+            )}
+            {platformAdmin && (
+              <TabsContent value="alerts">
+                <AlertsTab />
               </TabsContent>
             )}
             {platformAdmin && (

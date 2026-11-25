@@ -1,6 +1,6 @@
 "use client"
 
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { BookUser, CalendarDays, Gavel, LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
 import Link from "next/link"
@@ -29,6 +29,8 @@ import { canAdminister, canInvestigate, useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { lockKeys, rememberUser } from "@/lib/crypto/session"
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
+import { plural } from "@/lib/format"
+import { alertSummaryQuery } from "@/lib/queries"
 import type { Session, User } from "@/lib/types"
 
 const nav: { href: string; labelKey: string; icon: LucideIcon; admin?: boolean; compliance?: boolean }[] = [
@@ -50,6 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (session.data) rememberUser(session.data.user.id)
   }, [session.data])
+  const firing = useQuery({ ...alertSummaryQuery, enabled: !!session.data?.user.isPlatformAdmin }).data?.firing ?? 0
 
   if (session.isError) {
     return (
@@ -77,10 +80,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="m-2 h-12 md:mx-4" />)
           : items.map((item) => {
               const active = pathname.startsWith(item.href)
+              const alerting = item.admin && firing > 0
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  href={alerting ? "/admin?tab=alerts" : item.href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "relative flex min-h-11 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-medium text-fg-tertiary transition-colors duration-160 hover:text-foreground md:flex-none md:py-3",
@@ -88,8 +92,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       "text-foreground before:absolute before:inset-x-4 before:top-0 before:h-0.5 before:bg-ember md:before:inset-x-auto md:before:inset-y-2 md:before:left-0 md:before:h-auto md:before:w-0.5"
                   )}
                 >
-                  <item.icon aria-hidden className={cn("size-5", active && "text-ember")} />
+                  <span className="relative">
+                    <item.icon aria-hidden className={cn("size-5", active && "text-ember")} />
+                    {alerting && <span aria-hidden className="absolute -top-1 -right-1 size-2 rounded-full bg-danger" />}
+                  </span>
                   <span className="max-w-full truncate">{t(item.labelKey)}</span>
+                  {alerting && <span className="sr-only">, {plural(firing, "alert")} firing</span>}
                 </Link>
               )
             })}
