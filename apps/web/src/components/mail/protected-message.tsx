@@ -10,6 +10,7 @@ import { BrandHeading } from "@/components/branding"
 import { Field } from "@/components/field"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
+import { useHydrated } from "@/hooks/use-hydrated"
 import { api } from "@/lib/api"
 import { openProtected, openReply, sealReply, type ProtectedPayload, type ProtectedReply } from "@/lib/crypto/protected"
 import { formatDateTime } from "@/lib/format"
@@ -20,7 +21,7 @@ export function ProtectedMessageView() {
   const params = useSearchParams()
   const mailbox = params.get("mailbox") ?? ""
   const message = params.get("message") ?? ""
-  const client = useSyncExternalStore(() => () => {}, () => true, () => false)
+  const client = useHydrated()
   const link = useSyncExternalStore(subscribeHash, readHash, () => null)
   const senderView = !link && !!mailbox && !!message
   return (
