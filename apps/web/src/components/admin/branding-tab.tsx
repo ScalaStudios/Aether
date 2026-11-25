@@ -14,9 +14,11 @@ import { QueryView, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { aetherColors, brandColorFields, brandThemes, brandVariables } from "@/lib/branding"
 import { formatBytes } from "@/lib/format"
+import { hasPerm } from "@/lib/permissions"
 import { organizationsQuery } from "@/lib/queries"
 import type { BrandColors, BrandingSettings, BrandTheme, OrgBranding } from "@/lib/types"
 
@@ -40,23 +42,25 @@ function settingsOf({ name, signInMessage, colors, customCss }: OrgBranding): Br
 }
 
 export function BrandingTab({ orgId }: { orgId: string }) {
+  const session = useSession().data
+  const canWrite = hasPerm(session, orgId, "branding:write")
   const branding = useQuery({ queryKey: ["org-branding", orgId], queryFn: () => api<OrgBranding>(`/organizations/${orgId}/branding`) })
 
   return (
     <QueryView query={branding} skeleton={<RowsSkeleton rows={4} />}>
       {(data) => (
         <div className="flex flex-col gap-6">
-          <NameAndLogo orgId={orgId} branding={data} />
-          <SignInMessage orgId={orgId} branding={data} />
-          <Colours orgId={orgId} branding={data} />
-          <CustomCSS orgId={orgId} branding={data} />
+          <NameAndLogo orgId={orgId} branding={data} canWrite={canWrite} />
+          <SignInMessage orgId={orgId} branding={data} canWrite={canWrite} />
+          <Colours orgId={orgId} branding={data} canWrite={canWrite} />
+          <CustomCSS orgId={orgId} branding={data} canWrite={canWrite} />
         </div>
       )}
     </QueryView>
   )
 }
 
-function NameAndLogo({ orgId, branding }: { orgId: string; branding: OrgBranding }) {
+function NameAndLogo({ orgId, branding, canWrite }: { orgId: string; branding: OrgBranding; canWrite: boolean }) {
   const orgName = useQuery({ ...organizationsQuery, select: (orgs) => orgs.find((o) => o.id === orgId)?.name ?? "" }).data ?? ""
   const [name, setName] = useState(branding.name)
   const save = useSaveBranding(orgId)
@@ -68,22 +72,25 @@ function NameAndLogo({ orgId, branding }: { orgId: string; branding: OrgBranding
         noValidate
         onSubmit={(e) => {
           e.preventDefault()
+          if (!canWrite) return
           save.mutate({ ...settingsOf(branding), name: name.trim() }, { onSuccess: () => toast.success("Name saved") })
         }}
       >
         <Field id="brand-name" label="Name" hint={orgName && `Leave empty to use the organization name, “${orgName}”.`}>
           <div className="flex flex-col gap-3 sm:flex-row">
-            <Input id="brand-name" value={name} maxLength={100} autoComplete="off" placeholder={orgName} className="sm:max-w-sm" onChange={(e) => setName(e.target.value)} />
-            <Button type="submit" variant="secondary" loading={save.isPending} disabled={name.trim() === branding.name}>
-              Save name
-            </Button>
+            <Input id="brand-name" value={name} maxLength={100} autoComplete="off" readOnly={!canWrite} placeholder={orgName} className="sm:max-w-sm" onChange={(e) => setName(e.target.value)} />
+            {canWrite && (
+              <Button type="submit" variant="secondary" loading={save.isPending} disabled={name.trim() === branding.name}>
+                Save name
+              </Button>
+            )}
           </div>
         </Field>
       </form>
       <div className="grid gap-6 pt-2 sm:grid-cols-3">
-        <ImageSlot orgId={orgId} kind="logo-light" label="Light theme logo" url={branding.logoLight} theme="light" />
-        <ImageSlot orgId={orgId} kind="logo-dark" label="Dark theme logo" url={branding.logoDark} theme="dark" />
-        <ImageSlot orgId={orgId} kind="favicon" label="Favicon" url={branding.favicon} />
+        <ImageSlot orgId={orgId} kind="logo-light" label="Light theme logo" url={branding.logoLight} theme="light" canWrite={canWrite} />
+        <ImageSlot orgId={orgId} kind="logo-dark" label="Dark theme logo" url={branding.logoDark} theme="dark" canWrite={canWrite} />
+        <ImageSlot orgId={orgId} kind="favicon" label="Favicon" url={branding.favicon} canWrite={canWrite} />
       </div>
       <p className="text-sm text-fg-tertiary">
         PNG, JPEG or WebP, up to 256 KB and 2048 by 2048 pixels each. Logos fit within 80 by 32 pixels in the sidebar and 240 by 48 on the sign-in page, and one logo is used for both themes until you add the other. The light theme logo also goes into signatures made from the organization template. Use a square image for the favicon.
@@ -92,7 +99,7 @@ function NameAndLogo({ orgId, branding }: { orgId: string; branding: OrgBranding
   )
 }
 
-function ImageSlot({ orgId, kind, label, url, theme }: { orgId: string; kind: string; label: string; url: string | null; theme?: BrandTheme }) {
+function ImageSlot({ orgId, kind, label, url, theme, canWrite }: { orgId: string; kind: string; label: string; url: string | null; theme?: BrandTheme; canWrite: boolean }) {
   const qc = useQueryClient()
   const input = useRef<HTMLInputElement>(null)
   const done = (saved: OrgBranding, message: string) => {
@@ -119,33 +126,37 @@ function ImageSlot({ orgId, kind, label, url, theme }: { orgId: string; kind: st
           <span className="text-sm text-fg-tertiary">None yet</span>
         )}
       </div>
-      <input
-        ref={input}
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) upload.mutate(file)
-          e.target.value = ""
-        }}
-      />
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" size="sm" aria-label={`${url ? "Replace" : "Upload"} ${label.toLowerCase()}`} loading={upload.isPending} onClick={() => input.current?.click()}>
-          <ImageUp aria-hidden />
-          {url ? "Replace" : "Upload"}
-        </Button>
-        {url && (
-          <Button type="button" variant="quiet" size="sm" aria-label={`Remove ${label.toLowerCase()}`} loading={remove.isPending} onClick={() => remove.mutate()}>
-            Remove
-          </Button>
-        )}
-      </div>
+      {canWrite && (
+        <>
+          <input
+            ref={input}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) upload.mutate(file)
+              e.target.value = ""
+            }}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" size="sm" aria-label={`${url ? "Replace" : "Upload"} ${label.toLowerCase()}`} loading={upload.isPending} onClick={() => input.current?.click()}>
+              <ImageUp aria-hidden />
+              {url ? "Replace" : "Upload"}
+            </Button>
+            {url && (
+              <Button type="button" variant="quiet" size="sm" aria-label={`Remove ${label.toLowerCase()}`} loading={remove.isPending} onClick={() => remove.mutate()}>
+                Remove
+              </Button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
-function SignInMessage({ orgId, branding }: { orgId: string; branding: OrgBranding }) {
+function SignInMessage({ orgId, branding, canWrite }: { orgId: string; branding: OrgBranding; canWrite: boolean }) {
   const [message, setMessage] = useState(branding.signInMessage)
   const save = useSaveBranding(orgId)
 
@@ -155,6 +166,7 @@ function SignInMessage({ orgId, branding }: { orgId: string; branding: OrgBrandi
       className={card}
       onSubmit={(e) => {
         e.preventDefault()
+        if (!canWrite) return
         save.mutate({ ...settingsOf(branding), signInMessage: message.trim() }, { onSuccess: () => toast.success(message.trim() ? "Sign-in message saved" : "Sign-in message removed") })
       }}
     >
@@ -164,19 +176,22 @@ function SignInMessage({ orgId, branding }: { orgId: string; branding: OrgBrandi
           id="brand-message"
           rows={4}
           maxLength={500}
+          readOnly={!canWrite}
           value={message}
           placeholder="Sign in with your work account. Locked out? Call the IT desk on extension 4000."
           onChange={(e) => setMessage(e.target.value)}
         />
       </Field>
-      <Button type="submit" variant="secondary" className="self-start" loading={save.isPending} disabled={message.trim() === branding.signInMessage}>
-        Save message
-      </Button>
+      {canWrite && (
+        <Button type="submit" variant="secondary" className="self-start" loading={save.isPending} disabled={message.trim() === branding.signInMessage}>
+          Save message
+        </Button>
+      )}
     </form>
   )
 }
 
-function Colours({ orgId, branding }: { orgId: string; branding: OrgBranding }) {
+function Colours({ orgId, branding, canWrite }: { orgId: string; branding: OrgBranding; canWrite: boolean }) {
   const { resolvedTheme } = useTheme()
   const [theme, setTheme] = useState<BrandTheme>(resolvedTheme === "light" ? "light" : "dark")
   const [colors, setColors] = useState<BrandColors>(branding.colors)
@@ -187,6 +202,7 @@ function Colours({ orgId, branding }: { orgId: string; branding: OrgBranding }) 
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (!canWrite) return
     const clean = Object.fromEntries(
       brandThemes.map((t) => [t, Object.fromEntries(Object.entries(colors[t]).flatMap(([key, value]) => (value ? [[key, value.startsWith("#") ? value : `#${value}`]] : [])))])
     ) as BrandColors
@@ -216,14 +232,16 @@ function Colours({ orgId, branding }: { orgId: string; branding: OrgBranding }) 
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
+                    disabled={!canWrite}
                     aria-label={`Pick the ${label.toLowerCase()} colour`}
                     value={hexColor.test(value) ? value : fallback}
                     onChange={(e) => setColors((c) => ({ ...c, [theme]: { ...c[theme], [key]: e.target.value } }))}
-                    className="size-10 shrink-0 cursor-pointer rounded-lg border border-input bg-sunken p-1 max-md:size-11 [&::-moz-color-swatch]:rounded-sm [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch]:rounded-sm [&::-webkit-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0"
+                    className="size-10 shrink-0 cursor-pointer rounded-lg border border-input bg-sunken p-1 disabled:cursor-default disabled:opacity-60 max-md:size-11 [&::-moz-color-swatch]:rounded-sm [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch]:rounded-sm [&::-webkit-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0"
                   />
                   <Input
                     id={`brand-${key}`}
                     value={value}
+                    readOnly={!canWrite}
                     placeholder={fallback}
                     maxLength={7}
                     spellCheck={false}
@@ -244,14 +262,16 @@ function Colours({ orgId, branding }: { orgId: string; branding: OrgBranding }) 
           {error}
         </p>
       )}
-      <div className="flex flex-wrap gap-3">
-        <Button type="submit" variant="secondary" loading={save.isPending}>
-          Save colours
-        </Button>
-        <Button type="button" variant="quiet" disabled={!customized} onClick={() => setColors({ dark: {}, light: {} })}>
-          Reset to Aether colours
-        </Button>
-      </div>
+      {canWrite && (
+        <div className="flex flex-wrap gap-3">
+          <Button type="submit" variant="secondary" loading={save.isPending}>
+            Save colours
+          </Button>
+          <Button type="button" variant="quiet" disabled={!customized} onClick={() => setColors({ dark: {}, light: {} })}>
+            Reset to Aether colours
+          </Button>
+        </div>
+      )}
     </form>
   )
 }
@@ -305,7 +325,7 @@ function ColourPreview({ theme, colors }: { theme: BrandTheme; colors: BrandColo
   )
 }
 
-function CustomCSS({ orgId, branding }: { orgId: string; branding: OrgBranding }) {
+function CustomCSS({ orgId, branding, canWrite }: { orgId: string; branding: OrgBranding; canWrite: boolean }) {
   const [css, setCss] = useState(branding.customCss)
   const save = useSaveBranding(orgId)
   const size = new Blob([css]).size
@@ -316,6 +336,7 @@ function CustomCSS({ orgId, branding }: { orgId: string; branding: OrgBranding }
       className={card}
       onSubmit={(e) => {
         e.preventDefault()
+        if (!canWrite) return
         save.mutate({ ...settingsOf(branding), customCss: css }, { onSuccess: () => toast.success(css.trim() ? "Custom CSS saved" : "Custom CSS removed") })
       }}
     >
@@ -332,11 +353,13 @@ function CustomCSS({ orgId, branding }: { orgId: string; branding: OrgBranding }
         </div>
       )}
       <Field id="brand-css" label="Stylesheet" hint={`${formatBytes(size)} of 32 KB. url() can only point at files on this server, and @import isn't allowed. Every change is recorded in the audit log.`}>
-        <Textarea id="brand-css" rows={12} spellCheck={false} value={css} aria-invalid={size > 32 << 10} className="font-mono text-sm" onChange={(e) => setCss(e.target.value)} />
+        <Textarea id="brand-css" rows={12} spellCheck={false} readOnly={!canWrite} value={css} aria-invalid={size > 32 << 10} className="font-mono text-sm" onChange={(e) => setCss(e.target.value)} />
       </Field>
-      <Button type="submit" variant="secondary" className="self-start" loading={save.isPending} disabled={css === branding.customCss}>
-        Save CSS
-      </Button>
+      {canWrite && (
+        <Button type="submit" variant="secondary" className="self-start" loading={save.isPending} disabled={css === branding.customCss}>
+          Save CSS
+        </Button>
+      )}
     </form>
   )
 }

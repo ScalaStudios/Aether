@@ -40,9 +40,11 @@ type providerRow struct {
 }
 
 type groupMapping struct {
-	Group string `json:"group"`
-	OrgID string `json:"orgId"`
-	Role  string `json:"role"`
+	Group        string   `json:"group"`
+	OrgID        string   `json:"orgId"`
+	Role         string   `json:"role"`
+	CustomRoleID string   `json:"customRoleId,omitempty"`
+	DomainIDs    []string `json:"domainIds,omitempty"`
 }
 
 type discovered struct {
@@ -296,18 +298,8 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 				return err
 			}
 		}
-		for _, m := range p.GroupMappings {
-			if !slices.Contains(c.Groups, m.Group) {
-				continue
-			}
-			_, err := tx.Exec(ctx, `
-				INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, $3)
-				ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role
-				WHERE array_position(ARRAY['member','admin','owner'], organization_members.role) < array_position(ARRAY['member','admin','owner'], EXCLUDED.role)`,
-				m.OrgID, userID, m.Role)
-			if err != nil {
-				return err
-			}
+		if err := s.applyGroupMappings(ctx, tx, userID, c.Groups, p.GroupMappings); err != nil {
+			return err
 		}
 		if verified && email != "" {
 			return s.linkMailboxForIdentity(ctx, tx, userID, email, p.AutoProvision)
@@ -329,6 +321,165 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 		return "", "account_disabled", nil
 	}
 	return userID, "", nil
+}
+
+type resolvedMapping struct {
+	OrgID        string
+	Role         string
+	CustomRoleID *string
+	DomainIDs    []string
+	OrgWide      bool
+}
+
+func resolveMappedRoles(groups []string, mappings []groupMapping) []resolvedMapping {
+	order := []string{}
+	byOrg := map[string]resolvedMapping{}
+	for _, m := range mappings {
+		if !slices.Contains(groups, m.Group) || !isValidOrgRole(m.Role) || !uuidPattern.MatchString(m.OrgID) {
+			continue
+		}
+		if m.Role == roleCustom && !uuidPattern.MatchString(m.CustomRoleID) {
+			continue
+		}
+		cand := resolvedMapping{OrgID: m.OrgID, Role: m.Role}
+		if m.Role == roleCustom {
+			id := strings.ToLower(m.CustomRoleID)
+			cand.CustomRoleID = &id
+		}
+		if m.Role == roleDomainAdmin || (m.Role == roleCustom && len(m.DomainIDs) > 0) {
+			for _, d := range m.DomainIDs {
+				d = strings.ToLower(strings.TrimSpace(d))
+				if uuidPattern.MatchString(d) && !slices.Contains(cand.DomainIDs, d) {
+					cand.DomainIDs = append(cand.DomainIDs, d)
+				}
+			}
+		} else {
+			cand.OrgWide = true
+		}
+		cur, exists := byOrg[m.OrgID]
+		if !exists {
+			order = append(order, m.OrgID)
+			byOrg[m.OrgID] = cand
+			continue
+		}
+		if roleRank(cand.Role) > roleRank(cur.Role) {
+			byOrg[m.OrgID] = cand
+			continue
+		}
+		if cand.Role != cur.Role {
+			continue
+		}
+		if cand.Role == roleDomainAdmin {
+			for _, d := range cand.DomainIDs {
+				if !slices.Contains(cur.DomainIDs, d) {
+					cur.DomainIDs = append(cur.DomainIDs, d)
+				}
+			}
+			byOrg[m.OrgID] = cur
+		} else if cand.Role == roleCustom && cur.CustomRoleID != nil && cand.CustomRoleID != nil && *cur.CustomRoleID == *cand.CustomRoleID {
+			if cand.OrgWide || cur.OrgWide {
+				cur.OrgWide = true
+				cur.DomainIDs = nil
+			} else {
+				for _, d := range cand.DomainIDs {
+					if !slices.Contains(cur.DomainIDs, d) {
+						cur.DomainIDs = append(cur.DomainIDs, d)
+					}
+				}
+			}
+			byOrg[m.OrgID] = cur
+		}
+	}
+	out := make([]resolvedMapping, 0, len(order))
+	for _, orgID := range order {
+		out = append(out, byOrg[orgID])
+	}
+	return out
+}
+
+func (s *Server) applyGroupMappings(ctx context.Context, tx pgx.Tx, userID string, groups []string, mappings []groupMapping) error {
+	for _, rm := range resolveMappedRoles(groups, mappings) {
+		var orgExists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1)`, rm.OrgID).Scan(&orgExists); err != nil {
+			return err
+		}
+		if !orgExists {
+			continue
+		}
+		if rm.Role == roleCustom {
+			var roleExists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM organization_roles WHERE id = $1 AND org_id = $2)`, *rm.CustomRoleID, rm.OrgID).Scan(&roleExists); err != nil {
+				return err
+			}
+			if !roleExists {
+				continue
+			}
+		}
+		validDomains := []string{}
+		if len(rm.DomainIDs) > 0 {
+			rows, err := tx.Query(ctx, `SELECT id::text FROM domains WHERE org_id = $1 AND id::text = ANY($2)`, rm.OrgID, rm.DomainIDs)
+			if err != nil {
+				return err
+			}
+			validDomains, err = pgx.CollectRows(rows, pgx.RowTo[string])
+			if err != nil {
+				return err
+			}
+		}
+		var existingRole string
+		var existingCustomID *string
+		err := tx.QueryRow(ctx, `SELECT role, custom_role_id FROM organization_members WHERE org_id = $1 AND user_id = $2`, rm.OrgID, userID).Scan(&existingRole, &existingCustomID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, err := tx.Exec(ctx, `INSERT INTO organization_members (org_id, user_id, role, custom_role_id) VALUES ($1, $2, $3, $4)`, rm.OrgID, userID, rm.Role, rm.CustomRoleID); err != nil {
+				return err
+			}
+			if len(validDomains) > 0 {
+				if _, err := tx.Exec(ctx, `INSERT INTO organization_member_domains (org_id, user_id, domain_id) SELECT $1, $2, unnest($3::uuid[]) ON CONFLICT DO NOTHING`, rm.OrgID, userID, validDomains); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if roleRank(existingRole) < roleRank(rm.Role) {
+			if _, err := tx.Exec(ctx, `UPDATE organization_members SET role = $3, custom_role_id = $4 WHERE org_id = $1 AND user_id = $2`, rm.OrgID, userID, rm.Role, rm.CustomRoleID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `DELETE FROM organization_member_domains WHERE org_id = $1 AND user_id = $2`, rm.OrgID, userID); err != nil {
+				return err
+			}
+			if len(validDomains) > 0 {
+				if _, err := tx.Exec(ctx, `INSERT INTO organization_member_domains (org_id, user_id, domain_id) SELECT $1, $2, unnest($3::uuid[]) ON CONFLICT DO NOTHING`, rm.OrgID, userID, validDomains); err != nil {
+					return err
+				}
+			}
+		} else if existingRole == rm.Role {
+			if existingRole == roleDomainAdmin && len(validDomains) > 0 {
+				if _, err := tx.Exec(ctx, `INSERT INTO organization_member_domains (org_id, user_id, domain_id) SELECT $1, $2, unnest($3::uuid[]) ON CONFLICT DO NOTHING`, rm.OrgID, userID, validDomains); err != nil {
+					return err
+				}
+			} else if existingRole == roleCustom && existingCustomID != nil && rm.CustomRoleID != nil && *existingCustomID == *rm.CustomRoleID {
+				if rm.OrgWide {
+					if _, err := tx.Exec(ctx, `DELETE FROM organization_member_domains WHERE org_id = $1 AND user_id = $2`, rm.OrgID, userID); err != nil {
+						return err
+					}
+				} else if len(validDomains) > 0 {
+					var existingCount int
+					if err := tx.QueryRow(ctx, `SELECT count(*) FROM organization_member_domains WHERE org_id = $1 AND user_id = $2`, rm.OrgID, userID).Scan(&existingCount); err != nil {
+						return err
+					}
+					if existingCount > 0 {
+						if _, err := tx.Exec(ctx, `INSERT INTO organization_member_domains (org_id, user_id, domain_id) SELECT $1, $2, unnest($3::uuid[]) ON CONFLICT DO NOTHING`, rm.OrgID, userID, validDomains); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 var errSharedAddress = errors.New("address belongs to a shared mailbox")

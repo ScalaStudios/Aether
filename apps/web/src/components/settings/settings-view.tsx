@@ -44,6 +44,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useSession } from "@/hooks/use-session"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatDate } from "@/lib/format"
+import { roleLabel } from "@/lib/permissions"
 import { myMailboxesQuery } from "@/lib/queries"
 import type { AppPassword, AppPasswordScope, CreatedAppPassword, Session } from "@/lib/types"
 
@@ -83,7 +84,7 @@ export function SettingsView() {
               <dt className="text-label text-fg-tertiary">Organizations</dt>
               <dd>
                 {session.memberships.length
-                  ? session.memberships.map((m) => `${m.orgName} (${m.role})`).join(", ")
+                  ? session.memberships.map((m) => `${m.orgName} (${roleLabel(m.role, m.customRoleName)})`).join(", ")
                   : "None"}
               </dd>
             </div>

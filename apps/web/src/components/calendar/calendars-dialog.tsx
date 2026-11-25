@@ -443,7 +443,7 @@ function SharePanel({
 }) {
   const session = useSession();
   const adminOrgs =
-    session.data?.memberships.filter((m) => m.role !== "member") ?? [];
+    session.data?.memberships.filter((m) => m.role === "owner" || m.role === "admin") ?? [];
   const [target, setTarget] = useState("");
   const [access, setAccess] = useState<"read" | "write">("read");
   const orgId = target.startsWith("org:") ? target.slice(4) : "";

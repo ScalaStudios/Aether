@@ -76,11 +76,24 @@ func (s *Server) loadAlias(ctx context.Context, id string) (*alias, error) {
 }
 
 func (s *Server) listAliases(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permAliasesRead, permListsRead)
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT `+aliasColumns+` FROM aliases a WHERE a.org_id = $1 ORDER BY a.address`, orgID)
+	listsOnly := !p.can(orgID, permAliasesRead)
+	var rows pgx.Rows
+	var err error
+	if scoped, isScoped := p.scopedDomains(orgID); isScoped {
+		if listsOnly {
+			rows, err = s.db.Query(r.Context(), `SELECT `+aliasColumns+` FROM aliases a WHERE a.org_id = $1 AND a.kind = 'list' AND a.domain_id::text = ANY($2) ORDER BY a.address`, orgID, scoped)
+		} else {
+			rows, err = s.db.Query(r.Context(), `SELECT `+aliasColumns+` FROM aliases a WHERE a.org_id = $1 AND a.domain_id::text = ANY($2) ORDER BY a.address`, orgID, scoped)
+		}
+	} else if listsOnly {
+		rows, err = s.db.Query(r.Context(), `SELECT `+aliasColumns+` FROM aliases a WHERE a.org_id = $1 AND a.kind = 'list' ORDER BY a.address`, orgID)
+	} else {
+		rows, err = s.db.Query(r.Context(), `SELECT `+aliasColumns+` FROM aliases a WHERE a.org_id = $1 ORDER BY a.address`, orgID)
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -339,7 +352,7 @@ func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
 }
 
 func (s *Server) createAlias(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permAliasesWrite, permListsWrite)
 	if !ok {
 		return
 	}
@@ -367,6 +380,10 @@ func (s *Server) createAlias(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	if err != nil {
 		s.internalError(w, r, err)
+		return
+	}
+	if !p.canWriteAlias(orgID, in.DomainID, a.Kind) {
+		forbidden(w)
 		return
 	}
 	a.Address = in.LocalPart + "@" + domainName
@@ -414,7 +431,7 @@ func (s *Server) getAlias(w http.ResponseWriter, r *http.Request, p *principal) 
 	if !ok {
 		return
 	}
-	if !p.canAdminOrg(a.OrgID) && !slices.Contains(a.Owners, p.User.ID) && !a.personalOwner(p) {
+	if !p.canReadAlias(a.OrgID, a.DomainID, a.Kind) && !slices.Contains(a.Owners, p.User.ID) && !a.personalOwner(p) {
 		forbidden(w)
 		return
 	}
@@ -438,13 +455,17 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 	if !decode(w, r, 512<<10, &in) {
 		return
 	}
-	if !p.canAdminOrg(a.OrgID) {
+	canWrite := p.canWriteAlias(a.OrgID, a.DomainID, a.Kind)
+	if !canWrite {
 		membershipOnly := in.Kind == nil && in.Name == nil && in.Active == nil && in.AcceptFrom == nil && in.AllowedSenders == nil && in.SendAs == nil && in.Owners == nil && in.Groups == nil && in.MemberDomains == nil &&
 			in.Moderated == nil && in.Moderators == nil && in.ModerationExempt == nil && in.Hidden == nil && in.SentMailboxID == nil
 		if !slices.Contains(a.Owners, p.User.ID) || !membershipOnly {
 			forbidden(w)
 			return
 		}
+	} else if in.Kind != nil && *in.Kind != a.Kind && !p.canWriteAlias(a.OrgID, a.DomainID, *in.Kind) {
+		forbidden(w)
+		return
 	}
 	before := *a
 	if !s.applyAliasInput(w, r, a, &in) {
@@ -468,7 +489,7 @@ func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principa
 	if !ok {
 		return
 	}
-	if !p.canAdminOrg(a.OrgID) && !a.personalOwner(p) {
+	if !p.canWriteAlias(a.OrgID, a.DomainID, a.Kind) && !a.personalOwner(p) {
 		forbidden(w)
 		return
 	}

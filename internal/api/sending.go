@@ -364,7 +364,7 @@ func (s *Server) listRestrictedSenders(w http.ResponseWriter, r *http.Request, p
 }
 
 func (s *Server) releaseSender(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesWrite)
 	if !ok {
 		return
 	}

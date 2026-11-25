@@ -183,7 +183,7 @@ func (s *Server) autoReplyMailbox(w http.ResponseWriter, r *http.Request, p *pri
 	if !ok {
 		return nil, false
 	}
-	if !m.SendAs && !p.canAdminOrg(m.OrgID) {
+	if !m.SendAs {
 		writeError(w, http.StatusForbidden, "cannot_send", "Automatic replies are sent as this mailbox's address. Ask an administrator for Send as.")
 		return nil, false
 	}

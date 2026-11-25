@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/scalastudios/aether/internal/auth"
 )
 
 type organization struct {
@@ -157,21 +159,36 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 }
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permMembersRead, permAliasesWrite, permListsWrite)
 	if !ok {
 		return
 	}
 	type member struct {
-		UserID         string `json:"userId"`
-		Email          string `json:"email"`
-		DisplayName    string `json:"displayName"`
-		Role           string `json:"role"`
-		Status         string `json:"status"`
-		Compliance     bool   `json:"compliance"`
-		PasswordSignIn bool   `json:"passwordSignIn"`
-		TwoFactor      bool   `json:"twoFactor"`
+		UserID          string   `json:"userId"`
+		Email           string   `json:"email"`
+		DisplayName     string   `json:"displayName"`
+		Role            string   `json:"role"`
+		CustomRoleID    *string  `json:"customRoleId,omitempty"`
+		CustomRoleName  string   `json:"customRoleName,omitempty"`
+		DomainIDs       []string `json:"domainIds"`
+		Status          string   `json:"status"`
+		HasPassword     bool     `json:"hasPassword"`
+		IsPlatformAdmin bool     `json:"isPlatformAdmin"`
+		MultiOrg        bool     `json:"multiOrg"`
+		Compliance      bool     `json:"compliance"`
+		PasswordSignIn  bool     `json:"passwordSignIn"`
+		TwoFactor       bool     `json:"twoFactor"`
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT u.id, u.email, u.display_name, m.role, u.status, m.compliance, u.password_hash IS NOT NULL, `+hasTwoFactor+` FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY u.email`, orgID)
+	rows, err := s.db.Query(r.Context(), `
+		SELECT u.id, u.email, u.display_name, m.role, m.custom_role_id, coalesce(r.name, ''),
+			coalesce((SELECT array_agg(d.domain_id::text ORDER BY d.domain_id) FROM organization_member_domains d WHERE d.org_id = m.org_id AND d.user_id = m.user_id), '{}'),
+			u.status, u.password_hash IS NOT NULL, u.is_platform_admin,
+			EXISTS (SELECT 1 FROM organization_members other WHERE other.user_id = u.id AND other.org_id <> m.org_id),
+			m.compliance, u.password_hash IS NOT NULL, `+hasTwoFactor+`
+		FROM organization_members m
+		JOIN users u ON u.id = m.user_id
+		LEFT JOIN organization_roles r ON r.id = m.custom_role_id
+		WHERE m.org_id = $1 ORDER BY u.email`, orgID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -181,11 +198,14 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, p *principa
 		s.internalError(w, r, err)
 		return
 	}
+	for i := range members {
+		members[i].DomainIDs = nonNil(members[i].DomainIDs)
+	}
 	writeJSON(w, http.StatusOK, nonNil(members))
 }
 
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permAuditRead)
 	if !ok {
 		return
 	}
@@ -219,28 +239,71 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request, p *principal)
 }
 
 func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permMembersWrite)
 	if !ok {
 		return
 	}
 	var in struct {
-		Email      string `json:"email"`
-		Role       string `json:"role"`
-		Compliance *bool  `json:"compliance"`
+		Email        string   `json:"email"`
+		Role         string   `json:"role"`
+		CustomRoleID string   `json:"customRoleId"`
+		DomainIDs    []string `json:"domainIds"`
+		Compliance   *bool    `json:"compliance"`
 	}
-	if !decode(w, r, 8<<10, &in) {
+	if !decode(w, r, 16<<10, &in) {
 		return
 	}
-	if in.Role != "owner" && in.Role != "admin" && in.Role != "member" {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Role must be owner, admin, or member.")
+	if !isValidOrgRole(in.Role) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Choose a valid organization role.")
 		return
 	}
-	if in.Role == "owner" && p.orgRole(orgID) != "owner" {
+	var customRoleID *string
+	var customRoleName string
+	var customScopes []string
+	if in.Role == roleCustom {
+		cid := strings.ToLower(strings.TrimSpace(in.CustomRoleID))
+		if !uuidPattern.MatchString(cid) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Choose a custom role that belongs to this organization.")
+			return
+		}
+		err := s.db.QueryRow(r.Context(), `SELECT name, scopes FROM organization_roles WHERE id = $1 AND org_id = $2`, cid, orgID).Scan(&customRoleName, &customScopes)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Choose a custom role that belongs to this organization.")
+			return
+		}
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		customRoleID = &cid
+	} else if strings.TrimSpace(in.CustomRoleID) != "" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Only the custom role accepts a customRoleId.")
+		return
+	}
+	domainIDs, domainsValid, err := s.validateOrgDomains(r.Context(), orgID, in.DomainIDs)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if !domainsValid {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_domains", "Choose domains that belong to this organization.")
+		return
+	}
+	if in.Role == roleDomainAdmin && len(domainIDs) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_domains", "Choose at least one domain for a domain administrator.")
+		return
+	}
+	if in.Role != roleDomainAdmin && in.Role != roleCustom && len(domainIDs) > 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_domains", "Only domain administrators and custom roles can be scoped to specific domains.")
+		return
+	}
+	targetGrant := buildOrgGrant(in.Role, customRoleID, customRoleName, customScopes, domainIDs)
+	if !p.canManageMemberRole(orgID, in.Role, &targetGrant) {
 		forbidden(w)
 		return
 	}
 	var userID string
-	err := s.db.QueryRow(r.Context(), `SELECT id FROM users WHERE email = $1`, strings.ToLower(strings.TrimSpace(in.Email))).Scan(&userID)
+	err = s.db.QueryRow(r.Context(), `SELECT id FROM users WHERE email = $1`, strings.ToLower(strings.TrimSpace(in.Email))).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnprocessableEntity, "unknown_user", "No account uses this email address. Create a mailbox for it or let the person sign in through your identity provider first.")
 		return
@@ -249,19 +312,70 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		s.internalError(w, r, err)
 		return
 	}
-	var current string
-	var compliance bool
-	s.db.QueryRow(r.Context(), `SELECT role, compliance FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&current, &compliance)
-	complianceChanged := in.Compliance != nil && *in.Compliance != compliance
-	if (current == "owner" || complianceChanged) && p.orgRole(orgID) != "owner" {
-		forbidden(w)
-		return
-	}
-	if _, err := s.db.Exec(r.Context(), `INSERT INTO organization_members (org_id, user_id, role, compliance) VALUES ($1, $2, $3, coalesce($4, false)) ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, compliance = coalesce($4, organization_members.compliance)`, orgID, userID, in.Role, in.Compliance); err != nil {
+	currentGrant, err := s.loadMemberGrant(r.Context(), orgID, userID)
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &orgID, "member.set_role", "user", userID, map[string]any{"role": in.Role, "previous": current})
+	var compliance bool
+	if err := s.db.QueryRow(r.Context(), `SELECT compliance FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&compliance); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.internalError(w, r, err)
+		return
+	}
+	complianceChanged := in.Compliance != nil && *in.Compliance != compliance
+	if complianceChanged && p.orgRole(orgID) != roleOwner {
+		forbidden(w)
+		return
+	}
+	var previous string
+	if currentGrant != nil {
+		previous = currentGrant.Role
+		if !p.canManageMemberRole(orgID, currentGrant.Role, currentGrant) {
+			forbidden(w)
+			return
+		}
+		if currentGrant.Role == roleOwner && in.Role != roleOwner {
+			var owners int
+			if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM organization_members WHERE org_id = $1 AND role = 'owner'`, orgID).Scan(&owners); err != nil {
+				s.internalError(w, r, err)
+				return
+			}
+			if owners == 1 {
+				writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
+				return
+			}
+		}
+	}
+	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO organization_members (org_id, user_id, role, custom_role_id, compliance) VALUES ($1, $2, $3, $4, coalesce($5, false))
+			ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, custom_role_id = EXCLUDED.custom_role_id, compliance = coalesce($5, organization_members.compliance)`,
+			orgID, userID, in.Role, customRoleID, in.Compliance); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM organization_member_domains WHERE org_id = $1 AND user_id = $2`, orgID, userID); err != nil {
+			return err
+		}
+		if len(domainIDs) > 0 {
+			if _, err := tx.Exec(r.Context(), `INSERT INTO organization_member_domains (org_id, user_id, domain_id) SELECT $1, $2, unnest($3::uuid[]) ON CONFLICT DO NOTHING`, orgID, userID, domainIDs); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	meta := map[string]any{"role": in.Role, "previous": previous}
+	if customRoleID != nil {
+		meta["customRoleId"] = *customRoleID
+		meta["customRoleName"] = customRoleName
+	}
+	if len(domainIDs) > 0 {
+		meta["domainIds"] = domainIDs
+	}
+	s.audit(r.Context(), r, p, &orgID, "member.set_role", "user", userID, meta)
 	if complianceChanged {
 		s.audit(r.Context(), r, p, &orgID, "member.set_compliance", "user", userID, map[string]any{"compliance": *in.Compliance})
 	}
@@ -269,7 +383,7 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 }
 
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permMembersWrite)
 	if !ok {
 		return
 	}
@@ -288,11 +402,16 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		s.internalError(w, r, err)
 		return
 	}
-	if role == "owner" && p.orgRole(orgID) != "owner" {
+	currentGrant, err := s.loadMemberGrant(r.Context(), orgID, userID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if !p.canManageMemberRole(orgID, role, currentGrant) {
 		forbidden(w)
 		return
 	}
-	if role == "owner" && owners == 1 {
+	if role == roleOwner && owners == 1 {
 		writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
 		return
 	}
@@ -336,5 +455,124 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		}
 	}
 	wake(s.kickWake)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) resetMemberPassword(w http.ResponseWriter, r *http.Request, p *principal) {
+	orgID, ok := s.orgPerm(w, r, p, permMembersSupport)
+	if !ok {
+		return
+	}
+	userID, ok := pathID(w, r, "userId")
+	if !ok {
+		return
+	}
+	var in struct {
+		Password string `json:"password"`
+	}
+	if !decode(w, r, 4<<10, &in) {
+		return
+	}
+	if len(in.Password) < 12 {
+		writeError(w, http.StatusUnprocessableEntity, "weak_password", "Use a password of at least 12 characters.")
+		return
+	}
+	var role, status, email string
+	var isPlatformAdmin, multiOrg bool
+	err := s.db.QueryRow(r.Context(), `
+		SELECT om.role, u.status, u.email, u.is_platform_admin,
+			EXISTS (SELECT 1 FROM organization_members other WHERE other.user_id = u.id AND other.org_id <> om.org_id)
+		FROM organization_members om JOIN users u ON u.id = om.user_id
+		WHERE om.org_id = $1 AND om.user_id = $2`, orgID, userID).Scan(&role, &status, &email, &isPlatformAdmin, &multiOrg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFound(w)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if status == "deprovisioned" {
+		writeError(w, http.StatusConflict, "account_deprovisioned", "This account is deprovisioned and cannot sign in.")
+		return
+	}
+	if codeStatus, code, msg := p.canSupportMember(orgID, role, isPlatformAdmin, multiOrg); codeStatus != 0 {
+		writeError(w, codeStatus, code, msg)
+		return
+	}
+	hash := auth.HashPassword(in.Password)
+	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, hash); err != nil {
+			return err
+		}
+		if userID == p.User.ID && len(p.sessionHash) > 0 {
+			_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1 AND id_hash <> $2`, userID, p.sessionHash)
+			return err
+		}
+		_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, userID)
+		return err
+	})
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r.Context(), r, p, &orgID, "member.password_reset", "user", userID, map[string]any{"email": email})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setMemberStatus(w http.ResponseWriter, r *http.Request, p *principal) {
+	orgID, ok := s.orgPerm(w, r, p, permMembersSupport)
+	if !ok {
+		return
+	}
+	userID, ok := pathID(w, r, "userId")
+	if !ok {
+		return
+	}
+	var in struct {
+		Status string `json:"status"`
+	}
+	if !decode(w, r, 1<<10, &in) {
+		return
+	}
+	if in.Status != "active" && in.Status != "suspended" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_status", "Status must be active or suspended.")
+		return
+	}
+	if userID == p.User.ID {
+		writeError(w, http.StatusUnprocessableEntity, "self_suspend", "You cannot change the status of your own account.")
+		return
+	}
+	var role, suspendedBy, email string
+	var isPlatformAdmin, multiOrg bool
+	err := s.db.QueryRow(r.Context(), `
+		SELECT om.role, u.suspended_by, u.email, u.is_platform_admin,
+			EXISTS (SELECT 1 FROM organization_members other WHERE other.user_id = u.id AND other.org_id <> om.org_id)
+		FROM organization_members om JOIN users u ON u.id = om.user_id
+		WHERE om.org_id = $1 AND om.user_id = $2`, orgID, userID).Scan(&role, &suspendedBy, &email, &isPlatformAdmin, &multiOrg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFound(w)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if suspendedBy == "mailbox-conversion" {
+		writeError(w, http.StatusConflict, "mailbox_converted", "This account's mailbox was converted to a shared mailbox. Convert it back to a user mailbox to restore the account.")
+		return
+	}
+	if codeStatus, code, msg := p.canSupportMember(orgID, role, isPlatformAdmin, multiOrg); codeStatus != 0 {
+		writeError(w, codeStatus, code, msg)
+		return
+	}
+	changed, err := s.setUserStatus(r.Context(), userID, in.Status, "admin")
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if changed {
+		s.audit(r.Context(), r, p, &orgID, "user."+map[string]string{"active": "restore", "suspended": "suspend"}[in.Status], "user", userID, map[string]any{"email": email, "source": "console"})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -8,6 +8,7 @@ import { Controller, useFieldArray, useForm, useWatch, type UseFormReturn } from
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { DomainChecklist } from "@/components/admin/domain-checklist"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { CopyButton } from "@/components/copy-button"
 import { Field } from "@/components/field"
@@ -19,12 +20,27 @@ import { SwitchField } from "@/components/switch-field"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
-import type { Discovery, IdentityProvider, IdentityProviderInput, Organization, Role } from "@/lib/types"
+import { BUILT_IN_ROLES, ROLE_LABELS } from "@/lib/permissions"
+import { domainsQuery, rolesQuery } from "@/lib/queries"
+import type { Discovery, GroupMapping, IdentityProvider, IdentityProviderInput, Organization, Role } from "@/lib/types"
 
 const HALO_SCOPES = "openid profile email groups"
+const CUSTOM_PREFIX = "custom:"
+
+const mappingSchema = z
+  .object({
+    group: z.string().trim().min(1, "Enter a group name."),
+    orgId: z.string().min(1, "Choose an organization."),
+    roleChoice: z.string().min(1, "Choose a role."),
+    domainIds: z.array(z.string()),
+  })
+  .refine((v) => v.roleChoice !== "domain_admin" || v.domainIds.length > 0, {
+    message: "Choose at least one domain for a domain administrator.",
+    path: ["domainIds"],
+  })
 
 const makeSchema = (requireSecret: boolean) =>
   z.object({
@@ -37,17 +53,39 @@ const makeSchema = (requireSecret: boolean) =>
     scopes: z.string().trim().min(1, "Enter at least the openid scope."),
     autoProvision: z.boolean(),
     adminGroup: z.string().trim(),
-    groupMappings: z.array(
-      z.object({
-        group: z.string().trim().min(1, "Enter a group name."),
-        orgId: z.string().min(1, "Choose an organization."),
-        role: z.enum(["owner", "admin", "member"]),
-      })
-    ),
+    groupMappings: z.array(mappingSchema),
     enabled: z.boolean(),
   })
 
 type Values = z.infer<ReturnType<typeof makeSchema>>
+
+function mappingToRow(m: GroupMapping): Values["groupMappings"][number] {
+  return {
+    group: m.group,
+    orgId: m.orgId,
+    roleChoice: m.role === "custom" && m.customRoleId ? `${CUSTOM_PREFIX}${m.customRoleId}` : m.role,
+    domainIds: m.domainIds ?? [],
+  }
+}
+
+function rowToMapping(row: Values["groupMappings"][number]): GroupMapping {
+  if (row.roleChoice.startsWith(CUSTOM_PREFIX)) {
+    return {
+      group: row.group,
+      orgId: row.orgId,
+      role: "custom",
+      customRoleId: row.roleChoice.slice(CUSTOM_PREFIX.length),
+      domainIds: row.domainIds.length > 0 ? row.domainIds : undefined,
+    }
+  }
+  const role = row.roleChoice as Role
+  return {
+    group: row.group,
+    orgId: row.orgId,
+    role,
+    domainIds: role === "domain_admin" ? row.domainIds : undefined,
+  }
+}
 
 type Editing = { mode: "halo" } | { mode: "generic" } | { mode: "edit"; provider: IdentityProvider }
 
@@ -171,7 +209,7 @@ function defaults(editing: Editing): Values {
       scopes: p.scopes.join(" "),
       autoProvision: p.autoProvision,
       adminGroup: p.adminGroup,
-      groupMappings: p.groupMappings,
+      groupMappings: p.groupMappings.map(mappingToRow),
       enabled: p.enabled,
     }
   }
@@ -217,6 +255,7 @@ function ProviderDialog({ editing, organizations, onClose }: { editing: Editing;
         clientSecret: v.clientSecret || undefined,
         webhookSecret: v.webhookSecret || undefined,
         scopes: v.scopes.split(/\s+/).filter(Boolean),
+        groupMappings: v.groupMappings.map(rowToMapping),
       }
       return editing.mode === "edit"
         ? api<IdentityProvider>(`/admin/identity-providers/${editing.provider.id}`, { method: "PUT", body })
@@ -479,9 +518,138 @@ function DiscoveryResult({ discovery, redirectUri }: { discovery: Discovery; red
   )
 }
 
+function MappingRow({
+  form,
+  organizations,
+  index,
+  onRemove,
+}: {
+  form: UseFormReturn<Values>
+  organizations: Organization[]
+  index: number
+  onRemove: () => void
+}) {
+  const rowOrgId = useWatch({ control: form.control, name: `groupMappings.${index}.orgId` })
+  const roleChoice = useWatch({ control: form.control, name: `groupMappings.${index}.roleChoice` })
+  const errors = form.formState.errors.groupMappings?.[index]
+  const showDomains = roleChoice === "domain_admin" || roleChoice?.startsWith(CUSTOM_PREFIX)
+  const roles = useQuery({ ...rolesQuery(rowOrgId), enabled: !!rowOrgId })
+  const domains = useQuery({ ...domainsQuery(rowOrgId), enabled: !!rowOrgId && showDomains })
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-sunken/50 p-3">
+      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_190px_auto]">
+        <div className="flex flex-col gap-1">
+          <Input
+            aria-label={`Group ${index + 1}`}
+            placeholder="Group name"
+            autoComplete="off"
+            className="font-mono"
+            aria-invalid={!!errors?.group}
+            {...form.register(`groupMappings.${index}.group`)}
+          />
+          {errors?.group && <p className="text-sm text-danger">{errors.group.message}</p>}
+        </div>
+        <Controller
+          control={form.control}
+          name={`groupMappings.${index}.orgId`}
+          render={({ field, fieldState }) => (
+            <Select
+              value={field.value}
+              onValueChange={(next) => {
+                field.onChange(next)
+                form.setValue(`groupMappings.${index}.domainIds`, [])
+                if (form.getValues(`groupMappings.${index}.roleChoice`).startsWith(CUSTOM_PREFIX)) {
+                  form.setValue(`groupMappings.${index}.roleChoice`, "member")
+                }
+              }}
+            >
+              <SelectTrigger aria-label={`Organization for mapping ${index + 1}`} aria-invalid={!!fieldState.error} className="w-full">
+                <SelectValue placeholder="Organization" />
+              </SelectTrigger>
+              <SelectContent>
+                {organizations.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        />
+        <Controller
+          control={form.control}
+          name={`groupMappings.${index}.roleChoice`}
+          render={({ field }) => (
+            <Select
+              value={field.value}
+              onValueChange={(next) => {
+                field.onChange(next)
+                if (next !== "domain_admin" && !next.startsWith(CUSTOM_PREFIX)) {
+                  form.setValue(`groupMappings.${index}.domainIds`, [])
+                }
+              }}
+            >
+              <SelectTrigger aria-label={`Role for mapping ${index + 1}`} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Built-in roles</SelectLabel>
+                  {BUILT_IN_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                {roles.data && roles.data.length > 0 && (
+                  <>
+                    <SelectSeparator />
+                    <SelectGroup>
+                      <SelectLabel>Custom roles</SelectLabel>
+                      {roles.data.map((r) => (
+                        <SelectItem key={r.id} value={`${CUSTOM_PREFIX}${r.id}`}>
+                          {r.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+          )}
+        />
+        <IconButton type="button" label={`Remove mapping ${index + 1}`} onClick={onRemove} className="justify-self-end">
+          <Trash2 />
+        </IconButton>
+      </div>
+      {showDomains && (
+        <Controller
+          control={form.control}
+          name={`groupMappings.${index}.domainIds`}
+          render={({ field, fieldState }) => (
+            <DomainChecklist
+              domains={domains.data}
+              loading={domains.isPending}
+              value={field.value}
+              onChange={field.onChange}
+              label={roleChoice === "domain_admin" ? "Domains" : "Limit to domains (optional)"}
+              hint={
+                roleChoice === "domain_admin"
+                  ? "Choose at least one domain for this mapping."
+                  : "Leave all unchecked for organization-wide access, or choose specific domains."
+              }
+              error={fieldState.error?.message}
+            />
+          )}
+        />
+      )}
+    </div>
+  )
+}
+
 function Provisioning({ form, organizations }: { form: UseFormReturn<Values>; organizations: Organization[] }) {
   const mappings = useFieldArray({ control: form.control, name: "groupMappings" })
-  const errors = form.formState.errors.groupMappings
 
   return (
     <div className="flex flex-col gap-4">
@@ -492,59 +660,10 @@ function Provisioning({ form, organizations }: { form: UseFormReturn<Values>; or
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <span className="text-label text-fg-secondary">Group mappings</span>
-          <p className="text-sm text-fg-tertiary">Members of a group join the organization with the chosen role when they sign in.</p>
+          <p className="text-sm text-fg-tertiary">Members of a group join the organization with the chosen role and optional domain scope when they sign in.</p>
         </div>
         {mappings.fields.map((row, index) => (
-          <div key={row.id} className="grid gap-2 border-b border-border pb-3 sm:grid-cols-[1fr_1fr_160px_auto] sm:border-b-0 sm:pb-0">
-            <div className="flex flex-col gap-1">
-              <Input
-                aria-label={`Group ${index + 1}`}
-                placeholder="Group name"
-                autoComplete="off"
-                className="font-mono"
-                aria-invalid={!!errors?.[index]?.group}
-                {...form.register(`groupMappings.${index}.group`)}
-              />
-              {errors?.[index]?.group && <p className="text-sm text-danger">{errors[index]?.group?.message}</p>}
-            </div>
-            <Controller
-              control={form.control}
-              name={`groupMappings.${index}.orgId`}
-              render={({ field, fieldState }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
-                  <SelectTrigger aria-label={`Organization for mapping ${index + 1}`} aria-invalid={!!fieldState.error} className="w-full">
-                    <SelectValue placeholder="Organization" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {organizations.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            <Controller
-              control={form.control}
-              name={`groupMappings.${index}.role`}
-              render={({ field }) => (
-                <Select value={field.value} onValueChange={(v) => field.onChange(v as Role)}>
-                  <SelectTrigger aria-label={`Role for mapping ${index + 1}`} className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="member">Member</SelectItem>
-                    <SelectItem value="admin">Administrator</SelectItem>
-                    <SelectItem value="owner">Owner</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            <IconButton type="button" label={`Remove mapping ${index + 1}`} onClick={() => mappings.remove(index)} className="justify-self-end">
-              <Trash2 />
-            </IconButton>
-          </div>
+          <MappingRow key={row.id} form={form} organizations={organizations} index={index} onRemove={() => mappings.remove(index)} />
         ))}
         <Button
           type="button"
@@ -552,7 +671,7 @@ function Provisioning({ form, organizations }: { form: UseFormReturn<Values>; or
           size="sm"
           className="self-start"
           disabled={organizations.length === 0}
-          onClick={() => mappings.append({ group: "", orgId: organizations[0]?.id ?? "", role: "member" })}
+          onClick={() => mappings.append({ group: "", orgId: organizations[0]?.id ?? "", roleChoice: "member", domainIds: [] })}
         >
           <Plus aria-hidden />
           Add mapping

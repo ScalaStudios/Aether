@@ -271,7 +271,7 @@ type dmarcSource struct {
 }
 
 func (s *Server) domainDMARC(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsRead)
 	if !ok {
 		return
 	}

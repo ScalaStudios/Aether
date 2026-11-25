@@ -24,8 +24,10 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, Di
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { useSession } from "@/hooks/use-session"
 import { ApiError, api } from "@/lib/api"
 import { formatDate, formatDateTime } from "@/lib/format"
+import { hasPerm } from "@/lib/permissions"
 import type { APIKey, Suppression, Webhook, WebhookDelivery } from "@/lib/types"
 
 type Access = "" | "read" | "write"
@@ -86,16 +88,22 @@ const deliveryStatus: Record<WebhookDelivery["status"], { tone: "success" | "inf
 const chip = "rounded-xs bg-muted px-2 py-1 font-mono text-xs"
 
 export function IntegrationsTab({ orgId }: { orgId: string }) {
+  const session = useSession().data
+  const canReadKeys = hasPerm(session, orgId, "api_keys:read")
+  const canWriteKeys = hasPerm(session, orgId, "api_keys:write")
+  const canReadHooks = hasPerm(session, orgId, "webhooks:read")
+  const canWriteHooks = hasPerm(session, orgId, "webhooks:write")
+
   return (
     <div className="flex flex-col gap-12">
-      <APIKeys orgId={orgId} />
-      <Webhooks orgId={orgId} />
-      <Suppressions orgId={orgId} />
+      {canReadKeys && <APIKeys orgId={orgId} canWrite={canWriteKeys} />}
+      {canReadHooks && <Webhooks orgId={orgId} canWrite={canWriteHooks} />}
+      {canReadHooks && <Suppressions orgId={orgId} />}
     </div>
   )
 }
 
-function APIKeys({ orgId }: { orgId: string }) {
+function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   const qc = useQueryClient()
   const keys = useQuery({ queryKey: ["api-keys", orgId], queryFn: () => api<APIKey[]>(`/organizations/${orgId}/api-keys`) })
   const [creating, setCreating] = useState(false)
@@ -144,10 +152,12 @@ function APIKeys({ orgId }: { orgId: string }) {
         title="API keys"
         description="A key acts as an administrator of this organization, limited to its scopes. Send it as a bearer token."
         actions={
-          <Button onClick={() => setCreating(true)}>
-            <Plus aria-hidden />
-            Create API key
-          </Button>
+          canWrite && (
+            <Button onClick={() => setCreating(true)}>
+              <Plus aria-hidden />
+              Create API key
+            </Button>
+          )
         }
       />
       <QueryView query={keys} empty={<EmptyState icon={KeyRound} title="No API keys" description="Create a key to manage domains, mailboxes and aliases from scripts." />}>
@@ -160,9 +170,11 @@ function APIKeys({ orgId }: { orgId: string }) {
                 <TableHead>Scopes</TableHead>
                 <TableHead>Last used</TableHead>
                 <TableHead>Expires</TableHead>
-                <TableHead className="w-12">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
+                {canWrite && (
+                  <TableHead className="w-12">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -181,11 +193,13 @@ function APIKeys({ orgId }: { orgId: string }) {
                   </TableCell>
                   <TableCell>{k.lastUsedAt ? formatDateTime(k.lastUsedAt) : "Never"}</TableCell>
                   <TableCell>{k.expiresAt ? formatDate(k.expiresAt) : "Never"}</TableCell>
-                  <TableCell>
-                    <IconButton label={`Revoke ${k.name}`} size="icon-sm" onClick={() => setRevoking(k)}>
-                      <Trash2 />
-                    </IconButton>
-                  </TableCell>
+                  {canWrite && (
+                    <TableCell>
+                      <IconButton label={`Revoke ${k.name}`} size="icon-sm" onClick={() => setRevoking(k)}>
+                        <Trash2 />
+                      </IconButton>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -264,7 +278,7 @@ function APIKeys({ orgId }: { orgId: string }) {
   )
 }
 
-function Webhooks({ orgId }: { orgId: string }) {
+function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   const qc = useQueryClient()
   const hooks = useQuery({ queryKey: ["webhooks", orgId], queryFn: () => api<Webhook[]>(`/organizations/${orgId}/webhooks`) })
   const [creating, setCreating] = useState(false)
@@ -317,10 +331,12 @@ function Webhooks({ orgId }: { orgId: string }) {
         title="Webhooks"
         description="Aether posts matching audit and mail delivery events to these URLs as JSON. Verify the Aether-Signature header with your secret."
         actions={
-          <Button variant="secondary" onClick={() => setCreating(true)}>
-            <Plus aria-hidden />
-            Create webhook
-          </Button>
+          canWrite && (
+            <Button variant="secondary" onClick={() => setCreating(true)}>
+              <Plus aria-hidden />
+              Create webhook
+            </Button>
+          )
         }
       />
       <QueryView query={hooks} empty={<EmptyState icon={WebhookIcon} title="No webhooks" description="Create a webhook to receive events such as mailbox.create or message.bounced." />}>
@@ -356,15 +372,19 @@ function Webhooks({ orgId }: { orgId: string }) {
                   <TableCell>{formatDate(h.createdAt)}</TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <IconButton label="Send test event" size="icon-sm" disabled={test.isPending} onClick={() => test.mutate(h)}>
-                        <Send />
-                      </IconButton>
+                      {canWrite && (
+                        <IconButton label="Send test event" size="icon-sm" disabled={test.isPending} onClick={() => test.mutate(h)}>
+                          <Send />
+                        </IconButton>
+                      )}
                       <IconButton label="Deliveries" size="icon-sm" onClick={() => setViewing(h)}>
                         <History />
                       </IconButton>
-                      <IconButton label={`Delete webhook to ${h.url}`} size="icon-sm" onClick={() => setDeleting(h)}>
-                        <Trash2 />
-                      </IconButton>
+                      {canWrite && (
+                        <IconButton label={`Delete webhook to ${h.url}`} size="icon-sm" onClick={() => setDeleting(h)}>
+                          <Trash2 />
+                        </IconButton>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

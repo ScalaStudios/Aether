@@ -66,11 +66,17 @@ func scanDomain(row pgx.Row) (*domain, error) {
 }
 
 func (s *Server) listDomains(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permDomainsRead, permMailboxesWrite, permAliasesWrite, permListsWrite, permSignaturesRead, permMembersWrite)
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT `+domainColumns+` FROM domains WHERE org_id = $1 ORDER BY name`, orgID)
+	var rows pgx.Rows
+	var err error
+	if scoped, isScoped := p.scopedDomains(orgID); isScoped {
+		rows, err = s.db.Query(r.Context(), `SELECT `+domainColumns+` FROM domains WHERE org_id = $1 AND id::text = ANY($2) ORDER BY name`, orgID, scoped)
+	} else {
+		rows, err = s.db.Query(r.Context(), `SELECT `+domainColumns+` FROM domains WHERE org_id = $1 ORDER BY name`, orgID)
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -89,8 +95,12 @@ func (s *Server) listDomains(w http.ResponseWriter, r *http.Request, p *principa
 }
 
 func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permDomainsWrite)
 	if !ok {
+		return
+	}
+	if _, isScoped := p.scopedDomains(orgID); isScoped {
+		forbidden(w)
 		return
 	}
 	var in struct {
@@ -164,7 +174,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	writeJSON(w, http.StatusCreated, d)
 }
 
-func (s *Server) domainFromPath(w http.ResponseWriter, r *http.Request, p *principal) (*domain, bool) {
+func (s *Server) domainFromPath(w http.ResponseWriter, r *http.Request, p *principal, perm string) (*domain, bool) {
 	id, ok := pathID(w, r, "domainId")
 	if !ok {
 		return nil, false
@@ -178,7 +188,7 @@ func (s *Server) domainFromPath(w http.ResponseWriter, r *http.Request, p *princ
 		s.internalError(w, r, err)
 		return nil, false
 	}
-	if !p.canAdminOrg(d.OrgID) {
+	if !p.canOnDomain(d.OrgID, d.ID, perm) {
 		forbidden(w)
 		return nil, false
 	}
@@ -186,13 +196,13 @@ func (s *Server) domainFromPath(w http.ResponseWriter, r *http.Request, p *princ
 }
 
 func (s *Server) getDomain(w http.ResponseWriter, r *http.Request, p *principal) {
-	if d, ok := s.domainFromPath(w, r, p); ok {
+	if d, ok := s.domainFromPath(w, r, p, permDomainsRead); ok {
 		writeJSON(w, http.StatusOK, d)
 	}
 }
 
 func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsWrite)
 	if !ok {
 		return
 	}
@@ -248,7 +258,7 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 }
 
 func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsWrite)
 	if !ok {
 		return
 	}
@@ -445,7 +455,7 @@ func recordMatches(rec *dnsRecord, found, mailHost string) bool {
 }
 
 func (s *Server) domainDNS(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsRead)
 	if !ok {
 		return
 	}
@@ -471,7 +481,7 @@ func (s *Server) domainDNS(w http.ResponseWriter, r *http.Request, p *principal)
 }
 
 func (s *Server) verifyDomain(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsWrite)
 	if !ok {
 		return
 	}

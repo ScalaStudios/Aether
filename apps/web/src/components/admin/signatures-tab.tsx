@@ -1,7 +1,7 @@
 "use client"
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Info, Plus, Trash2 } from "lucide-react"
+import { Globe, Info, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
@@ -10,7 +10,7 @@ import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { MailboxPicker } from "@/components/settings/mail-rules"
-import { QueryView, RowsSkeleton } from "@/components/states"
+import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -18,19 +18,25 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
 import { messageDocument } from "@/lib/mail"
+import { hasPerm, isDomainScoped } from "@/lib/permissions"
 import { domainsQuery, mailboxesQuery } from "@/lib/queries"
 import type { Domain, SignatureTemplate } from "@/lib/types"
 
 const placeholders = ["displayName", "title", "phone", "organization", "domain", "address", "logo", "links"]
 
 export function SignaturesTab({ orgId }: { orgId: string }) {
+  const session = useSession().data
+  const canWrite = hasPerm(session, orgId, "signatures:write")
+  const scoped = isDomainScoped(session, orgId)
   const templates = useQuery({
     queryKey: ["signature-templates", orgId],
     queryFn: () => api<{ builtIn: SignatureTemplate; templates: SignatureTemplate[] }>(`/organizations/${orgId}/signature-templates`),
   })
   const domains = useQuery(domainsQuery(orgId))
   const [scope, setScope] = useState("all")
-  const domain = domains.data?.find((d) => d.id === scope)
+  const domainList = domains.data ?? []
+  const effectiveScope = scoped ? (domainList.some((d) => d.id === scope) ? scope : domainList[0]?.id ?? "") : scope
+  const domain = domainList.find((d) => d.id === effectiveScope)
 
   return (
     <section className="flex flex-col gap-6">
@@ -38,14 +44,14 @@ export function SignaturesTab({ orgId }: { orgId: string }) {
         title="Signature template"
         description="People start their signature from this template in Settings → Signatures, with their own name, job title and phone filled in."
         actions={
-          !!domains.data?.length && (
-            <Select value={scope} onValueChange={setScope}>
+          domainList.length > 0 && (
+            <Select value={effectiveScope} onValueChange={setScope}>
               <SelectTrigger aria-label="Template for" className="w-64">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All domains</SelectItem>
-                {domains.data.map((d) => (
+                {!scoped && <SelectItem value="all">All domains</SelectItem>}
+                {domainList.map((d) => (
                   <SelectItem key={d.id} value={d.id}>
                     @{d.name}
                   </SelectItem>
@@ -55,18 +61,48 @@ export function SignaturesTab({ orgId }: { orgId: string }) {
           )
         }
       />
-      <QueryView query={templates} skeleton={<RowsSkeleton rows={4} />}>
-        {(data) => {
-          const own = data.templates.find((t) => t.domainId === (domain?.id ?? null))
-          const fallback = data.templates.find((t) => t.domainId === null) ?? data.builtIn
-          return <TemplateEditor key={`${scope}-${!!own}`} orgId={orgId} domain={domain} template={own ?? { ...fallback, domainId: domain?.id ?? null }} builtIn={data.builtIn} stored={!!own} />
-        }}
-      </QueryView>
+      {scoped && domains.isPending ? (
+        <RowsSkeleton rows={4} />
+      ) : scoped && domainList.length === 0 ? (
+        <EmptyState icon={Globe} title="No assigned domains" description="Ask an administrator to assign at least one domain to your role." />
+      ) : (
+        <QueryView query={templates} skeleton={<RowsSkeleton rows={4} />}>
+          {(data) => {
+            const own = data.templates.find((t) => t.domainId === (domain?.id ?? null))
+            const fallback = data.templates.find((t) => t.domainId === null) ?? data.builtIn
+            return (
+              <TemplateEditor
+                key={`${effectiveScope}-${!!own}`}
+                orgId={orgId}
+                domain={domain}
+                template={own ?? { ...fallback, domainId: domain?.id ?? null }}
+                builtIn={data.builtIn}
+                stored={!!own}
+                canWrite={canWrite}
+              />
+            )
+          }}
+        </QueryView>
+      )}
     </section>
   )
 }
 
-function TemplateEditor({ orgId, domain, template, builtIn, stored }: { orgId: string; domain?: Domain; template: SignatureTemplate; builtIn: SignatureTemplate; stored: boolean }) {
+function TemplateEditor({
+  orgId,
+  domain,
+  template,
+  builtIn,
+  stored,
+  canWrite,
+}: {
+  orgId: string
+  domain?: Domain
+  template: SignatureTemplate
+  builtIn: SignatureTemplate
+  stored: boolean
+  canWrite: boolean
+}) {
   const qc = useQueryClient()
   const session = useSession().data
   const [html, setHtml] = useState(template.html)
@@ -105,13 +141,16 @@ function TemplateEditor({ orgId, domain, template, builtIn, stored }: { orgId: s
       className="animate-content flex flex-col gap-6 rounded-xl border border-border bg-card p-6"
       onSubmit={(e) => {
         e.preventDefault()
+        if (!canWrite) return
         save.mutate()
       }}
     >
       {domain && !stored && (
         <p className="flex gap-3 text-sm text-fg-secondary">
           <Info aria-hidden className="size-4 shrink-0 translate-y-0.5 text-info" />
-          @{domain.name} uses the template for all domains. Saving here gives it a template of its own.
+          {canWrite
+            ? `@${domain.name} uses the template for all domains. Saving here gives it a template of its own.`
+            : `@${domain.name} uses the template for all domains.`}
         </p>
       )}
       <div className="grid gap-6 lg:grid-cols-2">
@@ -131,26 +170,31 @@ function TemplateEditor({ orgId, domain, template, builtIn, stored }: { orgId: s
               </>
             }
           >
-            <Textarea id="template-html" rows={14} spellCheck={false} value={html} className="font-mono text-sm" onChange={(e) => setHtml(e.target.value)} />
+            <Textarea id="template-html" rows={14} spellCheck={false} readOnly={!canWrite} value={html} className="font-mono text-sm" onChange={(e) => setHtml(e.target.value)} />
           </Field>
           <Field id="template-logo" label="Logo width" hint="In pixels. The logo is the light theme logo from Branding, when there is one.">
-            <Input id="template-logo" type="number" min={16} max={240} value={logoWidth} className="w-28" onChange={(e) => setLogoWidth(e.target.value)} />
+            <Input id="template-logo" type="number" min={16} max={240} readOnly={!canWrite} value={logoWidth} className="w-28" onChange={(e) => setLogoWidth(e.target.value)} />
           </Field>
           <fieldset className="flex flex-col gap-2">
             <legend className="pb-2 text-label text-fg-secondary">Links</legend>
+            {links.length === 0 && !canWrite && <p className="text-sm text-fg-tertiary">No links configured.</p>}
             {links.map((l, i) => (
               <div key={i} className="flex gap-2">
-                <Input aria-label={`Label of link ${i + 1}`} placeholder="LinkedIn" maxLength={40} value={l.label} className="w-36 shrink-0" onChange={(e) => setLink(i, { label: e.target.value })} />
-                <Input aria-label={`Address of link ${i + 1}`} placeholder="https://" value={l.url} spellCheck={false} onChange={(e) => setLink(i, { url: e.target.value })} />
-                <IconButton label={`Remove link ${i + 1}`} onClick={() => setLinks((list) => list.filter((_, j) => j !== i))}>
-                  <Trash2 />
-                </IconButton>
+                <Input aria-label={`Label of link ${i + 1}`} placeholder="LinkedIn" maxLength={40} readOnly={!canWrite} value={l.label} className="w-36 shrink-0" onChange={(e) => setLink(i, { label: e.target.value })} />
+                <Input aria-label={`Address of link ${i + 1}`} placeholder="https://" readOnly={!canWrite} value={l.url} spellCheck={false} onChange={(e) => setLink(i, { url: e.target.value })} />
+                {canWrite && (
+                  <IconButton label={`Remove link ${i + 1}`} onClick={() => setLinks((list) => list.filter((_, j) => j !== i))}>
+                    <Trash2 />
+                  </IconButton>
+                )}
               </div>
             ))}
-            <Button type="button" variant="secondary" size="sm" className="self-start" disabled={links.length >= 10} onClick={() => setLinks((list) => [...list, { label: "", url: "" }])}>
-              <Plus aria-hidden />
-              Add link
-            </Button>
+            {canWrite && (
+              <Button type="button" variant="secondary" size="sm" className="self-start" disabled={links.length >= 10} onClick={() => setLinks((list) => [...list, { label: "", url: "" }])}>
+                <Plus aria-hidden />
+                Add link
+              </Button>
+            )}
             <p className="text-sm text-fg-tertiary">Shown where the template has {"{{links}}"}, separated by dots. Up to 10.</p>
           </fieldset>
         </div>
@@ -178,28 +222,30 @@ function TemplateEditor({ orgId, domain, template, builtIn, stored }: { orgId: s
           )}
         </div>
       </div>
-      <div className="flex flex-wrap gap-3">
-        <Button type="submit" variant="secondary" loading={save.isPending}>
-          Save template
-        </Button>
-        {domain && stored ? (
-          <Button type="button" variant="quiet" loading={remove.isPending} onClick={() => remove.mutate()}>
-            Use the template for all domains
+      {canWrite && (
+        <div className="flex flex-wrap gap-3">
+          <Button type="submit" variant="secondary" loading={save.isPending}>
+            Save template
           </Button>
-        ) : (
-          <Button
-            type="button"
-            variant="quiet"
-            disabled={html === builtIn.html && logoWidth === String(builtIn.logoWidth)}
-            onClick={() => {
-              setHtml(builtIn.html)
-              setLogoWidth(String(builtIn.logoWidth))
-            }}
-          >
-            Restore the default layout
-          </Button>
-        )}
-      </div>
+          {domain && stored ? (
+            <Button type="button" variant="quiet" loading={remove.isPending} onClick={() => remove.mutate()}>
+              Use the template for all domains
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="quiet"
+              disabled={html === builtIn.html && logoWidth === String(builtIn.logoWidth)}
+              onClick={() => {
+                setHtml(builtIn.html)
+                setLogoWidth(String(builtIn.logoWidth))
+              }}
+            >
+              Restore the default layout
+            </Button>
+          )}
+        </div>
+      )}
     </form>
   )
 }

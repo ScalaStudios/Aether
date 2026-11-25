@@ -40,8 +40,12 @@ type delegate struct {
 }
 
 func (s *Server) listDelegates(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesDelegates, permMailboxesRead)
 	if !ok {
+		return
+	}
+	if !p.canReadDelegates(m.OrgID, m.DomainID) {
+		forbidden(w)
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `
@@ -60,7 +64,7 @@ func (s *Server) listDelegates(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesDelegates)
 	if !ok {
 		return
 	}
@@ -146,7 +150,7 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 }
 
 func (s *Server) removeDelegate(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesDelegates)
 	if !ok {
 		return
 	}
@@ -188,10 +192,12 @@ func (s *Server) managedMailbox(w http.ResponseWriter, r *http.Request, p *princ
 	}
 	m := &ownedMailbox{}
 	err := s.db.QueryRow(r.Context(), `
-		SELECT m.id, m.org_id, m.address, m.display_name, m.kind FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		SELECT m.id, m.org_id, m.domain_id, m.address, m.display_name, m.kind FROM mailboxes m JOIN domains d ON d.id = m.domain_id
 		WHERE m.id = $1 AND m.active AND d.active AND d.verified_at IS NOT NULL`, id).
-		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &m.Kind)
-	if err == nil && p.canAdminOrg(m.OrgID) {
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.DisplayName, &m.Kind)
+	write := r.Method != http.MethodGet && r.Method != http.MethodHead
+	if err == nil && p.canManageMailboxSettings(m.OrgID, m.DomainID, write) {
+		m.SendAs = true
 		return m, true
 	}
 	if p.apiKey != nil {

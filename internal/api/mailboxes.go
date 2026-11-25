@@ -61,11 +61,15 @@ func isForeignKeyViolation(err error) bool {
 }
 
 func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permMailboxesRead, permListsWrite, permSignaturesRead)
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, used_bytes FROM mailboxes WHERE org_id = $1 ORDER BY address`, orgID)
+	scoped, isScoped := p.scopedDomains(orgID)
+	if !isScoped {
+		scoped = nil
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, used_bytes FROM mailboxes WHERE org_id = $1 AND ($2::text[] IS NULL OR domain_id::text = ANY($2)) ORDER BY address`, orgID, scoped)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -114,7 +118,7 @@ func (s *Server) orgDomain(r *http.Request, orgID, domainID string) (string, err
 }
 
 func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permMailboxesWrite)
 	if !ok {
 		return
 	}
@@ -171,6 +175,10 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	if in.Kind == "resource" && !s.validResource(r.Context(), w, r, orgID, in.Resource) {
+		return
+	}
+	if !p.allowsDomain(orgID, in.DomainID) {
+		forbidden(w)
 		return
 	}
 	address := in.LocalPart + "@" + domainName
@@ -249,7 +257,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 	writeJSON(w, http.StatusCreated, m)
 }
 
-func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *principal) (*mailbox, bool) {
+func (s *Server) mailboxForPerm(w http.ResponseWriter, r *http.Request, p *principal, perms ...string) (*mailbox, bool) {
 	id, ok := pathID(w, r, "mailboxId")
 	if !ok {
 		return nil, false
@@ -265,7 +273,7 @@ func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *prin
 		s.internalError(w, r, err)
 		return nil, false
 	}
-	if !p.canAdminOrg(m.OrgID) {
+	if !p.canAny(m.OrgID, perms...) || !p.allowsDomain(m.OrgID, m.DomainID) {
 		forbidden(w)
 		return nil, false
 	}
@@ -273,7 +281,7 @@ func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *prin
 }
 
 func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesSettings)
 	if !ok {
 		return
 	}
@@ -366,7 +374,7 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) deleteMailbox(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesWrite)
 	if !ok {
 		return
 	}
@@ -409,7 +417,7 @@ func (s *Server) deleteMailbox(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) convertMailbox(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesWrite)
 	if !ok {
 		return
 	}
@@ -643,6 +651,68 @@ func (s *Server) revokeAppPassword(w http.ResponseWriter, r *http.Request, p *pr
 		return
 	}
 	s.audit(r.Context(), r, p, &orgID, "app_password.revoke", "app_password", id, nil)
+	wake(s.kickWake)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type mailboxAppPassword struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	UserID    string    `json:"userId"`
+	UserEmail string    `json:"userEmail"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (s *Server) listMailboxAppPasswords(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesAppPass, permMailboxesRead)
+	if !ok {
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `
+		SELECT a.id, a.name, a.user_id, u.email, a.created_at
+		FROM app_passwords a JOIN users u ON u.id = a.user_id
+		WHERE a.mailbox_id = $1 AND a.revoked_at IS NULL
+		ORDER BY a.created_at DESC`, m.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[mailboxAppPassword])
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(out))
+}
+
+func (s *Server) revokeMailboxAppPassword(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesAppPass)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var name string
+	err := pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(r.Context(), `
+			UPDATE app_passwords SET revoked_at = now()
+			WHERE id = $1 AND mailbox_id = $2 AND revoked_at IS NULL
+			RETURNING name`, id, m.ID).Scan(&name); err != nil {
+			return err
+		}
+		return queueKicks(r.Context(), tx, []string{m.Address})
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFound(w)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r.Context(), r, p, &m.OrgID, "app_password.revoke", "app_password", id, map[string]any{"mailbox": m.Address, "name": name})
 	wake(s.kickWake)
 	w.WriteHeader(http.StatusNoContent)
 }

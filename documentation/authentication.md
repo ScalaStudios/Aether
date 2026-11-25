@@ -39,9 +39,9 @@ Halo does not publish role or tenant claims, so Aether maps Halo groups to Aethe
 4. Optionally configure provisioning:
    - **Auto-provision:** creates an Aether account on first sign-in. If the user's verified email belongs to a verified Aether domain, it also creates that mailbox and adds the user to the domain's organization. An address containing `*` or `?` is never provisioned; that sign-in fails with `not_provisioned`.
    - **Administrator group:** members of this Halo group become platform administrators.
-   - **Group mappings:** members of a Halo group get the mapped role (owner, admin, or member) in an organization.
+   - **Group mappings:** members of a Halo group get the mapped role (any built-in role such as `owner`, `admin`, `domain_admin`, `helpdesk`, `list_admin`, `auditor` or `member`, or a custom organization role) with optional domain scopes in an organization. See [Roles and permissions](roles.md).
 
-Group mappings only grant or upgrade roles. They never remove a role. To revoke access, do it in Aether, or suspend the user in Halo.
+Group mappings only grant or upgrade roles, and combine domain scopes across matching mappings for the same role. They never remove a role. To revoke access, do it in Aether, or suspend the user in Halo.
 
 ### Account matching
 
@@ -57,7 +57,7 @@ Otherwise sign-in fails with `not_provisioned`. Aether never stores Halo passwor
 
 - Halo rejects suspended or deprovisioned users at its token and userinfo endpoints, so they cannot start a new Aether session.
 - Aether sessions created through OIDC expire after 12 hours.
-- A platform administrator can suspend or restore any account under **Administration → Members**. Suspension ends every web session at once, blocks sign-in, makes Dovecot reject the account's app passwords, which stops IMAP and SMTP, ends its open IMAP sessions, including sessions opened for delegated mailboxes with an app password or an access token, and removes it from the shared mailboxes it belongs to until it is restored. Mail keeps arriving in the account's mailboxes. An account that was deprovisioned by converting its mailbox to a shared mailbox cannot be restored here: `PATCH /api/v1/admin/users/{id}` answers `409 mailbox_converted`, and only converting the mailbox back restores it.
+- Platform administrators can suspend or restore any account under **Administration → Members**. Organization owners, administrators and helpdesk can also suspend, restore and reset passwords for single-organization accounts within their role's authority (see [Roles and permissions](roles.md#security-boundaries)). Suspension ends every web session at once, blocks sign-in, makes Dovecot reject the account's app passwords, which stops IMAP and SMTP, ends its open IMAP sessions, including sessions opened for delegated mailboxes with an app password or an access token, and removes it from the shared mailboxes it belongs to until it is restored. Mail keeps arriving in the account's mailboxes. An account that was deprovisioned by converting its mailbox to a shared mailbox cannot be restored here: `PATCH /api/v1/admin/users/{id}` and `PATCH /api/v1/organizations/{orgId}/members/{userId}/status` answer `409 mailbox_converted`, and only converting the mailbox back restores it.
 
 To have Halo suspensions take effect in Aether immediately, connect Halo's webhooks:
 

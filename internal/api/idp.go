@@ -126,10 +126,76 @@ func (s *Server) validateProviderInput(w http.ResponseWriter, r *http.Request, i
 	case !slices.Contains(in.Scopes, "openid"):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_scopes", "Scopes must include openid.")
 	default:
-		for _, m := range in.GroupMappings {
-			if m.Group == "" || !uuidPattern.MatchString(m.OrgID) || (m.Role != "owner" && m.Role != "admin" && m.Role != "member") {
-				writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Each group mapping needs a group name, an organization, and a role of owner, admin, or member.")
+		for i := range in.GroupMappings {
+			m := &in.GroupMappings[i]
+			m.Group = strings.TrimSpace(m.Group)
+			m.CustomRoleID = strings.ToLower(strings.TrimSpace(m.CustomRoleID))
+			if m.Group == "" || !uuidPattern.MatchString(m.OrgID) || !isValidOrgRole(m.Role) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Each group mapping needs a group name, an organization, and a valid role.")
 				return false
+			}
+			var orgExists bool
+			if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1)`, m.OrgID).Scan(&orgExists); err != nil {
+				s.internalError(w, r, err)
+				return false
+			}
+			if !orgExists {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Each group mapping must reference an existing organization.")
+				return false
+			}
+			if m.Role == roleCustom {
+				var roleExists bool
+				if uuidPattern.MatchString(m.CustomRoleID) {
+					if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM organization_roles WHERE id = $1 AND org_id = $2)`, m.CustomRoleID, m.OrgID).Scan(&roleExists); err != nil {
+						s.internalError(w, r, err)
+						return false
+					}
+				}
+				if !roleExists {
+					writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Custom role mappings must choose a custom role from the selected organization.")
+					return false
+				}
+			} else if m.CustomRoleID != "" {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Only custom role mappings can specify a custom role.")
+				return false
+			}
+			switch m.Role {
+			case roleDomainAdmin:
+				if len(m.DomainIDs) == 0 {
+					writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Domain administrator mappings must choose at least one domain.")
+					return false
+				}
+				clean, valid, err := s.validateOrgDomains(r.Context(), m.OrgID, m.DomainIDs)
+				if err != nil {
+					s.internalError(w, r, err)
+					return false
+				}
+				if !valid {
+					writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Domain scopes must belong to the mapped organization.")
+					return false
+				}
+				m.DomainIDs = clean
+			case roleCustom:
+				if len(m.DomainIDs) > 0 {
+					clean, valid, err := s.validateOrgDomains(r.Context(), m.OrgID, m.DomainIDs)
+					if err != nil {
+						s.internalError(w, r, err)
+						return false
+					}
+					if !valid {
+						writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Domain scopes must belong to the mapped organization.")
+						return false
+					}
+					m.DomainIDs = clean
+				} else {
+					m.DomainIDs = nil
+				}
+			default:
+				if len(m.DomainIDs) > 0 {
+					writeError(w, http.StatusUnprocessableEntity, "invalid_group_mapping", "Domain scopes can only be set on domain administrator or custom role mappings.")
+					return false
+				}
+				m.DomainIDs = nil
 			}
 		}
 		return true

@@ -84,11 +84,17 @@ func (t *signatureTemplate) problem() string {
 }
 
 func (s *Server) listSignatureTemplates(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permSignaturesRead)
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT domain_id, html, links, logo_width, updated_at FROM signature_templates WHERE org_id = $1 ORDER BY domain_id NULLS FIRST`, orgID)
+	var rows pgx.Rows
+	var err error
+	if scoped, isScoped := p.scopedDomains(orgID); isScoped {
+		rows, err = s.db.Query(r.Context(), `SELECT domain_id, html, links, logo_width, updated_at FROM signature_templates WHERE org_id = $1 AND (domain_id IS NULL OR domain_id::text = ANY($2)) ORDER BY domain_id NULLS FIRST`, orgID, scoped)
+	} else {
+		rows, err = s.db.Query(r.Context(), `SELECT domain_id, html, links, logo_width, updated_at FROM signature_templates WHERE org_id = $1 ORDER BY domain_id NULLS FIRST`, orgID)
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -102,7 +108,7 @@ func (s *Server) listSignatureTemplates(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) saveSignatureTemplate(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permSignaturesWrite)
 	if !ok {
 		return
 	}
@@ -113,6 +119,12 @@ func (s *Server) saveSignatureTemplate(w http.ResponseWriter, r *http.Request, p
 	if msg := in.problem(); msg != "" {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_template", msg)
 		return
+	}
+	if _, isScoped := p.scopedDomains(orgID); isScoped {
+		if in.DomainID == nil || !p.allowsDomain(orgID, *in.DomainID) {
+			forbidden(w)
+			return
+		}
 	}
 	if in.DomainID != nil {
 		var exists bool
@@ -140,7 +152,7 @@ func (s *Server) saveSignatureTemplate(w http.ResponseWriter, r *http.Request, p
 }
 
 func (s *Server) deleteSignatureTemplate(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permSignaturesWrite)
 	if !ok {
 		return
 	}
@@ -151,6 +163,12 @@ func (s *Server) deleteSignatureTemplate(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		domainID = &v
+	}
+	if _, isScoped := p.scopedDomains(orgID); isScoped {
+		if domainID == nil || !p.allowsDomain(orgID, *domainID) {
+			forbidden(w)
+			return
+		}
 	}
 	tag, err := s.db.Exec(r.Context(), `DELETE FROM signature_templates WHERE org_id = $1 AND domain_id IS NOT DISTINCT FROM $2`, orgID, domainID)
 	if err != nil {
@@ -166,7 +184,7 @@ func (s *Server) deleteSignatureTemplate(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) previewSignatureTemplate(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permSignaturesRead)
 	if !ok {
 		return
 	}
@@ -184,6 +202,22 @@ func (s *Server) previewSignatureTemplate(w http.ResponseWriter, r *http.Request
 	if !uuidPattern.MatchString(in.MailboxID) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose a mailbox in this organization to preview with.")
 		return
+	}
+	if _, isScoped := p.scopedDomains(orgID); isScoped {
+		var domainID string
+		err := s.db.QueryRow(r.Context(), `SELECT domain_id FROM mailboxes WHERE id = $1 AND org_id = $2`, in.MailboxID, orgID).Scan(&domainID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose a mailbox in this organization to preview with.")
+			return
+		}
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if !p.allowsDomain(orgID, domainID) {
+			forbidden(w)
+			return
+		}
 	}
 	out, err := s.renderSignature(r.Context(), in.MailboxID, orgID, &in.signatureTemplate, nil)
 	if errors.Is(err, pgx.ErrNoRows) {

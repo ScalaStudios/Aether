@@ -17,6 +17,7 @@ import (
 type ownedMailbox struct {
 	ID                   string
 	OrgID                string
+	DomainID             string
 	Address              string
 	DisplayName          string
 	Kind, Access         string
@@ -26,9 +27,9 @@ type ownedMailbox struct {
 func (s *Server) accessibleMailbox(ctx context.Context, id, userID string) (*ownedMailbox, string, error) {
 	m := &ownedMailbox{}
 	err := s.db.QueryRow(ctx, `
-		SELECT m.id, m.org_id, m.address, m.display_name, m.kind, `+mailboxAccessLevel("$2")+`, `+mailboxSendAs("$2")+`, `+mailboxSendOnBehalf("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		SELECT m.id, m.org_id, m.domain_id, m.address, m.display_name, m.kind, `+mailboxAccessLevel("$2")+`, `+mailboxSendAs("$2")+`, `+mailboxSendOnBehalf("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
 		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND 'webmail' = ANY(m.protocols) AND d.active AND d.verified_at IS NOT NULL`, id, userID).
-		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &m.Kind, &m.Access, &m.SendAs, &m.SendOnBehalf)
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.DisplayName, &m.Kind, &m.Access, &m.SendAs, &m.SendOnBehalf)
 	return m, m.Access, err
 }
 

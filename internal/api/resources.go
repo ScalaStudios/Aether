@@ -173,7 +173,7 @@ func (s *Server) listResources(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) updateResource(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.mailboxForAdmin(w, r, p)
+	m, ok := s.mailboxForPerm(w, r, p, permMailboxesWrite)
 	if !ok {
 		return
 	}

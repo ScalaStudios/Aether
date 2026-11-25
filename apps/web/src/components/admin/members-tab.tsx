@@ -2,13 +2,15 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Ban, Ellipsis, KeyRound, MonitorSmartphone, Pencil, Plus, RotateCcw, ShieldOff, UserMinus, Users } from "lucide-react"
+import { Ban, KeyRound, MonitorSmartphone, Pencil, Plus, RefreshCw, RotateCcw, ShieldOff, UserMinus, Users } from "lucide-react"
 import { useState } from "react"
-import { Controller, useForm } from "react-hook-form"
+import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { DomainChecklist } from "@/components/admin/domain-checklist"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { CopyButton } from "@/components/copy-button"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
@@ -19,65 +21,149 @@ import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
-import { membersQuery } from "@/lib/queries"
-import type { Member, Role } from "@/lib/types"
+import { plural } from "@/lib/format"
+import {
+  BUILT_IN_ROLES,
+  canEditTargetMember,
+  canSupportTarget,
+  hasPerm,
+  orgMembership,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  roleBadgeTone,
+  roleLabel,
+} from "@/lib/permissions"
+import { domainsQuery, membersQuery, rolesQuery } from "@/lib/queries"
+import type { BuiltInRole, Member, Role } from "@/lib/types"
 
-const roles: Record<Role, string> = { owner: "Owner", admin: "Administrator", member: "Member" }
+const CUSTOM_PREFIX = "custom:"
 
-const schema = z.object({
-  email: z.email("Enter a valid email address."),
-  role: z.enum(["owner", "admin", "member"]),
-  compliance: z.boolean(),
+const memberSchema = z
+  .object({
+    email: z.email("Enter a valid email address."),
+    roleChoice: z.string().min(1, "Choose a role."),
+    domainIds: z.array(z.string()),
+    compliance: z.boolean(),
+  })
+  .refine((v) => v.roleChoice !== "domain_admin" || v.domainIds.length > 0, {
+    message: "Choose at least one domain for a domain administrator.",
+    path: ["domainIds"],
+  })
+
+type MemberValues = z.infer<typeof memberSchema>
+
+const passwordSchema = z.object({
+  password: z.string().min(12, "Use at least 12 characters."),
 })
 
-type Values = z.infer<typeof schema>
+type PasswordValues = z.infer<typeof passwordSchema>
+
+function generatePassword(length = 20): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_"
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("")
+}
+
+function choiceFromMember(member: Member): string {
+  if (member.role === "custom" && member.customRoleId) return `${CUSTOM_PREFIX}${member.customRoleId}`
+  return member.role
+}
+
+function parseChoice(choice: string): { role: Role; customRoleId?: string } {
+  if (choice.startsWith(CUSTOM_PREFIX)) {
+    return { role: "custom", customRoleId: choice.slice(CUSTOM_PREFIX.length) }
+  }
+  return { role: choice as BuiltInRole }
+}
 
 export function MembersTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
+  const session = useSession().data
+  const platformAdmin = session?.user.isPlatformAdmin ?? false
+  const callerRole = orgMembership(session, orgId)?.role
+  const owner = platformAdmin || callerRole === "owner"
+  const [sessionsOf, setSessionsOf] = useState<Member | null>(null)
+  const [resettingTwoFactor, setResettingTwoFactor] = useState<Member | null>(null)
+  const canWrite = hasPerm(session, orgId, "members:write")
+  const canSupport = hasPerm(session, orgId, "members:support")
+  const canReadDomains = hasPerm(session, orgId, "domains:read", "members:write")
+  const canReadRoles = hasPerm(session, orgId, "roles:read", "members:write")
+
   const members = useQuery(membersQuery(orgId))
+  const domains = useQuery({ ...domainsQuery(orgId), enabled: canReadDomains })
+  const orgRoles = useQuery({ ...rolesQuery(orgId), enabled: canReadRoles })
+
   const [editing, setEditing] = useState<Member | "new" | null>(null)
   const [suspending, setSuspending] = useState<Member | null>(null)
+  const [resetting, setResetting] = useState<Member | null>(null)
   const [removing, setRemoving] = useState<Member | null>(null)
-  const [sessionsOf, setSessionsOf] = useState<Member | null>(null)
-  const [resettingPassword, setResettingPassword] = useState<Member | null>(null)
-  const [resettingTwoFactor, setResettingTwoFactor] = useState<Member | null>(null)
-  const [newPassword, setNewPassword] = useState("")
-  const session = useSession()
-  const platformAdmin = session.data?.user.isPlatformAdmin ?? false
-  const owner = platformAdmin || session.data?.memberships.some((m) => m.orgId === orgId && m.role === "owner")
+
+  const form = useForm<MemberValues>({
+    resolver: zodResolver(memberSchema),
+    defaultValues: { email: "", roleChoice: "member", domainIds: [], compliance: false },
+  })
+  const roleChoice = useWatch({ control: form.control, name: "roleChoice" })
+
+  const passwordForm = useForm<PasswordValues>({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: { password: "" },
+  })
+  const draftPassword = useWatch({ control: passwordForm.control, name: "password" })
+
+  const assignableBuiltIn: BuiltInRole[] = BUILT_IN_ROLES.filter((r) => {
+    if (platformAdmin || callerRole === "owner") return true
+    if (callerRole === "admin") return r !== "owner"
+    return r !== "owner" && r !== "admin"
+  })
 
   const setStatus = useMutation({
     mutationFn: ({ member, status }: { member: Member; status: "active" | "suspended" }) =>
-      api(`/admin/users/${member.userId}`, { method: "PATCH", body: { status } }),
+      platformAdmin
+        ? api(`/admin/users/${member.userId}`, { method: "PATCH", body: { status } })
+        : api(`/organizations/${orgId}/members/${member.userId}/status`, { method: "PATCH", body: { status } }),
     onSuccess: (_d, { member, status }) => {
       toast.success(status === "suspended" ? `Suspended ${member.email}` : `Restored ${member.email}`)
       qc.invalidateQueries({ queryKey: ["members", orgId] })
       setSuspending(null)
     },
   })
+
+  const resetPassword = useMutation({
+    mutationFn: ({ member, password }: { member: Member; password: string }) =>
+      api(`/organizations/${orgId}/members/${member.userId}/password`, { method: "POST", body: { password } }),
+    meta: { silent: true },
+    onSuccess: (_d, { member }) => {
+      toast.success(`Password updated for ${member.email}`)
+      qc.invalidateQueries({ queryKey: ["members", orgId] })
+      setResetting(null)
+      passwordForm.reset()
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === "weak_password") {
+        passwordForm.setError("password", { message: error.message })
+      } else {
+        toast.error(errorMessage(error))
+      }
+    },
+  })
+
   const remove = useMutation({
     mutationFn: (member: Member) => api(`/organizations/${orgId}/members/${member.userId}`, { method: "DELETE" }),
     meta: { silent: true },
     onSuccess: (_d, member) => {
       toast.success(`Removed ${member.email}`)
       qc.invalidateQueries({ queryKey: ["members", orgId] })
+      qc.invalidateQueries({ queryKey: ["roles", orgId] })
       setRemoving(null)
     },
   })
-  const resetPassword = useMutation({
-    mutationFn: (member: Member) => api(`/admin/users/${member.userId}/password`, { method: "PUT", body: { password: newPassword } }),
-    meta: { silent: true },
-    onSuccess: (_d, member) => {
-      toast.success(`Reset the password of ${member.email}`, { description: "They were signed out everywhere." })
-      closePasswordReset()
-    },
-  })
+
   const resetTwoFactor = useMutation({
     mutationFn: (member: Member) => api(`/admin/users/${member.userId}/two-factor`, { method: "DELETE" }),
     onSuccess: (_d, member) => {
@@ -86,32 +172,45 @@ export function MembersTab({ orgId }: { orgId: string }) {
       setResettingTwoFactor(null)
     },
   })
-  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", role: "member", compliance: false } })
-
-  function closePasswordReset() {
-    setResettingPassword(null)
-    setNewPassword("")
-    resetPassword.reset()
-  }
 
   const save = useMutation({
-    mutationFn: ({ compliance, ...values }: Values) =>
-      api(`/organizations/${orgId}/members`, { method: "POST", body: owner ? { ...values, compliance } : values }),
+    mutationFn: (values: MemberValues) => {
+      const { role, customRoleId } = parseChoice(values.roleChoice)
+      const domainIds = role === "domain_admin" || role === "custom" ? values.domainIds : []
+      return api(`/organizations/${orgId}/members`, {
+        method: "POST",
+        body: owner ? { email: values.email, role, customRoleId, domainIds, compliance: values.compliance } : { email: values.email, role, customRoleId, domainIds },
+      })
+    },
     meta: { silent: true },
     onSuccess: (_d, values) => {
-      toast.success(editing === "new" ? `Added ${values.email}` : `Changed the role of ${values.email}`)
+      toast.success(editing === "new" ? `Added ${values.email}` : `Updated role for ${values.email}`)
       qc.invalidateQueries({ queryKey: ["members", orgId] })
+      qc.invalidateQueries({ queryKey: ["roles", orgId] })
       close()
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === "unknown_user") {
         form.setError("email", { message: "No Aether account uses this email. Create a mailbox for it, or ask the person to sign in once with single sign-on." })
-      } else toast.error(errorMessage(error))
+      } else if (error instanceof ApiError && error.code === "invalid_domains") {
+        form.setError("domainIds", { message: error.message })
+      } else {
+        toast.error(errorMessage(error))
+      }
     },
   })
 
   function open(member: Member | "new") {
-    form.reset(member === "new" ? { email: "", role: "member", compliance: false } : { email: member.email, role: member.role, compliance: member.compliance })
+    if (member === "new") {
+      form.reset({ email: "", roleChoice: "member", domainIds: [], compliance: false })
+    } else {
+      form.reset({
+        email: member.email,
+        roleChoice: choiceFromMember(member),
+        domainIds: member.domainIds,
+        compliance: member.compliance,
+      })
+    }
     setEditing(member)
   }
 
@@ -120,16 +219,39 @@ export function MembersTab({ orgId }: { orgId: string }) {
     form.reset()
   }
 
+  function domainNames(ids: string[]): string[] {
+    if (!domains.data) return []
+    const byId = new Map(domains.data.map((d) => [d.id, d.name]))
+    return ids.map((id) => byId.get(id)).filter((n): n is string => Boolean(n))
+  }
+
+  const parsedRole = parseChoice(roleChoice || "member")
+  const showDomains = parsedRole.role === "domain_admin" || parsedRole.role === "custom"
+  const roleHint =
+    parsedRole.role === "custom"
+      ? orgRoles.data?.find((r) => r.id === parsedRole.customRoleId)?.description || "Custom organization role."
+      : ROLE_DESCRIPTIONS[parsedRole.role as BuiltInRole]
+
+  const hasAnyRowAction = canWrite || canSupport
+
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
         title="Members"
-        description="People with access to this organization. Only owners can grant or change the owner role."
+        description={
+          canWrite
+            ? "People with access to this organization, their administrative roles and optional domain scopes."
+            : canSupport
+              ? "Support ordinary members by resetting passwords or suspending and restoring accounts."
+              : "People with access to this organization."
+        }
         actions={
-          <Button onClick={() => open("new")}>
-            <Plus aria-hidden />
-            Add member
-          </Button>
+          canWrite && (
+            <Button onClick={() => open("new")}>
+              <Plus aria-hidden />
+              Add member
+            </Button>
+          )
         }
       />
       <QueryView query={members} empty={<EmptyState icon={Users} title="No members" description="Add someone who already has an Aether account." />}>
@@ -142,86 +264,101 @@ export function MembersTab({ orgId }: { orgId: string }) {
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Two-factor</TableHead>
-                <TableHead className="w-36">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
+                {hasAnyRowAction && (
+                  <TableHead className="w-36">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((m) => (
-                <TableRow key={m.userId}>
-                  <TableCell className="font-medium">{m.displayName || "—"}</TableCell>
-                  <TableCell>{m.email}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {roles[m.role]}
-                      {m.compliance && <StatusBadge tone="info">Compliance</StatusBadge>}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
-                  </TableCell>
-                  <TableCell>
-                    {m.twoFactor ? (
-                      <StatusBadge tone="success">On</StatusBadge>
-                    ) : m.passwordSignIn ? (
-                      <StatusBadge tone="neutral">Off</StatusBadge>
-                    ) : (
-                      <span className="text-sm text-fg-tertiary">Identity provider</span>
+              {items.map((m) => {
+                const canEdit = canEditTargetMember(session, orgId, m)
+                const canSupportMember = canSupportTarget(session, orgId, m)
+                const scopedNames = domainNames(m.domainIds)
+                return (
+                  <TableRow key={m.userId}>
+                    <TableCell className="font-medium">{m.displayName || "—"}</TableCell>
+                    <TableCell className="font-mono text-sm">{m.email}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusBadge tone={roleBadgeTone(m.role)}>{roleLabel(m.role, m.customRoleName)}</StatusBadge>
+                        {m.compliance && <StatusBadge tone="info">Compliance</StatusBadge>}
+                        {m.domainIds.length > 0 &&
+                          (scopedNames.length > 0 ? (
+                            scopedNames.map((name) => (
+                              <span key={name} className="rounded-xs bg-muted px-2 py-0.5 font-mono text-xs text-fg-secondary">
+                                {name}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-fg-tertiary">{plural(m.domainIds.length, "domain")}</span>
+                          ))}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
+                    </TableCell>
+                    <TableCell>
+                      {m.twoFactor ? (
+                        <StatusBadge tone="success">On</StatusBadge>
+                      ) : m.passwordSignIn ? (
+                        <StatusBadge tone="neutral">Off</StatusBadge>
+                      ) : (
+                        <span className="text-sm text-fg-tertiary">Identity provider</span>
+                      )}
+                    </TableCell>
+                    {hasAnyRowAction && (
+                      <TableCell>
+                        <div className="flex gap-1">
+                          {canEdit && (
+                            <IconButton label={`Change role of ${m.email}`} size="icon-sm" onClick={() => open(m)}>
+                              <Pencil />
+                            </IconButton>
+                          )}
+                          {canSupportMember && m.status !== "deprovisioned" && (
+                            <IconButton
+                              label={`Reset password for ${m.email}`}
+                              size="icon-sm"
+                              onClick={() => {
+                                passwordForm.reset({ password: "" })
+                                setResetting(m)
+                              }}
+                            >
+                              <KeyRound />
+                            </IconButton>
+                          )}
+                          {canSupportMember &&
+                            (m.status === "active" ? (
+                              <IconButton label={`Suspend ${m.email}`} size="icon-sm" onClick={() => setSuspending(m)}>
+                                <Ban />
+                              </IconButton>
+                            ) : m.status === "suspended" ? (
+                              <IconButton label={`Restore ${m.email}`} size="icon-sm" disabled={setStatus.isPending} onClick={() => setStatus.mutate({ member: m, status: "active" })}>
+                                <RotateCcw />
+                              </IconButton>
+                            ) : null)}
+                          {canSupportMember && (
+                            <IconButton label={`Sessions of ${m.email}`} size="icon-sm" onClick={() => setSessionsOf(m)}>
+                              <MonitorSmartphone />
+                            </IconButton>
+                          )}
+                          {platformAdmin && m.userId !== session?.user.id && m.twoFactor && (
+                            <IconButton label={`Turn off two-factor for ${m.email}`} size="icon-sm" onClick={() => setResettingTwoFactor(m)}>
+                              <ShieldOff />
+                            </IconButton>
+                          )}
+                          {canEdit && m.userId !== session?.user.id && (
+                            <IconButton label={`Remove ${m.email}`} size="icon-sm" onClick={() => setRemoving(m)}>
+                              <UserMinus />
+                            </IconButton>
+                          )}
+                        </div>
+                      </TableCell>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <IconButton label={`Change role of ${m.email}`} size="icon-sm" onClick={() => open(m)}>
-                        <Pencil />
-                      </IconButton>
-                      {platformAdmin && m.userId !== session.data?.user.id && (
-                        m.status === "active" ? (
-                          <IconButton label={`Suspend ${m.email}`} size="icon-sm" onClick={() => setSuspending(m)}>
-                            <Ban />
-                          </IconButton>
-                        ) : (
-                          <IconButton label={`Restore ${m.email}`} size="icon-sm" disabled={setStatus.isPending} onClick={() => setStatus.mutate({ member: m, status: "active" })}>
-                            <RotateCcw />
-                          </IconButton>
-                        )
-                      )}
-                      {m.userId !== session.data?.user.id && (
-                        <IconButton label={`Remove ${m.email}`} size="icon-sm" onClick={() => setRemoving(m)}>
-                          <UserMinus />
-                        </IconButton>
-                      )}
-                      {(m.role !== "owner" || owner) && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="quiet" size="icon-sm" aria-label={`More actions for ${m.email}`}>
-                              <Ellipsis />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-56">
-                            <DropdownMenuItem onSelect={() => setSessionsOf(m)}>
-                              <MonitorSmartphone aria-hidden />
-                              Sessions…
-                            </DropdownMenuItem>
-                            {platformAdmin && m.userId !== session.data?.user.id && m.passwordSignIn && (
-                              <DropdownMenuItem onSelect={() => setResettingPassword(m)}>
-                                <KeyRound aria-hidden />
-                                Reset password…
-                              </DropdownMenuItem>
-                            )}
-                            {platformAdmin && m.userId !== session.data?.user.id && m.twoFactor && (
-                              <DropdownMenuItem onSelect={() => setResettingTwoFactor(m)}>
-                                <ShieldOff aria-hidden />
-                                Turn off two-factor…
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         )}
@@ -248,24 +385,69 @@ export function MembersTab({ orgId }: { orgId: string }) {
         </Field>
         <Controller
           control={form.control}
-          name="role"
+          name="roleChoice"
           render={({ field }) => (
-            <Field id="member-role" label="Role">
-              <Select value={field.value} onValueChange={field.onChange}>
+            <Field id="member-role" label="Role" hint={roleHint}>
+              <Select
+                value={field.value}
+                onValueChange={(next) => {
+                  field.onChange(next)
+                  if (next !== "domain_admin" && !next.startsWith(CUSTOM_PREFIX)) {
+                    form.setValue("domainIds", [])
+                  }
+                }}
+              >
                 <SelectTrigger id="member-role" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(Object.keys(roles) as Role[]).map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {roles[r]}
-                    </SelectItem>
-                  ))}
+                  <SelectGroup>
+                    <SelectLabel>Built-in roles</SelectLabel>
+                    {assignableBuiltIn.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  {orgRoles.data && orgRoles.data.length > 0 && (
+                    <>
+                      <SelectSeparator />
+                      <SelectGroup>
+                        <SelectLabel>Custom roles</SelectLabel>
+                        {orgRoles.data.map((r) => (
+                          <SelectItem key={r.id} value={`${CUSTOM_PREFIX}${r.id}`}>
+                            {r.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </Field>
           )}
         />
+        {showDomains && (
+          <Controller
+            control={form.control}
+            name="domainIds"
+            render={({ field, fieldState }) => (
+              <DomainChecklist
+                domains={domains.data}
+                loading={domains.isPending}
+                value={field.value}
+                onChange={field.onChange}
+                label={parsedRole.role === "domain_admin" ? "Domains" : "Limit to domains (optional)"}
+                hint={
+                  parsedRole.role === "domain_admin"
+                    ? "Choose at least one domain this administrator can manage."
+                    : "Leave all unchecked for organization-wide access, or choose specific domains."
+                }
+                error={fieldState.error?.message}
+              />
+            )}
+          />
+        )}
         {owner && (
           <SwitchField
             control={form.control}
@@ -285,27 +467,6 @@ export function MembersTab({ orgId }: { orgId: string }) {
           {sessionsOf && <SessionList path={`/organizations/${orgId}/members/${sessionsOf.userId}/sessions`} subject={sessionsOf.email} />}
         </DialogContent>
       </Dialog>
-      <FormDialog
-        open={!!resettingPassword}
-        onOpenChange={(o) => !o && closePasswordReset()}
-        title={`Reset the password of ${resettingPassword?.email}?`}
-        description="They are signed out everywhere and sign in with the new password. Tell them the password through a channel you trust. Their two-factor authentication stays on."
-        submitLabel="Reset password"
-        pending={resetPassword.isPending}
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (resettingPassword && newPassword.length >= 12) resetPassword.mutate(resettingPassword)
-        }}
-      >
-        <Field
-          id="reset-password"
-          label="New password"
-          hint="At least 12 characters."
-          error={resetPassword.error ? errorMessage(resetPassword.error) : newPassword && newPassword.length < 12 ? "Use at least 12 characters." : undefined}
-        >
-          <Input id="reset-password" type="password" autoComplete="new-password" aria-invalid={resetPassword.isError} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-        </Field>
-      </FormDialog>
       <ConfirmDialog
         open={!!resettingTwoFactor}
         onOpenChange={(o) => !o && setResettingTwoFactor(null)}
@@ -315,15 +476,56 @@ export function MembersTab({ orgId }: { orgId: string }) {
         pending={resetTwoFactor.isPending}
         onConfirm={() => resettingTwoFactor && resetTwoFactor.mutate(resettingTwoFactor)}
       />
+
+      <FormDialog
+        open={!!resetting}
+        onOpenChange={(open) => {
+          if (!open) {
+            setResetting(null)
+            passwordForm.reset()
+          }
+        }}
+        title={`Reset password for ${resetting?.email}`}
+        description="Sets a new web sign-in password and signs the user out of all active sessions. App passwords are not changed."
+        submitLabel="Set password"
+        pending={resetPassword.isPending}
+        onSubmit={passwordForm.handleSubmit((v) => resetting && resetPassword.mutate({ member: resetting, password: v.password }))}
+      >
+        <Field id="reset-password" label="New password" hint="At least 12 characters." error={passwordForm.formState.errors.password?.message}>
+          <div className="flex items-center gap-2">
+            <Input
+              id="reset-password"
+              type="text"
+              autoComplete="new-password"
+              spellCheck={false}
+              className="font-mono"
+              aria-invalid={!!passwordForm.formState.errors.password}
+              {...passwordForm.register("password")}
+            />
+            {draftPassword && <CopyButton value={draftPassword} label="Copy password" />}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => passwordForm.setValue("password", generatePassword(), { shouldValidate: true })}
+            >
+              <RefreshCw aria-hidden />
+              Generate
+            </Button>
+          </div>
+        </Field>
+      </FormDialog>
+
       <ConfirmDialog
         open={!!suspending}
         onOpenChange={(o) => !o && setSuspending(null)}
         title={`Suspend ${suspending?.email}?`}
-        description="They are signed out everywhere, cannot sign in, and their app passwords stop working for IMAP and SMTP. This applies in every organization they belong to. Mail keeps arriving in their mailboxes."
+        description="They are signed out everywhere, cannot sign in, and their app passwords stop working for IMAP and SMTP. Mail keeps arriving in their mailboxes."
         confirmLabel="Suspend account"
         pending={setStatus.isPending}
         onConfirm={() => suspending && setStatus.mutate({ member: suspending, status: "suspended" })}
       />
+
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(o) => {

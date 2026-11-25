@@ -122,13 +122,13 @@ func (s *Server) writeBranding(w http.ResponseWriter, r *http.Request, orgID str
 }
 
 func (s *Server) getBranding(w http.ResponseWriter, r *http.Request, p *principal) {
-	if orgID, ok := s.orgFromPath(w, r, p, true); ok {
+	if orgID, ok := s.orgPerm(w, r, p, permBrandingRead); ok {
 		s.writeBranding(w, r, orgID)
 	}
 }
 
 func (s *Server) saveBranding(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permBrandingWrite)
 	if !ok {
 		return
 	}
@@ -235,7 +235,7 @@ func customCSSProblem(css string) string {
 }
 
 func (s *Server) putBrandImage(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permBrandingWrite)
 	if !ok {
 		return
 	}
@@ -267,7 +267,7 @@ func (s *Server) putBrandImage(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) deleteBrandImage(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgFromPath(w, r, p, true)
+	orgID, ok := s.orgPerm(w, r, p, permBrandingWrite)
 	if !ok {
 		return
 	}

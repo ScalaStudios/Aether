@@ -24,7 +24,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
 | `suppressions:read`, `suppressions:write` | Listing, adding, and removing suppressed addresses |
 
-A `write` scope includes `read`. Keys cannot read mail, export a mailbox, use the platform administration endpoints, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name.
+A `write` scope includes `read`. Keys cannot read mail, export a mailbox, use the platform administration endpoints, manage custom roles, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name. See [Roles and permissions](roles.md) for human administrator roles composed from these same scopes.
 
 To revoke a key, use `DELETE /api/v1/api-keys/{keyId}`. Revocation takes effect immediately.
 
@@ -32,11 +32,12 @@ Removing a member with `DELETE /api/v1/organizations/{orgId}/members/{userId}` a
 
 ## Setting up mailboxes for other people
 
-Organization administrators, signed in or using a key, can prepare a mailbox on its owner's behalf. These routes accept any active mailbox on a verified domain of the organization:
+Organization administrators (and scoped roles with the matching permissions), signed in or using a key, can prepare a mailbox on its owner's behalf. These routes accept any active mailbox on a verified domain of the organization:
 
 | Route | What it does |
 | --- | --- |
 | `GET`, `POST /api/v1/mailboxes/{mailboxId}/delegates` and `DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}` | Delegates of a user mailbox, or members of a shared one, with `access`, `sendAs` and `sendOnBehalf` |
+| `GET /api/v1/mailboxes/{mailboxId}/app-passwords` and `DELETE /api/v1/mailboxes/{mailboxId}/app-passwords/{id}` | Lists and revokes app passwords created for the mailbox |
 | `POST /api/v1/mailboxes/{mailboxId}/convert` | Converts a mailbox between `user` and `shared`, as [Shared mailboxes](shared-mailboxes.md#converting-a-mailbox) describes |
 | `GET`, `PUT /api/v1/mailboxes/{mailboxId}/rules` and `/auto-reply` | Mail rules and automatic replies, compiled to Sieve as when the owner changes them |
 | `GET`, `PUT /api/v1/mailboxes/{mailboxId}/signatures` | Signatures |
@@ -44,7 +45,7 @@ Organization administrators, signed in or using a key, can prepare a mailbox on 
 | `POST /api/v1/mailboxes/{mailboxId}/contacts/import` | A vCard file into the owner's address book. Group cards in the file become contact groups. `book` chooses another address book of that owner; without it, the file goes into their main address book. |
 | `GET`, `PUT /api/v1/organizations/{orgId}/forwarding` | The organization's forwarding policy and every rule that forwards outside it, as [Architecture](architecture.md#forwarding-to-outside-addresses) describes |
 
-An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate and member changes, conversions, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.
+An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate and member changes, app password revocations, conversions, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.
 
 ## Recurring mail imports
 

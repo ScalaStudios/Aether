@@ -185,31 +185,27 @@ type webhook struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-func (s *Server) webhookOrg(w http.ResponseWriter, r *http.Request, p *principal) (string, bool) {
-	orgID, ok := pathID(w, r, "orgId")
-	if !ok {
-		return "", false
-	}
-	if !p.canAdminOrg(orgID) {
-		notFound(w)
-		return "", false
-	}
-	return orgID, true
+func (s *Server) webhookOrg(w http.ResponseWriter, r *http.Request, p *principal, perm string) (string, bool) {
+	return s.orgPerm(w, r, p, perm)
 }
 
-func (s *Server) ownedWebhook(w http.ResponseWriter, r *http.Request, p *principal) (id, orgID string, ok bool) {
+func (s *Server) ownedWebhook(w http.ResponseWriter, r *http.Request, p *principal, perm string) (id, orgID string, ok bool) {
 	if id, ok = pathID(w, r, "webhookId"); !ok {
 		return "", "", false
 	}
-	if err := s.db.QueryRow(r.Context(), `SELECT org_id FROM webhooks WHERE id = $1`, id).Scan(&orgID); err != nil || !p.canAdminOrg(orgID) {
+	if err := s.db.QueryRow(r.Context(), `SELECT org_id FROM webhooks WHERE id = $1`, id).Scan(&orgID); err != nil || p.orgRole(orgID) == "" {
 		notFound(w)
+		return "", "", false
+	}
+	if !p.can(orgID, perm) {
+		forbidden(w)
 		return "", "", false
 	}
 	return id, orgID, true
 }
 
 func (s *Server) listWebhooks(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.webhookOrg(w, r, p)
+	orgID, ok := s.webhookOrg(w, r, p, permWebhooksRead)
 	if !ok {
 		return
 	}
@@ -238,7 +234,7 @@ func (s *Server) validWebhookURL(raw string) bool {
 }
 
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.webhookOrg(w, r, p)
+	orgID, ok := s.webhookOrg(w, r, p, permWebhooksWrite)
 	if !ok {
 		return
 	}
@@ -289,7 +285,7 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
-	id, orgID, ok := s.ownedWebhook(w, r, p)
+	id, orgID, ok := s.ownedWebhook(w, r, p, permWebhooksWrite)
 	if !ok {
 		return
 	}
@@ -302,7 +298,7 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request, p *principal) {
-	id, _, ok := s.ownedWebhook(w, r, p)
+	id, _, ok := s.ownedWebhook(w, r, p, permWebhooksRead)
 	if !ok {
 		return
 	}
@@ -333,7 +329,7 @@ func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request, p *princ
 }
 
 func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
-	id, orgID, ok := s.ownedWebhook(w, r, p)
+	id, orgID, ok := s.ownedWebhook(w, r, p, permWebhooksWrite)
 	if !ok {
 		return
 	}

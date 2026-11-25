@@ -176,7 +176,7 @@ func (s *Server) dkimKeys(ctx context.Context, d *domain) ([]dkimKey, error) {
 }
 
 func (s *Server) listDKIMKeys(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsRead)
 	if !ok {
 		return
 	}
@@ -189,7 +189,7 @@ func (s *Server) listDKIMKeys(w http.ResponseWriter, r *http.Request, p *princip
 }
 
 func (s *Server) createDKIMKey(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsWrite)
 	if !ok {
 		return
 	}
@@ -271,7 +271,7 @@ func (s *Server) writeDKIMKey(w http.ResponseWriter, r *http.Request, d *domain,
 }
 
 func (s *Server) dkimKeyFromPath(w http.ResponseWriter, r *http.Request, p *principal) (*domain, *dkimKey, bool) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsWrite)
 	if !ok {
 		return nil, nil, false
 	}

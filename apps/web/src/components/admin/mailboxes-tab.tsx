@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Download, Ellipsis, Eye, EyeOff, HardDrive, Inbox, ListFilter, Plug, Plus, ShieldCheck, RotateCcw, Shield, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Download, Ellipsis, Eye, EyeOff, HardDrive, Inbox, KeyRound, ListFilter, Plug, Pencil, Plus, ShieldCheck, RotateCcw, Shield, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -23,6 +23,7 @@ import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -32,11 +33,13 @@ import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
+import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes, formatDateTime, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
+import { canReadDelegates, hasPerm } from "@/lib/permissions"
 import { mailboxesQuery, organizationsQuery } from "@/lib/queries"
-import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization, Protocol, QuotaWarnings } from "@/lib/types"
+import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, Protocol, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -64,6 +67,13 @@ const schema = z
 
 type Values = z.infer<typeof schema>
 
+const editSchema = z.object({
+  displayName: z.string().trim(),
+  quotaMb: z.string().regex(/^\d*$/, "Enter a whole number of megabytes."),
+})
+
+type EditValues = z.infer<typeof editSchema>
+
 const kinds = [
   { value: "user" as const, label: "User mailbox" },
   { value: "shared" as const, label: "Shared mailbox" },
@@ -87,7 +97,7 @@ const rights = ({ email, access, sendAs, sendOnBehalf }: DelegateValues): Delega
 
 const rightsLabel = (d: DelegateValues) => [d.access === "read" ? "read only" : "full access", d.sendAs && "send as", d.sendOnBehalf && "send on behalf"].filter(Boolean).join(", ")
 
-function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; onOpenChange: (open: boolean) => void }) {
+function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbox | null; canManage: boolean; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient()
   const key = ["delegates", mailbox?.id]
   const shared = mailbox?.kind === "shared"
@@ -125,6 +135,39 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
     },
   })
 
+  const title = shared ? `Members of ${mailbox?.address}` : `Delegates for ${mailbox?.address}`
+  const description = shared
+    ? "Full access lets a member read, organize and file mail. Send as and Send on behalf are separate: Send as sends from this address; Send on behalf shows the member's name as the sender."
+    : "Full access lets a delegate read and organize this mailbox; Send as additionally allows sending from the address and creating app passwords for it. Read only allows reading in Aether Mail and nothing else."
+
+  if (!canManage) {
+    return (
+      <Dialog open={!!mailbox} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+          </DialogHeader>
+          <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">{shared ? "No members yet." : "No delegates yet."}</p>}>
+            {(items) => (
+              <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
+                {items.map((d) => (
+                  <li key={d.userId} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                    <div className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium">{d.displayName || d.email}</span>
+                      {d.displayName && <span className="truncate font-mono text-sm text-fg-tertiary">{d.email}</span>}
+                    </div>
+                    <StatusBadge tone="neutral">{rightsLabel(d)}</StatusBadge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </QueryView>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
   return (
     <>
       <FormDialog
@@ -133,12 +176,8 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
           onOpenChange(open)
           if (!open) form.reset()
         }}
-        title={shared ? `Members of ${mailbox?.address}` : `Delegates for ${mailbox?.address}`}
-        description={
-          shared
-            ? "Full access lets a member read, organize and file mail. Send as and Send on behalf are separate: Send as sends from this address; Send on behalf shows the member's name as the sender."
-            : "Full access lets a delegate read and organize this mailbox; Send as additionally allows sending from the address and creating app passwords for it. Read only allows reading in Aether Mail and nothing else."
-        }
+        title={title}
+        description={description}
         submitLabel={shared ? "Add member" : "Add delegate"}
         cancelLabel="Done"
         pending={add.isPending}
@@ -438,15 +477,109 @@ function MailboxStorage({ mailbox, levels }: { mailbox: Mailbox; levels?: number
   )
 }
 
+function AppPasswordsDialog({ mailbox, canRevoke, onOpenChange }: { mailbox: Mailbox | null; canRevoke: boolean; onOpenChange: (open: boolean) => void }) {
+  const qc = useQueryClient()
+  const key = ["mailbox-app-passwords", mailbox?.id]
+  const passwords = useQuery({
+    queryKey: key,
+    queryFn: () => api<MailboxAppPassword[]>(`/mailboxes/${mailbox?.id}/app-passwords`),
+    enabled: !!mailbox,
+  })
+  const [revoking, setRevoking] = useState<MailboxAppPassword | null>(null)
+  const revoke = useMutation({
+    mutationFn: (p: MailboxAppPassword) => api(`/mailboxes/${mailbox?.id}/app-passwords/${p.id}`, { method: "DELETE" }),
+    onSuccess: (_d, p) => {
+      toast.success(`Revoked “${p.name}”`)
+      setRevoking(null)
+      qc.invalidateQueries({ queryKey: key })
+    },
+  })
+
+  return (
+    <>
+      <Dialog open={!!mailbox} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>App passwords for {mailbox?.address}</DialogTitle>
+            <DialogDescription>
+              Passwords used by mail, calendar and contact apps over IMAP, SMTP, CalDAV and CardDAV. Revoking one disconnects that app immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <QueryView
+            query={passwords}
+            skeleton={<RowsSkeleton rows={2} />}
+            empty={<EmptyState icon={KeyRound} title="No app passwords" description="No app passwords are active for this mailbox." />}
+          >
+            {(items) => (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Created by</TableHead>
+                    <TableHead>Created</TableHead>
+                    {canRevoke && (
+                      <TableHead className="w-12">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell className="font-medium">{p.name}</TableCell>
+                      <TableCell className="font-mono text-sm">{p.userEmail}</TableCell>
+                      <TableCell>{formatDateTime(p.createdAt)}</TableCell>
+                      {canRevoke && (
+                        <TableCell>
+                          <IconButton label={`Revoke ${p.name}`} size="icon-sm" onClick={() => setRevoking(p)}>
+                            <Trash2 />
+                          </IconButton>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </QueryView>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!revoking}
+        onOpenChange={(open) => !open && setRevoking(null)}
+        title={`Revoke “${revoking?.name}”?`}
+        description={`Any mail or PIM client using this app password for ${mailbox?.address} will immediately stop authenticating.`}
+        confirmLabel="Revoke password"
+        pending={revoke.isPending}
+        onConfirm={() => revoking && revoke.mutate(revoking)}
+      />
+    </>
+  )
+}
+
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
+  const session = useSession().data
+  const canWrite = hasPerm(session, orgId, "mailboxes:write")
+  const canSettings = hasPerm(session, orgId, "mailboxes:settings")
+  const canImport = hasPerm(session, orgId, "mailboxes:import")
+  const canViewDelegates = canReadDelegates(session, orgId)
+  const canManageDelegates = hasPerm(session, orgId, "mailboxes:delegates")
+  const canViewAppPasswords = hasPerm(session, orgId, "mailboxes:app_passwords", "mailboxes:read")
+  const canRevokeAppPasswords = hasPerm(session, orgId, "mailboxes:app_passwords")
+  const canAudit = hasPerm(session, orgId, "audit:read")
+
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
   const warnings = useQuery({ queryKey: ["quota-warnings", orgId], queryFn: () => api<QuotaWarnings>(`/organizations/${orgId}/quota-warnings`) })
   const [editingWarnings, setEditingWarnings] = useState(false)
   const [resizing, setResizing] = useState<Mailbox | null>(null)
   const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState<Mailbox | null>(null)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
+  const [appPasswordsFor, setAppPasswordsFor] = useState<Mailbox | null>(null)
   const [managing, setManaging] = useState<Mailbox | null>(null)
   const [auditing, setAuditing] = useState<Mailbox | null>(null)
   const [converting, setConverting] = useState<Mailbox | null>(null)
@@ -458,9 +591,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [grace, setGrace] = useState("30")
   const fileInput = useRef<HTMLInputElement>(null)
   const importTarget = useRef<{ mailbox: Mailbox; kind: ImportKind } | null>(null)
+
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { kind: "user", domainId: "", localPart: "", displayName: "", password: "", quotaMb: "" },
+  })
+  const editForm = useForm<EditValues>({
+    resolver: zodResolver(editSchema),
+    defaultValues: { displayName: "", quotaMb: "" },
   })
   const errors = form.formState.errors
   const kind = useWatch({ control: form.control, name: "kind" })
@@ -486,6 +624,21 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       refresh()
       setCreating(false)
       form.reset()
+    },
+  })
+  const update = useMutation({
+    mutationFn: ({ mailbox, values }: { mailbox: Mailbox; values: EditValues }) =>
+      api<Mailbox>(`/mailboxes/${mailbox.id}`, {
+        method: "PATCH",
+        body: {
+          displayName: values.displayName,
+          quotaBytes: values.quotaMb ? Number(values.quotaMb) * MB : 0,
+        },
+      }),
+    onSuccess: (m) => {
+      toast.success(`Saved ${m.address}`)
+      refresh()
+      setEditing(null)
     },
   })
   const toggle = useMutation({
@@ -563,6 +716,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
     fileInput.current.click()
   }
 
+  function openEdit(m: Mailbox) {
+    editForm.reset({
+      displayName: m.displayName,
+      quotaMb: m.quotaBytes ? String(Math.round(m.quotaBytes / MB)) : "",
+    })
+    setEditing(m)
+  }
+
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
@@ -570,31 +731,37 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         description="User mailboxes have an owner account that signs in with the address. Shared mailboxes have members instead."
         actions={
           <>
-            <Button
-              variant="secondary"
-              loading={editingWarnings && warnings.isPending}
-              onClick={() => {
-                if (warnings.isError) {
-                  toast.error(errorMessage(warnings.error))
-                  warnings.refetch()
-                } else setEditingWarnings(true)
-              }}
-            >
-              <BellRing aria-hidden />
-              Storage warnings
-            </Button>
-            <Button variant="secondary" disabled={!org.data} onClick={() => setEditingDefaults(true)}>
-              <Plug aria-hidden />
-              Protocols for new mailboxes
-            </Button>
-            <Button onClick={() => setCreating(true)}>
-              <Plus aria-hidden />
-              Create mailbox
-            </Button>
+            {canSettings && (
+              <Button
+                variant="secondary"
+                loading={editingWarnings && warnings.isPending}
+                onClick={() => {
+                  if (warnings.isError) {
+                    toast.error(errorMessage(warnings.error))
+                    warnings.refetch()
+                  } else setEditingWarnings(true)
+                }}
+              >
+                <BellRing aria-hidden />
+                Storage warnings
+              </Button>
+            )}
+            {canWrite && (
+              <Button variant="secondary" disabled={!org.data} onClick={() => setEditingDefaults(true)}>
+                <Plug aria-hidden />
+                Protocols for new mailboxes
+              </Button>
+            )}
+            {canWrite && (
+              <Button onClick={() => setCreating(true)}>
+                <Plus aria-hidden />
+                Create mailbox
+              </Button>
+            )}
           </>
         }
       />
-      <QueryView query={mailboxes} empty={<EmptyState icon={Inbox} title="No mailboxes" description="Create a mailbox on one of this organization's domains." />}>
+      <QueryView query={mailboxes} empty={<EmptyState icon={Inbox} title="No mailboxes" description={canWrite ? "Create a mailbox on one of this organization's domains." : "No mailboxes are visible for your scope."} />}>
         {(items) => (
           <Table>
             <TableHeader>
@@ -604,7 +771,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                 <TableHead>Display name</TableHead>
                 <TableHead>Storage</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-28">
+                <TableHead className="w-36">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -625,12 +792,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-3">
-                      <Switch
-                        checked={m.active}
-                        disabled={toggle.isPending && toggle.variables?.id === m.id}
-                        onCheckedChange={() => toggle.mutate(m)}
-                        aria-label={`${m.active ? "Deactivate" : "Activate"} ${m.address}`}
-                      />
+                      {canSettings && (
+                        <Switch
+                          checked={m.active}
+                          disabled={toggle.isPending && toggle.variables?.id === m.id}
+                          onCheckedChange={() => toggle.mutate(m)}
+                          aria-label={`${m.active ? "Deactivate" : "Activate"} ${m.address}`}
+                        />
+                      )}
                       {m.retainedAt ? (
                         <StatusBadge tone="warning">Retained</StatusBadge>
                       ) : (
@@ -642,17 +811,27 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <IconButton label={m.kind === "shared" ? `Members of ${m.address}` : `Delegates for ${m.address}`} size="icon-sm" onClick={() => setDelegating(m)}>
-                        <Users />
-                      </IconButton>
-                      {m.purgeAfter && (
+                      {canViewDelegates && (
+                        <IconButton label={m.kind === "shared" ? `Members of ${m.address}` : `Delegates for ${m.address}`} size="icon-sm" onClick={() => setDelegating(m)}>
+                          <Users />
+                        </IconButton>
+                      )}
+                      {canViewAppPasswords && (
+                        <IconButton label={`App passwords for ${m.address}`} size="icon-sm" onClick={() => setAppPasswordsFor(m)}>
+                          <KeyRound />
+                        </IconButton>
+                      )}
+                      {canWrite && m.purgeAfter && (
                         <IconButton label={`Restore ${m.address}`} size="icon-sm" disabled={restore.isPending} onClick={() => restore.mutate(m)}>
                           <RotateCcw />
                         </IconButton>
                       )}
-                      <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => { setGrace("30"); setDeleting(m) }}>
-                        <Trash2 />
-                      </IconButton>
+                      {canWrite && (
+                        <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => { setGrace("30"); setDeleting(m) }}>
+                          <Trash2 />
+                        </IconButton>
+                      )}
+                      {(canSettings || canWrite || canImport || canAudit) && (
                       <DropdownMenu>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -665,57 +844,86 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                             <TooltipContent>{`More actions for ${m.address}`}</TooltipContent>
                           </Tooltip>
                           <DropdownMenuContent align="end" className="w-auto min-w-64">
-                            <DropdownMenuItem onSelect={() => setExporting(m)}>
-                              <Download aria-hidden />
-                              Export mailbox
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => hold.mutate(m)}>
-                              <Shield aria-hidden />
-                              {m.onHold ? "Release hold" : "Place on hold"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => setRecovering(m)}>
-                              <ArchiveRestore aria-hidden />
-                              Recover deleted items…
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => setRestricting(m)}>
-                              <Plug aria-hidden />
-                              Protocol access…
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => setAuditing(m)}>
-                              <ShieldCheck aria-hidden />
-                              Access report
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => setResizing(m)}>
-                              <HardDrive aria-hidden />
-                              Change quota…
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => hide.mutate(m)}>
-                              {m.hiddenFromDirectory ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
-                              {m.hiddenFromDirectory ? "Show in directory" : "Hide from directory"}
-                            </DropdownMenuItem>
+                            {canSettings && (
+                              <DropdownMenuItem onSelect={() => openEdit(m)}>
+                                <Pencil aria-hidden />
+                                Edit settings
+                              </DropdownMenuItem>
+                            )}
+                            {canWrite && (
+                              <DropdownMenuItem onSelect={() => setExporting(m)}>
+                                <Download aria-hidden />
+                                Export mailbox
+                              </DropdownMenuItem>
+                            )}
+                            {canWrite && (
+                              <DropdownMenuItem onSelect={() => hold.mutate(m)}>
+                                <Shield aria-hidden />
+                                {m.onHold ? "Release hold" : "Place on hold"}
+                              </DropdownMenuItem>
+                            )}
+                            {canSettings && (
+                              <DropdownMenuItem onSelect={() => setRecovering(m)}>
+                                <ArchiveRestore aria-hidden />
+                                Recover deleted items…
+                              </DropdownMenuItem>
+                            )}
+                            {canSettings && (
+                              <DropdownMenuItem onSelect={() => setRestricting(m)}>
+                                <Plug aria-hidden />
+                                Protocol access…
+                              </DropdownMenuItem>
+                            )}
+                            {canAudit && (
+                              <DropdownMenuItem onSelect={() => setAuditing(m)}>
+                                <ShieldCheck aria-hidden />
+                                Access report
+                              </DropdownMenuItem>
+                            )}
+                            {canSettings && (
+                              <DropdownMenuItem onSelect={() => setResizing(m)}>
+                                <HardDrive aria-hidden />
+                                Change quota…
+                              </DropdownMenuItem>
+                            )}
+                            {canWrite && (
+                              <DropdownMenuItem onSelect={() => hide.mutate(m)}>
+                                {m.hiddenFromDirectory ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
+                                {m.hiddenFromDirectory ? "Show in directory" : "Hide from directory"}
+                              </DropdownMenuItem>
+                            )}
                             {m.active && (
                               <>
-                                <DropdownMenuItem onSelect={() => setManaging(m)}>
-                                  <ListFilter aria-hidden />
-                                  Mail rules and automatic replies
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
-                                  <CalendarArrowUp aria-hidden />
-                                  Import calendar (.ics)
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
-                                  <Upload aria-hidden />
-                                  Import contacts (.vcf)
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onSelect={() => setConverting(m)}>
-                                  <ArrowRightLeft aria-hidden />
-                                  {m.kind === "shared" ? "Convert to user mailbox…" : "Convert to shared mailbox…"}
-                                </DropdownMenuItem>
+                                {canSettings && (
+                                  <DropdownMenuItem onSelect={() => setManaging(m)}>
+                                    <ListFilter aria-hidden />
+                                    Mail rules and automatic replies
+                                  </DropdownMenuItem>
+                                )}
+                                {canImport && (
+                                  <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
+                                    <CalendarArrowUp aria-hidden />
+                                    Import calendar (.ics)
+                                  </DropdownMenuItem>
+                                )}
+                                {canImport && (
+                                  <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
+                                    <Upload aria-hidden />
+                                    Import contacts (.vcf)
+                                  </DropdownMenuItem>
+                                )}
+                                {canWrite && <DropdownMenuSeparator />}
+                                {canWrite && (
+                                  <DropdownMenuItem onSelect={() => setConverting(m)}>
+                                    <ArrowRightLeft aria-hidden />
+                                    {m.kind === "shared" ? "Convert to user mailbox…" : "Convert to shared mailbox…"}
+                                  </DropdownMenuItem>
+                                )}
                               </>
                             )}
                           </DropdownMenuContent>
                         </DropdownMenu>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -776,7 +984,27 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         </Field>
       </FormDialog>
 
-      <DelegatesDialog mailbox={delegating} onOpenChange={(open) => !open && setDelegating(null)} />
+      <FormDialog
+        open={!!editing}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null)
+        }}
+        title="Edit mailbox settings"
+        description={editing ? <span className="font-mono">{editing.address}</span> : undefined}
+        submitLabel="Save settings"
+        pending={update.isPending}
+        onSubmit={editForm.handleSubmit((v) => editing && update.mutate({ mailbox: editing, values: v }))}
+      >
+        <Field id="edit-mb-name" label="Display name" hint="Shown as the sender name.">
+          <Input id="edit-mb-name" autoComplete="off" {...editForm.register("displayName")} />
+        </Field>
+        <Field id="edit-mb-quota" label="Quota in MB" hint="Leave empty for no limit." error={editForm.formState.errors.quotaMb?.message}>
+          <Input id="edit-mb-quota" inputMode="numeric" autoComplete="off" aria-invalid={!!editForm.formState.errors.quotaMb} {...editForm.register("quotaMb")} />
+        </Field>
+      </FormDialog>
+
+      <DelegatesDialog mailbox={delegating} canManage={canManageDelegates} onOpenChange={(open) => !open && setDelegating(null)} />
+      <AppPasswordsDialog mailbox={appPasswordsFor} canRevoke={canRevokeAppPasswords} onOpenChange={(open) => !open && setAppPasswordsFor(null)} />
       {resizing && <QuotaDialog mailbox={resizing} onClose={() => setResizing(null)} />}
       {editingWarnings && warnings.data && <QuotaWarningsDialog orgId={orgId} warnings={warnings.data} onClose={() => setEditingWarnings(false)} />}
 

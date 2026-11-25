@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) setDomainCoexistence(w http.ResponseWriter, r *http.Request, p *principal) {
-	d, ok := s.domainFromPath(w, r, p)
+	d, ok := s.domainFromPath(w, r, p, permDomainsWrite)
 	if !ok {
 		return
 	}

@@ -21,6 +21,9 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/organizations/{orgId}/members":                    "members",
 	"POST /api/v1/organizations/{orgId}/members":                   "members",
 	"DELETE /api/v1/organizations/{orgId}/members/{userId}":        "members",
+	"POST /api/v1/organizations/{orgId}/members/{userId}/password": "members",
+	"PATCH /api/v1/organizations/{orgId}/members/{userId}/status":  "members",
+	"GET /api/v1/organizations/{orgId}/roles":                      "members",
 	"GET /api/v1/organizations/{orgId}/audit":                      "audit",
 	"GET /api/v1/organizations/{orgId}/message-trace":              "message-trace",
 	"GET /api/v1/organizations/{orgId}/message-trace/export":       "message-trace",
@@ -46,6 +49,8 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/mailboxes/{mailboxId}/delegates":                  "mailboxes",
 	"POST /api/v1/mailboxes/{mailboxId}/delegates":                 "mailboxes",
 	"DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}":      "mailboxes",
+	"GET /api/v1/mailboxes/{mailboxId}/app-passwords":              "mailboxes",
+	"DELETE /api/v1/mailboxes/{mailboxId}/app-passwords/{id}":      "mailboxes",
 	"POST /api/v1/mailboxes/{mailboxId}/convert":                   "mailboxes",
 	"GET /api/v1/organizations/{orgId}/resources":                  "mailboxes",
 	"PUT /api/v1/mailboxes/{mailboxId}/resource":                   "mailboxes",
@@ -147,7 +152,7 @@ func (s *Server) apiKeyPrincipal(w http.ResponseWriter, r *http.Request, token s
 		writeError(w, http.StatusForbidden, "insufficient_scope", "This API key does not have the "+resource+" scope needed for this request.")
 		return nil, false
 	}
-	return &principal{apiKey: key, roles: map[string]string{orgID: "admin"}}, true
+	return &principal{apiKey: key, grants: map[string]orgGrant{orgID: buildOrgGrant(roleAdmin, nil, "", nil, nil)}}, true
 }
 
 type apiKey struct {
@@ -167,24 +172,16 @@ func scanAPIKey(row pgx.CollectableRow) (apiKey, error) {
 	return k, row.Scan(&k.ID, &k.Name, &k.Prefix, &k.Scopes, &k.CreatedAt, &k.LastUsedAt, &k.ExpiresAt)
 }
 
-func (s *Server) sessionOrgAdmin(w http.ResponseWriter, r *http.Request, p *principal) (string, bool) {
-	orgID, ok := pathID(w, r, "orgId")
-	if !ok {
-		return "", false
-	}
+func (s *Server) sessionAPIKeyOrg(w http.ResponseWriter, r *http.Request, p *principal, perm string) (string, bool) {
 	if p.apiKey != nil {
 		writeError(w, http.StatusForbidden, "api_key_not_allowed", "API keys cannot manage API keys.")
 		return "", false
 	}
-	if !p.canAdminOrg(orgID) {
-		notFound(w)
-		return "", false
-	}
-	return orgID, true
+	return s.orgPerm(w, r, p, perm)
 }
 
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.sessionOrgAdmin(w, r, p)
+	orgID, ok := s.sessionAPIKeyOrg(w, r, p, permAPIKeysRead)
 	if !ok {
 		return
 	}
@@ -202,7 +199,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request, p *principa
 }
 
 func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.sessionOrgAdmin(w, r, p)
+	orgID, ok := s.sessionAPIKeyOrg(w, r, p, permAPIKeysWrite)
 	if !ok {
 		return
 	}
@@ -258,8 +255,17 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	var orgID string
-	if err := s.db.QueryRow(r.Context(), `SELECT org_id FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, id).Scan(&orgID); err != nil || !p.canAdminOrg(orgID) {
+	err := s.db.QueryRow(r.Context(), `SELECT org_id FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, id).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.orgRole(orgID) == "") {
 		notFound(w)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if !p.can(orgID, permAPIKeysWrite) {
+		forbidden(w)
 		return
 	}
 	if _, err := s.db.Exec(r.Context(), `UPDATE api_keys SET revoked_at = now() WHERE id = $1`, id); err != nil {

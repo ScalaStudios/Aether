@@ -24,8 +24,10 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
 import { formatDate, formatPercent, plural } from "@/lib/format"
+import { hasPerm, isDomainScoped } from "@/lib/permissions"
 import { domainsQuery, mailboxesQuery } from "@/lib/queries"
 import type { DMARCSource, DMARCSummary, DNSRecord, DNSStatus, Domain } from "@/lib/types"
 
@@ -83,6 +85,9 @@ function DomainVerifiedBadge({ domain }: { domain: Domain }) {
 
 export function DomainsTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
+  const session = useSession().data
+  const canWrite = hasPerm(session, orgId, "domains:write")
+  const canCreate = canWrite && !isDomainScoped(session, orgId)
   const domains = useQuery(domainsQuery(orgId))
   const [adding, setAdding] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
@@ -108,13 +113,15 @@ export function DomainsTab({ orgId }: { orgId: string }) {
         title="Domains"
         description="Aether receives and sends mail for these domains once their DNS records are in place."
         actions={
-          <Button onClick={() => setAdding(true)}>
-            <Plus aria-hidden />
-            Add domain
-          </Button>
+          canCreate && (
+            <Button onClick={() => setAdding(true)}>
+              <Plus aria-hidden />
+              Add domain
+            </Button>
+          )
         }
       />
-      <QueryView query={domains} empty={<EmptyState icon={Globe} title="No domains" description="Add a domain to start creating mailboxes on it." />}>
+      <QueryView query={domains} empty={<EmptyState icon={Globe} title="No domains" description={canCreate ? "Add a domain to start creating mailboxes on it." : "No domains are visible for your scope."} />}>
         {(items) => (
           <Table>
             <TableHeader>
@@ -197,12 +204,12 @@ export function DomainsTab({ orgId }: { orgId: string }) {
         )}
       </FormDialog>
 
-      {openId && <DomainDialog key={openId} domainId={openId} orgId={orgId} onClose={() => setOpenId(null)} />}
+      {openId && <DomainDialog key={openId} domainId={openId} orgId={orgId} canWrite={canWrite} onClose={() => setOpenId(null)} />}
     </section>
   )
 }
 
-function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: string; onClose: () => void }) {
+function DomainDialog({ domainId, orgId, canWrite, onClose }: { domainId: string; orgId: string; canWrite: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const domain = useQuery({ queryKey: ["domain", domainId], queryFn: () => api<Domain>(`/domains/${domainId}`) })
   const dns = useQuery({ queryKey: ["dns", domainId], queryFn: () => api<{ records: DNSRecord[] }>(`/domains/${domainId}/dns`) })
@@ -251,7 +258,9 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
           <DialogDescription>
             {d?.verified
               ? "Keep these records published so mail is delivered and passes SPF, DKIM and DMARC checks."
-              : "Publish the ownership TXT record, wait for DNS to update, then select Verify. Lookups can take a few minutes to reflect changes."}
+              : canWrite
+                ? "Publish the ownership TXT record, wait for DNS to update, then select Verify. Lookups can take a few minutes to reflect changes."
+                : "Publish the ownership TXT record so an administrator can verify this domain."}
           </DialogDescription>
         </DialogHeader>
         {d?.aliasOf && (
@@ -310,11 +319,13 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
             </ul>
           )}
         </QueryView>
-        <DialogFooter className="sm:justify-between">
-          <Button variant="secondary" onClick={() => setDeleting(true)} disabled={!d} className="text-danger">
-            <Trash2 aria-hidden />
-            Delete domain
-          </Button>
+        <DialogFooter className={canWrite ? "sm:justify-between" : "sm:justify-end"}>
+          {canWrite && (
+            <Button variant="secondary" onClick={() => setDeleting(true)} disabled={!d} className="text-danger">
+              <Trash2 aria-hidden />
+              Delete domain
+            </Button>
+          )}
           <div className="flex flex-col-reverse gap-3 sm:flex-row">
             <Button variant="secondary" onClick={() => setReporting(true)} disabled={!d}>
               <ChartColumn aria-hidden />
@@ -324,7 +335,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
               <RefreshCw aria-hidden />
               Check DNS again
             </Button>
-            {d && !d.verified && (
+            {canWrite && d && !d.verified && (
               <Button onClick={() => verify.mutate()} loading={verify.isPending}>
                 Verify
               </Button>

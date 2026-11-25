@@ -34,14 +34,29 @@ func (s *Server) pimContextFor(r *http.Request, userID string) (context.Context,
 }
 
 func (s *Server) mailboxOwnerContext(w http.ResponseWriter, r *http.Request, p *principal) (context.Context, *ownedMailbox, bool) {
-	m, ok := s.managedMailbox(w, r, p)
+	id, ok := pathID(w, r, "mailboxId")
 	if !ok {
 		return nil, nil, false
 	}
+	m := &ownedMailbox{}
 	var owner *string
-	if err := s.db.QueryRow(r.Context(), `SELECT owner_user_id FROM mailboxes WHERE id = $1`, m.ID).Scan(&owner); err != nil {
-		s.internalError(w, r, err)
-		return nil, nil, false
+	err := s.db.QueryRow(r.Context(), `
+		SELECT m.id, m.org_id, m.domain_id, m.address, m.display_name, m.kind, m.owner_user_id FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+		WHERE m.id = $1 AND m.active AND d.active AND d.verified_at IS NOT NULL`, id).
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.DisplayName, &m.Kind, &owner)
+	if err != nil || !p.canOnDomain(m.OrgID, m.DomainID, permMailboxesImport) {
+		if p.apiKey != nil {
+			notFound(w)
+			return nil, nil, false
+		}
+		m, ok = s.ownedMailbox(w, r, p)
+		if !ok {
+			return nil, nil, false
+		}
+		if err := s.db.QueryRow(r.Context(), `SELECT owner_user_id FROM mailboxes WHERE id = $1`, m.ID).Scan(&owner); err != nil {
+			s.internalError(w, r, err)
+			return nil, nil, false
+		}
 	}
 	if owner == nil {
 		writeError(w, http.StatusUnprocessableEntity, "no_owner", "This mailbox has no owner whose calendar and contacts could receive the import.")

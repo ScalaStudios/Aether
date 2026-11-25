@@ -1,6 +1,7 @@
 import type { SecurityKeyRequestOptions } from "@/lib/webauthn"
 
-export type Role = "owner" | "admin" | "member"
+export type BuiltInRole = "owner" | "admin" | "domain_admin" | "helpdesk" | "list_admin" | "auditor" | "member"
+export type Role = BuiltInRole | "custom"
 
 export interface User {
   id: string
@@ -19,6 +20,10 @@ export interface Membership {
   orgSlug: string
   role: Role
   compliance: boolean
+  customRoleId?: string | null
+  customRoleName?: string
+  domainIds: string[]
+  permissions: string[]
 }
 
 export interface Session {
@@ -263,7 +268,13 @@ export interface Member {
   email: string
   displayName: string
   role: Role
+  customRoleId?: string | null
+  customRoleName?: string
+  domainIds: string[]
   status: string
+  hasPassword: boolean
+  isPlatformAdmin: boolean
+  multiOrg: boolean
   compliance: boolean
   passwordSignIn: boolean
   twoFactor: boolean
@@ -275,6 +286,17 @@ export interface Forwarding {
   mode: ForwardingMode
   domains: string[]
   forwarders: { mailboxId: string; address: string; rule: string; enabled: boolean; to: string; allowed: boolean }[]
+}
+
+export interface OrgRole {
+  id: string
+  orgId: string
+  name: string
+  description: string
+  scopes: string[]
+  memberCount: number
+  createdAt: string
+  updatedAt: string
 }
 
 export interface AuditEvent {
@@ -445,6 +467,14 @@ export interface AppPassword {
 }
 
 export type AppPasswordScope = "all" | "mail" | "dav"
+
+export interface MailboxAppPassword {
+  id: string
+  name: string
+  userId: string
+  userEmail: string
+  createdAt: string
+}
 
 export type CreatedAppPassword = AppPassword & { password: string }
 
@@ -752,6 +782,8 @@ export interface GroupMapping {
   group: string
   orgId: string
   role: Role
+  customRoleId?: string
+  domainIds?: string[]
 }
 
 export interface BlockedAddress {

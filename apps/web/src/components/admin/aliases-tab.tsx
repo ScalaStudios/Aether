@@ -27,8 +27,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { plural } from "@/lib/format"
+import { hasPerm } from "@/lib/permissions"
 import { domainsQuery, mailboxesQuery, membersQuery } from "@/lib/queries"
 import type { AcceptFrom, Alias, DirectoryGroup, Member, ResolvedMember } from "@/lib/types"
 
@@ -147,7 +149,11 @@ function toValues(target: Alias | Kind, people: Member[]): Values {
 
 export function AliasesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
-  const aliases = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "alias" && !a.personalOwnerId) })
+  const session = useSession().data
+  const canReadAliases = hasPerm(session, orgId, "aliases:read")
+  const canWriteAliases = hasPerm(session, orgId, "aliases:write")
+  const canWriteLists = hasPerm(session, orgId, "aliases:write", "lists:write")
+  const aliases = useQuery({ ...aliasesQuery(orgId), enabled: canReadAliases, select: (all) => all.filter((a) => a.kind === "alias" && !a.personalOwnerId) })
   const lists = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "list") })
   const personal = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.personalOwnerId) })
   const members = useQuery(membersQuery(orgId))
@@ -167,7 +173,9 @@ export function AliasesTab({ orgId }: { orgId: string }) {
 
   async function open(target: Alias | Kind) {
     try {
-      form.reset(toValues(target, await qc.ensureQueryData(membersQuery(orgId))))
+      const targetKind = typeof target === "string" ? target : target.kind
+      const people = targetKind === "list" && canWriteLists ? await qc.ensureQueryData(membersQuery(orgId)) : []
+      form.reset(toValues(target, people))
       setEditing(target)
     } catch (error) {
       toast.error(errorMessage(error))
@@ -248,58 +256,66 @@ export function AliasesTab({ orgId }: { orgId: string }) {
 
   return (
     <div className="flex flex-col gap-12">
-      <section className="flex flex-col gap-6">
-        <SectionHeader
-          title="Aliases"
-          description="Forward mail for an address to up to 100 destinations. Every mailbox among them can send as the alias. A catch-all receives mail for addresses that have no mailbox or alias."
-          actions={
-            <Button onClick={() => open("alias")}>
-              <Plus aria-hidden />
-              Create alias
-            </Button>
-          }
-        />
-        <QueryView query={aliases} empty={<EmptyState icon={Forward} title="No aliases" description="Create an alias to forward an address without a separate mailbox." />}>
-          {(items) => (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Address</TableHead>
-                  <TableHead>Destinations</TableHead>
-                  <TableHead className="w-20">
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-sm">{label(a)}</span>
-                        {!a.localPart && <StatusBadge tone="info">Catch-all</StatusBadge>}
-                        {!a.active && <StatusBadge tone="neutral">Inactive</StatusBadge>}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm whitespace-normal break-all">{a.destinations.join(", ")}</TableCell>
-                    <TableCell>{actions(a)}</TableCell>
+      {canReadAliases && (
+        <section className="flex flex-col gap-6">
+          <SectionHeader
+            title="Aliases"
+            description="Forward mail for an address to up to 100 destinations. Every mailbox among them can send as the alias. A catch-all receives mail for addresses that have no mailbox or alias."
+            actions={
+              canWriteAliases && (
+                <Button onClick={() => open("alias")}>
+                  <Plus aria-hidden />
+                  Create alias
+                </Button>
+              )
+            }
+          />
+          <QueryView query={aliases} empty={<EmptyState icon={Forward} title="No aliases" description="Create an alias to forward an address without a separate mailbox." />}>
+            {(items) => (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Address</TableHead>
+                    <TableHead>Destinations</TableHead>
+                    {canWriteAliases && (
+                      <TableHead className="w-20">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    )}
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </QueryView>
-      </section>
+                </TableHeader>
+                <TableBody>
+                  {items.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-sm">{label(a)}</span>
+                          {!a.localPart && <StatusBadge tone="info">Catch-all</StatusBadge>}
+                          {!a.active && <StatusBadge tone="neutral">Inactive</StatusBadge>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-sm whitespace-normal break-all">{a.destinations.join(", ")}</TableCell>
+                      {canWriteAliases && <TableCell>{actions(a)}</TableCell>}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </QueryView>
+        </section>
+      )}
 
       <section className="flex flex-col gap-6">
         <SectionHeader
           title="Distribution lists"
           description="One address for a group of up to 5,000 people, listed in the directory. Choose who can send to it, who can send as it, and who can change its members without being an administrator."
           actions={
-            <Button variant="secondary" onClick={() => open("list")}>
-              <Plus aria-hidden />
-              Create list
-            </Button>
+            canWriteLists && (
+              <Button variant={canReadAliases ? "secondary" : "default"} onClick={() => open("list")}>
+                <Plus aria-hidden />
+                Create list
+              </Button>
+            )
           }
         />
         <QueryView query={lists} empty={<EmptyState icon={Users} title="No distribution lists" description="Create a list such as staff@ to reach a group, and decide who is allowed to write to it." />}>
@@ -310,9 +326,11 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                   <TableHead>List</TableHead>
                   <TableHead>Members</TableHead>
                   <TableHead>Who can send</TableHead>
-                  <TableHead className="w-28">
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
+                  {canWriteLists && (
+                    <TableHead className="w-28">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -331,7 +349,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                     </TableCell>
                     <TableCell>{[plural(a.destinations.length, "member"), a.groups.length && plural(a.groups.length, "group"), a.memberDomains.length && plural(a.memberDomains.length, "domain")].filter(Boolean).join(" · ")}</TableCell>
                     <TableCell>{senders[a.acceptFrom].label}</TableCell>
-                    <TableCell>{actions(a)}</TableCell>
+                    {canWriteLists && <TableCell>{actions(a)}</TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
@@ -395,7 +413,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         pending={save.isPending}
         onSubmit={form.handleSubmit((v) => save.mutate(v))}
       >
-        {existing?.localPart && (
+        {existing?.localPart && canWriteAliases && (
           <Controller
             control={form.control}
             name="kind"

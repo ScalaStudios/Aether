@@ -208,6 +208,12 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/organizations/{orgId}/members/{userId}/sessions/{sessionId}", s.endMemberSessions)
 	authed("GET /api/v1/organizations/{orgId}/security", s.getOrgSecurity)
 	authed("PUT /api/v1/organizations/{orgId}/security", s.saveOrgSecurity)
+	authed("POST /api/v1/organizations/{orgId}/members/{userId}/password", s.resetMemberPassword)
+	authed("PATCH /api/v1/organizations/{orgId}/members/{userId}/status", s.setMemberStatus)
+	authed("GET /api/v1/organizations/{orgId}/roles", s.listRoles)
+	authed("POST /api/v1/organizations/{orgId}/roles", s.createRole)
+	authed("PUT /api/v1/roles/{roleId}", s.updateRole)
+	authed("DELETE /api/v1/roles/{roleId}", s.deleteRole)
 	authed("GET /api/v1/organizations/{orgId}/audit", s.listAudit)
 	authed("GET /api/v1/organizations/{orgId}/quarantine", s.listOrgQuarantine)
 	authed("GET /api/v1/organizations/{orgId}/quarantine/{id}", s.getOrgQuarantine)
@@ -265,6 +271,8 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/mailboxes/{mailboxId}/delegates", s.addDelegate)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}", s.removeDelegate)
 	authed("GET /api/v1/mailboxes/{mailboxId}/access-log", s.mailboxAccessLog)
+	authed("GET /api/v1/mailboxes/{mailboxId}/app-passwords", s.listMailboxAppPasswords)
+	authed("DELETE /api/v1/mailboxes/{mailboxId}/app-passwords/{id}", s.revokeMailboxAppPassword)
 
 	authed("GET /api/v1/organizations/{orgId}/personal-alias-policy", s.getPersonalAliasPolicy)
 	authed("PUT /api/v1/organizations/{orgId}/personal-alias-policy", s.setPersonalAliasPolicy)
@@ -511,26 +519,14 @@ type principal struct {
 	csrf           string
 	providerID     *string
 	idToken        *string
-	roles          map[string]string
+	grants         map[string]orgGrant
 	compliance     map[string]bool
 	apiKey         *apiKeyIdentity
 	twoFactorSetup bool
 }
 
-func (p *principal) orgRole(orgID string) string {
-	if p.User.IsPlatformAdmin {
-		return "owner"
-	}
-	return p.roles[orgID]
-}
-
 func (p *principal) canCompliance(orgID string) bool {
 	return p.compliance[orgID]
-}
-
-func (p *principal) canAdminOrg(orgID string) bool {
-	role := p.orgRole(orgID)
-	return role == "owner" || role == "admin"
 }
 
 func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *principal), allowedDuringSetup bool) http.HandlerFunc {
@@ -547,7 +543,7 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 			return
 		}
 		hash := secrets.SHA256(c.Value)
-		p := &principal{sessionHash: hash, roles: map[string]string{}, compliance: map[string]bool{}}
+		p := &principal{sessionHash: hash, grants: map[string]orgGrant{}, compliance: map[string]bool{}}
 		err = s.db.QueryRow(r.Context(), `
 			UPDATE sessions s SET last_seen_at = now()
 			FROM users u
@@ -573,21 +569,25 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 			writeError(w, http.StatusForbidden, "two_factor_setup_required", "Your organization requires two-factor authentication. Set it up under Settings, Security to continue.")
 			return
 		}
-		rows, err := s.db.Query(r.Context(), `SELECT org_id, role, compliance FROM organization_members WHERE user_id = $1`, p.User.ID)
+		grants, err := s.loadUserGrants(r.Context(), p.User.ID)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		p.grants = grants
+		rows, err := s.db.Query(r.Context(), `SELECT org_id FROM organization_members WHERE user_id = $1 AND compliance`, p.User.ID)
 		if err != nil {
 			s.internalError(w, r, err)
 			return
 		}
 		for rows.Next() {
-			var org, role string
-			var compliance bool
-			if err := rows.Scan(&org, &role, &compliance); err != nil {
+			var org string
+			if err := rows.Scan(&org); err != nil {
 				rows.Close()
 				s.internalError(w, r, err)
 				return
 			}
-			p.roles[org] = role
-			p.compliance[org] = compliance
+			p.compliance[org] = true
 		}
 		rows.Close()
 		h(w, r, p)

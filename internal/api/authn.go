@@ -42,11 +42,15 @@ func allowedUndoDelay(seconds int) bool {
 }
 
 type membership struct {
-	OrgID      string `json:"orgId"`
-	OrgName    string `json:"orgName"`
-	OrgSlug    string `json:"orgSlug"`
-	Role       string `json:"role"`
-	Compliance bool   `json:"compliance"`
+	OrgID          string   `json:"orgId"`
+	OrgName        string   `json:"orgName"`
+	OrgSlug        string   `json:"orgSlug"`
+	Role           string   `json:"role"`
+	CustomRoleID   *string  `json:"customRoleId,omitempty"`
+	CustomRoleName string   `json:"customRoleName,omitempty"`
+	DomainIDs      []string `json:"domainIds"`
+	Permissions    []string `json:"permissions"`
+	Compliance     bool     `json:"compliance"`
 }
 
 type sessionResponse struct {
@@ -186,13 +190,32 @@ func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionRespons
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(ctx, `SELECT o.id, o.name, o.slug, m.role, m.compliance FROM organization_members m JOIN organizations o ON o.id = m.org_id WHERE m.user_id = $1 ORDER BY o.name`, userID)
+	rows, err := s.db.Query(ctx, `
+		SELECT o.id, o.name, o.slug, m.role, m.custom_role_id, coalesce(r.name, ''), coalesce(r.scopes, '{}'), m.compliance,
+			coalesce((SELECT array_agg(d.domain_id::text ORDER BY d.domain_id) FROM organization_member_domains d WHERE d.org_id = m.org_id AND d.user_id = m.user_id), '{}')
+		FROM organization_members m
+		JOIN organizations o ON o.id = m.org_id
+		LEFT JOIN organization_roles r ON r.id = m.custom_role_id
+		WHERE m.user_id = $1 ORDER BY o.name`, userID)
 	if err != nil {
 		return nil, err
 	}
-	resp.Memberships, err = pgx.CollectRows(rows, pgx.RowToStructByPos[membership])
-	resp.Memberships = nonNil(resp.Memberships)
-	return resp, err
+	defer rows.Close()
+	for rows.Next() {
+		var item membership
+		var scopes []string
+		if err := rows.Scan(&item.OrgID, &item.OrgName, &item.OrgSlug, &item.Role, &item.CustomRoleID, &item.CustomRoleName, &scopes, &item.Compliance, &item.DomainIDs); err != nil {
+			return nil, err
+		}
+		item.DomainIDs = nonNil(item.DomainIDs)
+		grant := buildOrgGrant(item.Role, item.CustomRoleID, item.CustomRoleName, scopes, item.DomainIDs)
+		if resp.User.IsPlatformAdmin {
+			grant = buildOrgGrant(roleOwner, nil, "", nil, nil)
+		}
+		item.Permissions = grant.permissionList()
+		resp.Memberships = append(resp.Memberships, item)
+	}
+	return resp, rows.Err()
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request, p *principal) {

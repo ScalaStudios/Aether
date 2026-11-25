@@ -25,6 +25,7 @@ import { MailboxesTab } from "@/components/admin/mailboxes-tab"
 import { MailFlowTab } from "@/components/admin/mail-flow-tab"
 import { MembersTab } from "@/components/admin/members-tab"
 import { QuarantineTab } from "@/components/admin/quarantine-tab"
+import { RolesTab } from "@/components/admin/roles-tab"
 import { SendersTab } from "@/components/admin/senders-tab"
 import { MessageTraceTab } from "@/components/admin/message-trace/trace-tab"
 import { RetentionTab } from "@/components/admin/retention-tab"
@@ -42,14 +43,17 @@ import { FormDialog } from "@/components/form-dialog"
 import { PageContainer } from "@/components/page-container"
 import { PageHeader } from "@/components/page-header"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
+import { plural } from "@/lib/format"
+import { hasPerm, isDomainScoped, orgMembership, roleBadgeTone, roleLabel } from "@/lib/permissions"
 import { organizationsQuery } from "@/lib/queries"
-import type { Organization } from "@/lib/types"
+import type { Organization, Session } from "@/lib/types"
 
 const orgSchema = z.object({
   name: z.string().trim().min(1, "Enter the organization name."),
@@ -58,32 +62,50 @@ const orgSchema = z.object({
 
 type OrgValues = z.infer<typeof orgSchema>
 
-const orgTabs = [
-  { value: "domains", label: "Domains", Component: DomainsTab },
-  { value: "mailboxes", label: "Mailboxes", Component: MailboxesTab },
-  { value: "imports", label: "Mail imports", Component: ImportMail },
-  { value: "aliases", label: "Aliases", Component: AliasesTab },
-  { value: "senders", label: "Senders", Component: SendersTab },
-  { value: "resources", label: "Rooms and equipment", Component: ResourcesTab },
-  { value: "contacts", label: "Contacts", Component: ContactsTab },
-  { value: "members", label: "Members", Component: MembersTab },
-  { value: "forwarding", label: "Forwarding", Component: ForwardingTab },
-  { value: "security", label: "Security", Component: SecurityTab },
-  { value: "sending", label: "Sending", Component: SendingTab },
-  { value: "branding", label: "Branding", Component: BrandingTab },
-  { value: "privacy", label: "Privacy", Component: PrivacyTab },
-  { value: "signatures", label: "Signatures", Component: SignaturesTab },
-  { value: "quarantine", label: "Quarantine", Component: QuarantineTab },
-  { value: "spam", label: "Spam filter", Component: SpamFilterTab },
-  { value: "mail-flow", label: "Mail flow", Component: MailFlowTab },
-  { value: "message-trace", label: "Message trace", Component: MessageTraceTab },
-  { value: "retention", label: "Retention", Component: RetentionTab },
-  { value: "sender-warnings", label: "Sender warnings", Component: SenderWarningsTab },
-  { value: "attachments", label: "Attachments", Component: AttachmentsTab },
-  { value: "encryption", label: "Encryption", Component: EncryptionTab },
-  { value: "limits", label: "Limits", Component: LimitsTab },
-  { value: "audit", label: "Audit log", Component: AuditTab },
-  { value: "integrations", label: "Integrations", Component: IntegrationsTab },
+interface OrgTabDef {
+  value: string
+  label: (session: Session, orgId: string) => string
+  visible: (session: Session, orgId: string) => boolean
+  Component: React.ComponentType<{ orgId: string }>
+}
+
+function orgAdmin(session: Session, orgId: string) {
+  const role = orgMembership(session, orgId)?.role
+  return session.user.isPlatformAdmin || role === "owner" || role === "admin"
+}
+
+const orgTabs: OrgTabDef[] = [
+  { value: "domains", label: () => "Domains", visible: (s, id) => hasPerm(s, id, "domains:read"), Component: DomainsTab },
+  { value: "mailboxes", label: () => "Mailboxes", visible: (s, id) => hasPerm(s, id, "mailboxes:read"), Component: MailboxesTab },
+  { value: "imports", label: () => "Mail imports", visible: (s, id) => orgAdmin(s, id), Component: ImportMail },
+  {
+    value: "aliases",
+    label: (s, id) => (hasPerm(s, id, "aliases:read") ? "Aliases" : "Distribution lists"),
+    visible: (s, id) => hasPerm(s, id, "aliases:read", "lists:read"),
+    Component: AliasesTab,
+  },
+  { value: "senders", label: () => "Senders", visible: (s, id) => orgAdmin(s, id), Component: SendersTab },
+  { value: "resources", label: () => "Rooms and equipment", visible: (s, id) => orgAdmin(s, id), Component: ResourcesTab },
+  { value: "contacts", label: () => "Contacts", visible: (s, id) => orgAdmin(s, id), Component: ContactsTab },
+  { value: "members", label: () => "Members", visible: (s, id) => hasPerm(s, id, "members:read"), Component: MembersTab },
+  { value: "roles", label: () => "Roles", visible: (s, id) => hasPerm(s, id, "roles:read"), Component: RolesTab },
+  { value: "forwarding", label: () => "Forwarding", visible: (s, id) => orgAdmin(s, id), Component: ForwardingTab },
+  { value: "security", label: () => "Security", visible: (s, id) => orgAdmin(s, id), Component: SecurityTab },
+  { value: "sending", label: () => "Sending", visible: (s, id) => orgAdmin(s, id), Component: SendingTab },
+  { value: "branding", label: () => "Branding", visible: (s, id) => hasPerm(s, id, "branding:read"), Component: BrandingTab },
+  { value: "privacy", label: () => "Privacy", visible: (s, id) => orgAdmin(s, id), Component: PrivacyTab },
+  { value: "signatures", label: () => "Signatures", visible: (s, id) => hasPerm(s, id, "signatures:read"), Component: SignaturesTab },
+  { value: "quarantine", label: () => "Quarantine", visible: (s, id) => orgAdmin(s, id), Component: QuarantineTab },
+  { value: "spam", label: () => "Spam filter", visible: (s, id) => orgAdmin(s, id), Component: SpamFilterTab },
+  { value: "mail-flow", label: () => "Mail flow", visible: (s, id) => orgAdmin(s, id), Component: MailFlowTab },
+  { value: "message-trace", label: () => "Message trace", visible: (s, id) => orgAdmin(s, id), Component: MessageTraceTab },
+  { value: "retention", label: () => "Retention", visible: (s, id) => orgAdmin(s, id), Component: RetentionTab },
+  { value: "sender-warnings", label: () => "Sender warnings", visible: (s, id) => orgAdmin(s, id), Component: SenderWarningsTab },
+  { value: "attachments", label: () => "Attachments", visible: (s, id) => orgAdmin(s, id), Component: AttachmentsTab },
+  { value: "encryption", label: () => "Encryption", visible: (s, id) => orgAdmin(s, id), Component: EncryptionTab },
+  { value: "limits", label: () => "Limits", visible: (s, id) => orgAdmin(s, id), Component: LimitsTab },
+  { value: "audit", label: () => "Audit log", visible: (s, id) => hasPerm(s, id, "audit:read"), Component: AuditTab },
+  { value: "integrations", label: () => "Integrations", visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read"), Component: IntegrationsTab },
 ]
 
 export function AdminView() {
@@ -110,18 +132,36 @@ export function AdminView() {
   if (!session) return null
   const platformAdmin = session.user.isPlatformAdmin
   const administered = (orgs.data ?? []).filter(
-    (o) => platformAdmin || session.memberships.some((m) => m.orgId === o.id && m.role !== "member")
+    (o) => platformAdmin || session.memberships.some((m) => m.orgId === o.id && (m.permissions.length > 0 || m.role !== "member"))
   )
   const org = administered.find((o) => o.id === orgId) ?? administered[0]
-  const reviewer = session.memberships.some((m) => m.orgId === org?.id && m.role !== "member")
-  const tabs = org ? orgTabs.filter((t) => t.value !== "quarantine" || reviewer) : []
+  const membership = org ? orgMembership(session, org.id) : undefined
+  const tabs = org ? orgTabs.filter((t) => t.visible(session, org.id)) : []
   const active = platformAdmin && ["identity", "mail-queue", "routing", "blocked"].includes(tab) ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
+  const scoped = org ? isDomainScoped(session, org.id) : false
+  const showRoleBadge = !platformAdmin && membership && membership.role !== "owner" && membership.role !== "admin"
 
   return (
     <PageContainer>
       <PageHeader
         title="Administration"
-        description="Domains, mailboxes and access for the organizations you manage."
+        description={
+          showRoleBadge ? (
+            <span className="inline-flex flex-wrap items-center gap-2">
+              <StatusBadge tone={roleBadgeTone(membership.role)}>{roleLabel(membership.role, membership.customRoleName)}</StatusBadge>
+              {scoped && (
+                <span>
+                  {membership.domainIds.length === 0
+                    ? "No domains assigned yet."
+                    : `Scoped to ${plural(membership.domainIds.length, "domain")}.`}
+                </span>
+              )}
+              {membership.role === "auditor" && <span>Read-only access.</span>}
+            </span>
+          ) : (
+            "Domains, mailboxes and access for the organizations you manage."
+          )
+        }
         actions={
           <>
             {administered.length > 0 && org && (
@@ -153,7 +193,7 @@ export function AdminView() {
       ) : orgs.isError ? (
         <ErrorState error={orgs.error} onRetry={() => orgs.refetch()} />
       ) : !org && !platformAdmin ? (
-        <EmptyState icon={Building2} title="Nothing to administer" description="You are not an owner or administrator of any organization." />
+        <EmptyState icon={Building2} title="Nothing to administer" description="You do not have an administrative role in any organization." />
       ) : (
         <>
           {!org && (
@@ -164,43 +204,45 @@ export function AdminView() {
               action={<Button onClick={() => setCreating(true)}>Create organization</Button>}
             />
           )}
-        <Tabs value={active} onValueChange={setTab}>
-          <TabsList>
-            {tabs.map((t) => (
-              <TabsTrigger key={t.value} value={t.value}>
-                {t.label}
-              </TabsTrigger>
-            ))}
-            {platformAdmin && <TabsTrigger value="identity">Identity providers</TabsTrigger>}
-            {platformAdmin && <TabsTrigger value="mail-queue">Mail queue</TabsTrigger>}
-            {platformAdmin && <TabsTrigger value="routing">Outbound routing</TabsTrigger>}
-            {platformAdmin && <TabsTrigger value="blocked">Blocked addresses</TabsTrigger>}
-          </TabsList>
-          {org &&
-            tabs.map(({ value, Component }) => (
-              <TabsContent key={value} value={value}>
-                <Component key={org.id} orgId={org.id} />
+        {(tabs.length > 0 || platformAdmin) && (
+          <Tabs value={active} onValueChange={setTab}>
+            <TabsList>
+              {tabs.map((t) => (
+                <TabsTrigger key={t.value} value={t.value}>
+                  {org ? t.label(session, org.id) : t.value}
+                </TabsTrigger>
+              ))}
+              {platformAdmin && <TabsTrigger value="identity">Identity providers</TabsTrigger>}
+              {platformAdmin && <TabsTrigger value="mail-queue">Mail queue</TabsTrigger>}
+              {platformAdmin && <TabsTrigger value="routing">Outbound routing</TabsTrigger>}
+              {platformAdmin && <TabsTrigger value="blocked">Blocked addresses</TabsTrigger>}
+            </TabsList>
+            {org &&
+              tabs.map(({ value, Component }) => (
+                <TabsContent key={value} value={value}>
+                  <Component key={org.id} orgId={org.id} />
+                </TabsContent>
+              ))}
+            {platformAdmin && (
+              <TabsContent value="routing"><OutboundRoutingTab /></TabsContent>
+            )}
+            {platformAdmin && (
+              <TabsContent value="identity">
+                <IdentityProvidersTab organizations={orgs.data} />
               </TabsContent>
-            ))}
-          {platformAdmin && (
-            <TabsContent value="routing"><OutboundRoutingTab /></TabsContent>
-          )}
-          {platformAdmin && (
-            <TabsContent value="identity">
-              <IdentityProvidersTab organizations={orgs.data} />
-            </TabsContent>
-          )}
-          {platformAdmin && (
-            <TabsContent value="mail-queue">
-              <MailQueueTab />
-            </TabsContent>
-          )}
-          {platformAdmin && (
-            <TabsContent value="blocked">
-              <BlockedAddressesTab />
-            </TabsContent>
-          )}
-        </Tabs>
+            )}
+            {platformAdmin && (
+              <TabsContent value="mail-queue">
+                <MailQueueTab />
+              </TabsContent>
+            )}
+            {platformAdmin && (
+              <TabsContent value="blocked">
+                <BlockedAddressesTab />
+              </TabsContent>
+            )}
+          </Tabs>
+        )}
         </>
       )}
 
