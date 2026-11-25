@@ -348,7 +348,9 @@ func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, owner_user_id, protocols) VALUES ($1, $2, $3, $4, $5, (SELECT mailbox_protocols FROM organizations WHERE id = $1))`, orgID, domainID, local, email, userID); err != nil {
+		tag, err := tx.Exec(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, owner_user_id, protocols)
+			SELECT $1, $2, $3, $4, $5, (SELECT mailbox_protocols FROM organizations WHERE id = $1) WHERE NOT EXISTS (SELECT 1 FROM aliases WHERE address = $4 AND personal_owner_id IS NOT NULL)`, orgID, domainID, local, email, userID)
+		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
 	} else if err != nil {

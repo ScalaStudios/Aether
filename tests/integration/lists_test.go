@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -183,4 +184,218 @@ func userID(t *testing.T, c *apiClient) string {
 	}
 	c.must("GET", "/session", nil, &me, 200)
 	return me.User.ID
+}
+
+func TestPersonalAliasMailLifecycle(t *testing.T) {
+	w := setupWorld(t)
+	base := "/organizations/" + w.orgID
+	policy := map[string]any{"limitPerUser": 1, "domainIds": []string{w.domainID}}
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	target := map[string]any{"mailboxId": w.aliceMailbox, "domainId": w.domainID, "localPart": "conference", "note": "Conference signup"}
+	w.alice.must("POST", base+"/personal-aliases", target, nil, 403)
+	w.alice.must("PUT", base+"/personal-alias-policy", policy, nil, 403)
+	w.admin.must("PUT", base+"/personal-alias-policy", policy, nil, 204)
+	w.bob.must("POST", base+"/personal-aliases", target, nil, 403)
+	for _, local := range []string{"alice", "dmarc-reports", "bob+tag"} {
+		target["localPart"] = local
+		want := 422
+		if local == "alice" {
+			want = 409
+		}
+		w.alice.must("POST", base+"/personal-aliases", target, nil, want)
+	}
+	target["localPart"] = "conference"
+	var a struct {
+		aliasBody
+		Note, PersonalOwnerID string
+	}
+	w.alice.must("POST", base+"/personal-aliases", target, &a, 201)
+	if a.Address != "conference@"+w.domain || len(a.Destinations) != 1 || a.Destinations[0] != alice || a.Note != "Conference signup" || a.PersonalOwnerID == "" {
+		t.Fatalf("personal alias: %+v", a)
+	}
+	path := "/aliases/" + a.ID
+	w.bob.must("GET", path, nil, nil, 403)
+	w.bob.must("PATCH", path, map[string]bool{"active": false}, nil, 403)
+	w.bob.must("DELETE", path, nil, nil, 403)
+	w.alice.must("PATCH", path, map[string]any{"destinations": []string{bob}}, nil, 400)
+	w.admin.must("POST", base+"/aliases", map[string]any{"domainId": w.domainID, "localPart": "", "destinations": []string{bob}}, nil, 201)
+	smtp := env(t, "AETHER_TEST_SMTP", "postfix:25")
+	submission := env(t, "AETHER_TEST_SUBMISSION", "postfix:587")
+	deliver := func() {
+		t.Helper()
+		subject := "personal alias " + randomSuffix()
+		if err := submit(t, smtp, "", "", "outside@example.org", []string{a.Address}, rfc822("outside@example.org", a.Address, subject, "Mail for Alice"), false); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "personal alias delivery through IMAP", func() bool { return findInAPI(w.alice, w.aliceMailbox, "INBOX", subject) > 0 })
+		if err := submit(t, submission, alice, w.aliceAppPassword, a.Address, []string{bob}, rfc822(a.Address, bob, subject, "Reply"), false); err != nil {
+			t.Fatalf("send as personal alias: %v", err)
+		}
+	}
+	rejected := func() {
+		t.Helper()
+		for _, recipient := range []string{a.Address, "conference+tag@" + w.domain} {
+			for _, endpoint := range []string{smtp, submission} {
+				from, user, pass := "outside@example.org", "", ""
+				if endpoint == submission {
+					from, user, pass = alice, alice, w.aliceAppPassword
+				}
+				err := submit(t, endpoint, user, pass, from, []string{recipient}, rfc822(from, recipient, "blocked", "x"), false)
+				if err == nil || !strings.Contains(err.Error(), "5.1.1") && !strings.Contains(err.Error(), "Address unavailable") {
+					t.Fatalf("%s accepted or did not permanently reject %s: %v", endpoint, recipient, err)
+				}
+			}
+		}
+		if err := submit(t, submission, alice, w.aliceAppPassword, a.Address, []string{bob}, rfc822(a.Address, bob, "blocked sender", "x"), false); err == nil || !strings.Contains(err.Error(), "not owned") {
+			t.Fatalf("unavailable sender: %v", err)
+		}
+	}
+	deliver()
+	w.alice.must("PATCH", path, map[string]any{"active": false, "note": "Disabled after signup"}, nil, 200)
+	w.alice.must("POST", base+"/personal-aliases", target, nil, 409)
+	rejected()
+	w.alice.must("PATCH", path, map[string]bool{"active": true}, nil, 200)
+	deliver()
+	expiry := time.Now().Add(2 * time.Second)
+	w.alice.must("PATCH", path, map[string]any{"expiresAt": expiry}, nil, 200)
+	waitFor(t, "alias expiry", func() bool { return time.Now().After(expiry) })
+	rejected()
+	w.alice.must("PATCH", path, map[string]any{"expiresAt": nil}, nil, 200)
+	deliver()
+	var items []aliasBody
+	w.admin.must("GET", base+"/aliases", nil, &items, 200)
+	found := false
+	for _, item := range items {
+		if item.ID == a.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("administrator could not see personal alias")
+	}
+	w.admin.must("DELETE", path, nil, nil, 204)
+	w.alice.must("GET", path, nil, nil, 404)
+	var events []struct{ Action, TargetID string }
+	w.admin.must("GET", base+"/audit", nil, &events, 200)
+	counts := map[string]int{}
+	for _, e := range events {
+		if e.TargetID == a.ID || e.TargetID == w.orgID {
+			counts[e.Action]++
+		}
+	}
+	if counts["alias.create"] != 1 || counts["alias.update"] != 4 || counts["alias.delete"] != 1 || counts["alias.policy.update"] != 1 {
+		t.Fatalf("missing audit events: %v", counts)
+	}
+}
+
+func TestMaskedAliasKeyAndQuota(t *testing.T) {
+	w := setupWorld(t)
+	base := "/organizations/" + w.orgID
+	policy := map[string]any{"limitPerUser": 2, "domainIds": []string{w.domainID}}
+	w.admin.must("PUT", base+"/personal-alias-policy", policy, nil, 204)
+	target := map[string]string{"domainId": w.domainID, "mailboxId": w.aliceMailbox}
+	var key struct{ Token string }
+	w.bob.must("PUT", base+"/personal-alias-key", target, nil, 403)
+	w.alice.must("PUT", base+"/personal-alias-key", target, &key, 200)
+	generate := func(token, body string) (int, string) {
+		req, err := http.NewRequest("POST", strings.TrimSuffix(w.alice.base, "/v1")+"/alias/random/new?hostname=shop.example", strings.NewReader(body))
+		if err != nil {
+			t.Error(err)
+			return 0, ""
+		}
+		req.Header.Set("Authentication", token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return 0, ""
+		}
+		defer resp.Body.Close()
+		if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
+			t.Error("masked alias response is not readable cross-origin")
+		}
+		var result struct{ Alias, Email string }
+		if resp.StatusCode == 201 {
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Error(err)
+			}
+			if result.Alias == "" || result.Alias != result.Email {
+				t.Errorf("SimpleLogin clients read alias, got %+v", result)
+			}
+		}
+		return resp.StatusCode, result.Email
+	}
+	check := func(token, body string, want int) {
+		t.Helper()
+		if code, _ := generate(token, body); code != want {
+			t.Fatalf("generate status %d, want %d", code, want)
+		}
+	}
+	preflight, err := http.NewRequest("OPTIONS", strings.TrimSuffix(w.alice.base, "/v1")+"/alias/random/new", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight.Header.Set("Origin", "https://vault.bitwarden.com")
+	preflight.Header.Set("Access-Control-Request-Method", "POST")
+	preflight.Header.Set("Access-Control-Request-Headers", "authentication,content-type")
+	resp, err := http.DefaultClient.Do(preflight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 204 || resp.Header.Get("Access-Control-Allow-Origin") != "*" || !strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "Authentication") {
+		t.Fatalf("preflight: %d %v", resp.StatusCode, resp.Header)
+	}
+	check("", "", 401)
+	check(w.aliceAppPassword, "", 401)
+	check(key.Token, `{"destination":"somebody@example.org"}`, 400)
+	old := key.Token
+	w.alice.must("PUT", base+"/personal-alias-key", target, &key, 200)
+	check(old, "", 401)
+	type result struct {
+		code    int
+		address string
+	}
+	results := make(chan result, 6)
+	for range cap(results) {
+		go func() { code, address := generate(key.Token, ""); results <- result{code, address} }()
+	}
+	addresses := map[string]bool{}
+	for range cap(results) {
+		res := <-results
+		switch res.code {
+		case 201:
+			if addresses[res.address] || !strings.HasSuffix(res.address, "@"+w.domain) || strings.Contains(res.address, "alice") {
+				t.Fatalf("invalid masked address %q", res.address)
+			}
+			addresses[res.address] = true
+		case 409:
+		default:
+			t.Fatalf("unexpected generate status %d", res.code)
+		}
+	}
+	if len(addresses) != 2 {
+		t.Fatalf("concurrent quota allowed %d aliases", len(addresses))
+	}
+	var list struct {
+		Aliases []struct{ ID, Address, Note string }
+	}
+	w.alice.must("GET", base+"/personal-aliases", nil, &list, 200)
+	if len(list.Aliases) != 2 || list.Aliases[0].Note != "shop.example" {
+		t.Fatalf("masked aliases: %+v", list)
+	}
+	w.alice.must("DELETE", "/aliases/"+list.Aliases[0].ID, nil, nil, 204)
+	w.bob.must("GET", base+"/personal-aliases", nil, &list, 200)
+	if len(list.Aliases) != 0 {
+		t.Fatal("another member can see private aliases")
+	}
+	target["mailboxId"] = w.bobMailbox
+	w.bob.must("POST", base+"/personal-aliases", target, nil, 201)
+	policy["domainIds"] = []string{}
+	w.admin.must("PUT", base+"/personal-alias-policy", policy, nil, 204)
+	check(key.Token, "", 403)
+	policy["domainIds"] = []string{w.domainID}
+	w.admin.must("PUT", base+"/personal-alias-policy", policy, nil, 204)
+	check(key.Token, `{"note":"Explicit note"}`, 201)
+	w.alice.must("DELETE", base+"/personal-alias-key", nil, nil, 204)
+	check(key.Token, "", 401)
 }

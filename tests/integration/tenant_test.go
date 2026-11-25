@@ -31,6 +31,12 @@ func TestTenantIsolation(t *testing.T) {
 		{"GET", "/organizations/" + b.orgID},
 		{"PATCH", "/organizations/" + b.orgID},
 		{"GET", "/organizations/" + b.orgID + "/domains"},
+		{"GET", "/organizations/" + b.orgID + "/personal-alias-policy"},
+		{"PUT", "/organizations/" + b.orgID + "/personal-alias-policy"},
+		{"GET", "/organizations/" + b.orgID + "/personal-aliases"},
+		{"POST", "/organizations/" + b.orgID + "/personal-aliases"},
+		{"PUT", "/organizations/" + b.orgID + "/personal-alias-key"},
+		{"DELETE", "/organizations/" + b.orgID + "/personal-alias-key"},
 		{"GET", "/organizations/" + b.orgID + "/mailboxes"},
 		{"GET", "/organizations/" + b.orgID + "/members"},
 		{"GET", "/organizations/" + b.orgID + "/audit"},
@@ -143,6 +149,14 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("DELETE", "/admin/users/"+bBob+"/two-factor", nil, nil); got != 403 {
 		t.Errorf("org admin reset another tenant's two-factor: %d", got)
+	}
+
+	policyPath := "/organizations/" + a.orgID + "/personal-alias-policy"
+	orgAdmin.must("PUT", policyPath, map[string]any{"limitPerUser": 3, "domainIds": []string{b.domainID}}, nil, 422)
+	orgAdmin.must("PUT", policyPath, map[string]any{"limitPerUser": 3, "domainIds": []string{a.domainID}}, nil, 204)
+	for _, target := range []map[string]string{{"mailboxId": b.bobMailbox, "domainId": a.domainID}, {"mailboxId": a.aliceMailbox, "domainId": b.domainID}} {
+		orgAdmin.must("POST", "/organizations/"+a.orgID+"/personal-aliases", target, nil, 403)
+		orgAdmin.must("PUT", "/organizations/"+a.orgID+"/personal-alias-key", target, nil, 403)
 	}
 
 	member := b.bob

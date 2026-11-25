@@ -24,6 +24,7 @@ import { ManagedLists } from "@/components/settings/managed-lists"
 import { SenderLists } from "@/components/settings/sender-lists"
 import { Security } from "@/components/settings/security"
 import { ActiveSessions } from "@/components/settings/sessions"
+import { PersonalAliases } from "@/components/settings/personal-aliases"
 import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
@@ -90,6 +91,7 @@ export function SettingsView() {
         <>
           <Signatures />
           <MailRules />
+          <PersonalAliases />
           <SenderLists />
           <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />
           <HeldMessages />

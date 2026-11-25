@@ -35,7 +35,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 
 | Area | What Aether includes |
 | --- | --- |
-| **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself, as aliases that point to it, as distribution lists that allow it and as shared mailboxes its owner may send as, checked on both the envelope and the From header. |
+| **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. People can create their own aliases and masked addresses, from Settings or a password manager, on the domains an administrator allows. A mailbox can only send as itself, as aliases that point to it, as distribution lists that allow it and as shared mailboxes its owner may send as, checked on both the envelope and the From header. |
 | **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, likely spam filed into Junk, a quarantine for spam, phishing and malware with release by people and administrators and digest emails, DKIM signing with a 2048-bit RSA key per domain, ARC signing, outbound rate limits and optional ClamAV virus scanning. |
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
 | **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
@@ -259,6 +259,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Compliance](documentation/compliance.md): legal holds, retained mailboxes, searches across mailboxes, exports and journaling.
 - [Mailbox access auditing](documentation/mailbox-auditing.md): who other than the owner opened, read, moved, deleted or sent from a mailbox.
 - [Rooms and equipment](documentation/rooms-and-equipment.md): bookable rooms and equipment, booking rules, approvals, the room finder, and free/busy over CalDAV.
+- [Personal aliases](documentation/personal-aliases.md): aliases and masked addresses people create for themselves, the policy that limits them, and the SimpleLogin-compatible endpoint for password managers.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

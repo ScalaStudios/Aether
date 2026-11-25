@@ -2,13 +2,14 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Forward, ListTree, Pencil, Plus, Trash2, Users } from "lucide-react"
+import { Forward, ListTree, Pencil, Plus, Trash2, Users, VenetianMask } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
 import { DomainSelect } from "@/components/admin/domain-select"
+import { PersonalAliasPolicyHeader } from "@/components/admin/personal-alias-policy"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
@@ -17,6 +18,7 @@ import { MultiSelect } from "@/components/multi-select"
 import { SectionHeader } from "@/components/page-header"
 import { RecipientInput } from "@/components/recipient-input"
 import { SegmentedControl } from "@/components/segmented-control"
+import { expired } from "@/components/settings/personal-aliases"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
@@ -142,8 +144,10 @@ function toValues(target: Alias | Kind, people: Member[]): Values {
 
 export function AliasesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
-  const aliases = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "alias") })
+  const aliases = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "alias" && !a.personalOwnerId) })
   const lists = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.kind === "list") })
+  const personal = useQuery({ ...aliasesQuery(orgId), select: (all) => all.filter((a) => a.personalOwnerId) })
+  const members = useQuery(membersQuery(orgId))
   const domains = useQuery(domainsQuery(orgId))
   const groups = useQuery(directoryGroupsQuery(orgId))
   const [editing, setEditing] = useState<Alias | Kind | null>(null)
@@ -325,6 +329,52 @@ export function AliasesTab({ orgId }: { orgId: string }) {
                     <TableCell>{actions(a)}</TableCell>
                   </TableRow>
                 ))}
+              </TableBody>
+            </Table>
+          )}
+        </QueryView>
+      </section>
+
+      <section className="flex flex-col gap-6">
+        <PersonalAliasPolicyHeader orgId={orgId} />
+        <QueryView
+          query={personal}
+          empty={<EmptyState icon={VenetianMask} title="No personal aliases" description="Aliases that people create for themselves appear here, so you can see who owns each one and delete any that shouldn’t exist." />}
+        >
+          {(items) => (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Alias and owner</TableHead>
+                  <TableHead className="w-12">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((a) => {
+                  const owner = members.data?.find((m) => m.userId === a.personalOwnerId)
+                  return (
+                    <TableRow key={a.id}>
+                      <TableCell className="whitespace-normal">
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span className="font-mono text-sm break-all">{a.address}</span>
+                            {expired(a) ? <StatusBadge tone="neutral">Expired</StatusBadge> : !a.active && <StatusBadge tone="neutral">Off</StatusBadge>}
+                          </div>
+                          <span className="text-sm break-words text-fg-tertiary">
+                            {owner ? (owner.displayName ? `${owner.displayName} · ${owner.email}` : owner.email) : members.data && "No longer a member"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <IconButton label={`Delete ${a.address}`} size="icon-sm" onClick={() => setDeleting(a)}>
+                          <Trash2 />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}
@@ -514,7 +564,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
         title={deleting?.kind === "list" ? "Delete distribution list?" : "Delete alias?"}
-        description={deleting ? `Mail to ${label(deleting)} stops being forwarded immediately.` : ""}
+        description={deleting ? (deleting.personalOwnerId ? `Mail to ${deleting.address} is rejected from now on, and its owner gets a place back under their limit.` : `Mail to ${label(deleting)} stops being forwarded immediately.`) : ""}
         confirmLabel={deleting?.kind === "list" ? "Delete list" : "Delete alias"}
         pending={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting)}

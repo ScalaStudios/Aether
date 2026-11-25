@@ -50,6 +50,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /readyz", s.ready)
 
+	mux.HandleFunc("POST /api/alias/random/new", s.generateMaskedAlias)
+	mux.HandleFunc("OPTIONS /api/alias/random/new", s.generateMaskedAlias)
 	mux.HandleFunc("GET /api/v1/auth/providers", s.authProviders)
 	mux.HandleFunc("GET /api/v1/branding", s.currentBranding)
 	mux.HandleFunc("GET /api/v1/branding/{orgId}/{asset}", s.brandAsset)
@@ -190,6 +192,12 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}", s.removeDelegate)
 	authed("GET /api/v1/mailboxes/{mailboxId}/access-log", s.mailboxAccessLog)
 
+	authed("GET /api/v1/organizations/{orgId}/personal-alias-policy", s.getPersonalAliasPolicy)
+	authed("PUT /api/v1/organizations/{orgId}/personal-alias-policy", s.setPersonalAliasPolicy)
+	authed("GET /api/v1/organizations/{orgId}/personal-aliases", s.listPersonalAliases)
+	authed("POST /api/v1/organizations/{orgId}/personal-aliases", s.createPersonalAlias)
+	authed("PUT /api/v1/organizations/{orgId}/personal-alias-key", s.setPersonalAliasKey)
+	authed("DELETE /api/v1/organizations/{orgId}/personal-alias-key", s.revokePersonalAliasKey)
 	authed("GET /api/v1/organizations/{orgId}/aliases", s.listAliases)
 	authed("POST /api/v1/organizations/{orgId}/aliases", s.createAlias)
 	authed("GET /api/v1/aliases/{aliasId}", s.getAlias)

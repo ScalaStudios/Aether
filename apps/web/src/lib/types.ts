@@ -165,6 +165,11 @@ export interface Delegate {
 
 export type AcceptFrom = "anyone" | "organization" | "members" | "allowlist"
 
+export interface PersonalAliasPolicy {
+  limitPerUser: number
+  domains: { id: string; name: string; available: boolean }[]
+}
+
 export interface Alias {
   id: string
   orgId: string
@@ -185,6 +190,9 @@ export interface Alias {
   moderators: string[]
   moderationExempt: string[]
   hiddenFromDirectory: boolean
+  personalOwnerId?: string
+  note?: string
+  expiresAt?: string
 }
 
 export interface DirectoryGroup {

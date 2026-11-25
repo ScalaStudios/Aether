@@ -8,36 +8,40 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 type alias struct {
-	ID               string   `json:"id"`
-	OrgID            string   `json:"orgId"`
-	DomainID         string   `json:"domainId"`
-	Address          string   `json:"address"`
-	LocalPart        string   `json:"localPart"`
-	Destinations     []string `json:"destinations"`
-	Active           bool     `json:"active"`
-	Kind             string   `json:"kind"`
-	Name             string   `json:"name"`
-	AcceptFrom       string   `json:"acceptFrom"`
-	AllowedSenders   []string `json:"allowedSenders"`
-	SendAs           []string `json:"sendAs"`
-	Owners           []string `json:"owners"`
-	Groups           []string `json:"groups"`
-	MemberDomains    []string `json:"memberDomains"`
-	Moderated        bool     `json:"moderated"`
-	Moderators       []string `json:"moderators"`
-	ModerationExempt []string `json:"moderationExempt"`
-	Hidden           bool     `json:"hiddenFromDirectory"`
+	ID               string     `json:"id"`
+	OrgID            string     `json:"orgId"`
+	DomainID         string     `json:"domainId"`
+	Address          string     `json:"address"`
+	LocalPart        string     `json:"localPart"`
+	Destinations     []string   `json:"destinations"`
+	Active           bool       `json:"active"`
+	Kind             string     `json:"kind"`
+	Name             string     `json:"name"`
+	AcceptFrom       string     `json:"acceptFrom"`
+	AllowedSenders   []string   `json:"allowedSenders"`
+	SendAs           []string   `json:"sendAs"`
+	Owners           []string   `json:"owners"`
+	Groups           []string   `json:"groups"`
+	MemberDomains    []string   `json:"memberDomains"`
+	Moderated        bool       `json:"moderated"`
+	Moderators       []string   `json:"moderators"`
+	ModerationExempt []string   `json:"moderationExempt"`
+	Hidden           bool       `json:"hiddenFromDirectory"`
+	PersonalOwnerID  *string    `json:"personalOwnerId,omitempty"`
+	Note             string     `json:"note,omitempty"`
+	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
 }
 
 const aliasColumns = `a.id, a.org_id, a.domain_id, a.address, a.local_part, a.destinations, a.active, a.kind, a.name, a.accept_from, a.allowed_senders, a.send_as,
 	coalesce((SELECT array_agg(o.user_id::text ORDER BY o.user_id) FROM alias_owners o WHERE o.alias_id = a.id), '{}'),
 	coalesce((SELECT array_agg(g.group_id::text ORDER BY g.group_id) FROM alias_groups g WHERE g.alias_id = a.id), '{}'), a.member_domains::text[],
-	a.moderated, coalesce((SELECT array_agg(m.user_id::text ORDER BY m.user_id) FROM alias_moderators m WHERE m.alias_id = a.id), '{}'), a.moderation_exempt, a.hidden_from_directory`
+	a.moderated, coalesce((SELECT array_agg(m.user_id::text ORDER BY m.user_id) FROM alias_moderators m WHERE m.alias_id = a.id), '{}'), a.moderation_exempt, a.hidden_from_directory, a.personal_owner_id, a.note, a.expires_at`
 
 var acceptFromValues = []string{"anyone", "organization", "members", "allowlist"}
 
@@ -389,7 +393,7 @@ func (s *Server) getAlias(w http.ResponseWriter, r *http.Request, p *principal) 
 	if !ok {
 		return
 	}
-	if !p.canAdminOrg(a.OrgID) && !slices.Contains(a.Owners, p.User.ID) {
+	if !p.canAdminOrg(a.OrgID) && !slices.Contains(a.Owners, p.User.ID) && !a.personalOwner(p) {
 		forbidden(w)
 		return
 	}
@@ -399,6 +403,14 @@ func (s *Server) getAlias(w http.ResponseWriter, r *http.Request, p *principal) 
 func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principal) {
 	a, ok := s.aliasFromPath(w, r, p)
 	if !ok {
+		return
+	}
+	if a.PersonalOwnerID != nil {
+		if !a.personalOwner(p) && !p.canAdminOrg(a.OrgID) {
+			forbidden(w)
+			return
+		}
+		s.updatePersonalAlias(w, r, p, a)
 		return
 	}
 	var in aliasInput
@@ -435,7 +447,7 @@ func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request, p *principa
 	if !ok {
 		return
 	}
-	if !p.canAdminOrg(a.OrgID) {
+	if !p.canAdminOrg(a.OrgID) && !a.personalOwner(p) {
 		forbidden(w)
 		return
 	}

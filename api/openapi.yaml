@@ -732,6 +732,151 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Mailbox" }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/personal-alias-policy:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [aliases]
+      security: [{ session: [] }]
+      summary: Get the organization's personal alias policy as a member
+      responses:
+        "200":
+          description: Allowed domains and the maximum number of stored personal aliases per person across their mailboxes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [limitPerUser, domains]
+                properties:
+                  limitPerUser: { type: integer, minimum: 0 }
+                  domains:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        available: { type: boolean, description: Active and verified }
+    put:
+      tags: [aliases]
+      security: [{ session: [] }]
+      summary: Set the organization's personal alias policy as an administrator
+      description: Policy changes apply to new addresses. A limit of zero disables creation. Disabled and expired aliases count until deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [limitPerUser, domainIds]
+              properties:
+                limitPerUser: { type: integer, minimum: 0, maximum: 2147483647 }
+                domainIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "204": { description: Policy saved }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/personal-aliases:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [aliases]
+      security: [{ session: [] }]
+      summary: List the caller's personal aliases in this organization
+      responses:
+        "200":
+          description: Personal aliases and the mailbox associated with the caller's password-manager key
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [aliases, keyMailboxId]
+                properties:
+                  aliases: { type: array, items: { $ref: "#/components/schemas/Alias" } }
+                  keyMailboxId: { type: [string, "null"], format: uuid }
+    post:
+      tags: [aliases]
+      security: [{ session: [] }]
+      summary: Create a personal address forwarding to an owned mailbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/PersonalAliasTarget" }
+                - type: object
+                  properties:
+                    localPart: { type: string, maxLength: 64, description: Omit or leave empty to generate a random address. }
+                    note: { type: string, description: Up to 1000 bytes. }
+                    expiresAt: { type: [string, "null"], format: date-time, description: Future instant when delivery and send-as stop. }
+      responses:
+        "201":
+          description: Personal alias created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Alias" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/personal-alias-key:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    put:
+      tags: [aliases]
+      security: [{ session: [] }]
+      summary: Issue or replace the caller's password-manager key for one allowed domain and owned mailbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersonalAliasTarget" }
+      responses:
+        "200":
+          description: The secret is returned once. Replacing a key immediately invalidates the previous one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [aliases]
+      security: [{ session: [] }]
+      summary: Revoke the caller's password-manager key for this organization
+      responses:
+        "204": { description: Revoked }
+  /api/alias/random/new:
+    servers: [{ url: / }]
+    post:
+      tags: [aliases]
+      summary: Generate a masked address with a personal alias key
+      description: Password managers can use the SimpleLogin random alias endpoint with the Aether public URL. The key binds the destination mailbox and alias domain. The same organization policy and quota apply as in Mail settings. Responses allow any origin, so browser-based password managers can call it; the key travels in a header, never a cookie.
+      security: [{ personalAliasKey: [] }]
+      parameters: [{ name: hostname, in: query, schema: { type: string }, description: Used as the note when none is supplied. }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, description: Up to 1000 bytes. }
+      responses:
+        "201":
+          description: Generated address
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, alias, email, enabled, note]
+                properties:
+                  id: { type: string, format: uuid }
+                  alias: { type: string, format: email, description: Same as email. Bitwarden reads this field. }
+                  email: { type: string, format: email }
+                  enabled: { type: boolean }
+                  note: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/aliases:
     get:
       tags: [aliases]
@@ -767,7 +912,7 @@ paths:
   /aliases/{aliasId}:
     get:
       tags: [aliases]
-      summary: Read an alias or list. Organization admins and list owners.
+      summary: Read an alias or list as its administrator, personal owner or list owner.
       parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "200":
@@ -778,13 +923,21 @@ paths:
     patch:
       tags: [aliases]
       summary: Change an alias or list in place
-      description: Only the fields sent are changed. List owners who are not organization admins may only send destinations, addDestinations and removeDestinations. Writes one alias.update audit event with the old and new values.
+      description: Only the fields sent are changed. List owners who are not organization admins may only send destinations, addDestinations and removeDestinations. For a personal alias, the owner or administrator may send only active, note and expiresAt. Send null to clear expiry. Changes write an alias.update audit event.
       parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/AliasInput" }
+            schema:
+              anyOf:
+                - { $ref: "#/components/schemas/AliasInput" }
+                - type: object
+                  additionalProperties: false
+                  properties:
+                    active: { type: boolean }
+                    note: { type: string, description: Up to 1000 bytes. }
+                    expiresAt: { type: [string, "null"], format: date-time }
       responses:
         "200":
           description: Saved
@@ -794,6 +947,7 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [aliases]
+      summary: Delete an alias as an administrator or its personal owner
       parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "204": { description: Deleted }
@@ -2743,6 +2897,7 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
+    personalAliasKey: { type: apiKey, in: header, name: Authentication, description: A revocable key for generating masked addresses. }
     session:
       type: apiKey
       in: cookie
@@ -3010,10 +3165,19 @@ components:
         sendAs: { type: boolean, description: The caller may send from the address. Only in GET /me/mailboxes. }
         sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }
         protocols: { $ref: "#/components/schemas/Protocols" }
+    PersonalAliasTarget:
+      type: object
+      required: [domainId, mailboxId]
+      properties:
+        domainId: { type: string, format: uuid, description: Allowed and verified alias domain in this organization }
+        mailboxId: { type: string, format: uuid, description: Active personal mailbox owned by the caller in this organization }
     Alias:
       type: object
       required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt, hiddenFromDirectory]
       properties:
+        personalOwnerId: { type: string, format: uuid, description: Present for self-service aliases. }
+        note: { type: string }
+        expiresAt: { type: string, format: date-time }
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
         domainId: { type: string, format: uuid }

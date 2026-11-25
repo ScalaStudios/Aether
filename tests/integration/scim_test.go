@@ -104,3 +104,41 @@ func TestSCIMProvisioning(t *testing.T) {
 		t.Fatalf("SCIM after the token was removed: %d", got)
 	}
 }
+
+func TestSCIMSkipsPersonalAliasAddress(t *testing.T) {
+	w := setupWorld(t)
+	f := startFakeIssuer(t)
+	slug := "halo-" + randomSuffix()
+	var provider struct {
+		ID string `json:"id"`
+	}
+	w.admin.must("POST", "/admin/identity-providers", map[string]any{
+		"slug": slug, "name": "Halo", "kind": "halo", "issuer": f.issuer, "clientId": f.clientID, "clientSecret": f.secret,
+	}, &provider, 201)
+	defer w.admin.do("DELETE", "/admin/identity-providers/"+provider.ID, nil, nil)
+	var enabled struct {
+		Token string `json:"token"`
+	}
+	w.admin.must("POST", "/admin/identity-providers/"+provider.ID+"/scim-token", nil, &enabled, 200)
+
+	base := "/organizations/" + w.orgID
+	w.admin.must("PUT", base+"/personal-alias-policy", map[string]any{"limitPerUser": 1, "domainIds": []string{w.domainID}}, nil, 204)
+	email := "newhire" + randomSuffix() + "@" + w.domain
+	w.alice.must("POST", base+"/personal-aliases", map[string]any{"mailboxId": w.aliceMailbox, "domainId": w.domainID, "localPart": email[:len(email)-len(w.domain)-1]}, nil, 201)
+
+	halo := newClient(t)
+	halo.bearer = enabled.Token
+	halo.must("POST", "/scim/"+slug+"/Users", map[string]any{
+		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:User"}, "userName": email, "externalId": "halo-" + randomSuffix(),
+		"emails": []map[string]any{{"value": email, "primary": true}}, "active": true,
+	}, nil, 201)
+	var mailboxes []struct {
+		Address string `json:"address"`
+	}
+	w.admin.must("GET", base+"/mailboxes", nil, &mailboxes, 200)
+	for _, m := range mailboxes {
+		if m.Address == email {
+			t.Fatal("provisioning created a mailbox behind a personal alias")
+		}
+	}
+}
