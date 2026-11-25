@@ -1,7 +1,7 @@
 "use client"
 
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
-import { AlarmClock, ArrowDownUp, Flag, FolderOpen, FunnelX, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
+import { AlarmClock, ArrowDownUp, Flag, FolderOpen, FunnelX, Info, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { cn } from "cn"
 
@@ -101,6 +101,7 @@ function filteredDescription(folder: string, filters: QuickFilter[]) {
 export function MessageList({
   className,
   folder,
+  notice,
   search,
   onSearchChange,
   searchRef,
@@ -119,6 +120,7 @@ export function MessageList({
 }: {
   className?: string
   folder: Pick<Folder, "name" | "specialUse">
+  notice?: string
   search: string
   onSearchChange: (value: string) => void
   searchRef: React.RefObject<HTMLInputElement | null>
@@ -189,6 +191,12 @@ export function MessageList({
             onChange={(f) => onViewChange({ ...view, filters: view.filters.includes(f) ? view.filters.filter((x) => x !== f) : [...view.filters, f] })}
           />
         </div>
+        {notice && (
+          <p className="flex gap-2 text-sm text-fg-tertiary">
+            <Info aria-hidden className="size-4 shrink-0 translate-y-0.5" />
+            {notice}
+          </p>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {query.isPending ? (

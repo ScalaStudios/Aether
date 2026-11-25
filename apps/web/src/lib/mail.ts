@@ -1,7 +1,7 @@
 import { Archive, File, Folder as FolderIcon, Inbox, OctagonAlert, Send, Trash2, type LucideIcon } from "lucide-react"
 
-import { formatAddress, formatDateTime } from "@/lib/format"
-import type { Address, Attachment, Folder, Message, SpecialUse } from "@/lib/types"
+import { formatAddress, formatDateTime, plural } from "@/lib/format"
+import type { Address, Attachment, Folder, MailboxRetention, Message, SpecialUse } from "@/lib/types"
 
 export const folderIcons: Record<SpecialUse, LucideIcon> = {
   inbox: Inbox,
@@ -17,6 +17,17 @@ export const snoozedFolder = "Snoozed"
 
 export function folderLabel(folder: Pick<Folder, "name" | "specialUse">) {
   return folder.specialUse === "inbox" ? "Inbox" : folder.name
+}
+
+export function retentionNotice(retention: MailboxRetention | undefined, folder: Pick<Folder, "name" | "specialUse">) {
+  const rule = retention?.folders.find((r) => r.folder === folder.name)
+  if (!rule || !retention) return undefined
+  const label = folderLabel(folder)
+  if (folder.name === "Trash" || folder.name === "Junk") {
+    const keep = retention.keepDays ? `, once they are at least ${plural(retention.keepDays, "day")} old` : ""
+    return `Messages in ${label} are deleted after ${plural(rule.days, "day")}${keep}.`
+  }
+  return `Messages in ${label} are deleted ${plural(Math.max(rule.days, retention.keepDays), "day")} after they arrive.`
 }
 
 export function folderParent(name: string) {

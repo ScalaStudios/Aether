@@ -17,6 +17,8 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatalf("org admin sees organizations %v, want only %s", orgs, a.orgID)
 	}
 	orgAdmin.must("GET", "/organizations/"+a.orgID+"/mailboxes", nil, nil, 200)
+	var bPolicy idOnly
+	b.admin.must("POST", "/organizations/"+b.orgID+"/retention-policies", map[string]any{"action": "keep", "days": 10}, &bPolicy, 201)
 
 	denied := []struct{ method, path string }{
 		{"GET", "/organizations/" + b.orgID},
@@ -42,6 +44,11 @@ func TestTenantIsolation(t *testing.T) {
 		{"DELETE", "/mailboxes/" + b.bobMailbox + "/drafts/1"},
 		{"GET", "/mailboxes/" + b.bobMailbox + "/rules"},
 		{"GET", "/mailboxes/" + b.bobMailbox + "/auto-reply"},
+		{"GET", "/mailboxes/" + b.bobMailbox + "/retention"},
+		{"GET", "/organizations/" + b.orgID + "/retention-policies"},
+		{"POST", "/organizations/" + b.orgID + "/retention-policies"},
+		{"PATCH", "/retention-policies/" + bPolicy.ID},
+		{"DELETE", "/retention-policies/" + bPolicy.ID},
 	}
 	for _, d := range denied {
 		var body any
@@ -64,6 +71,9 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("POST", "/organizations/"+a.orgID+"/aliases", map[string]any{"domainId": b.domainID, "localPart": "", "destinations": []string{"alice@" + a.domain}}, nil); got != 422 {
 		t.Errorf("creating a catch-all in another tenant's domain returned %d, want 422", got)
+	}
+	if got := orgAdmin.do("POST", "/organizations/"+a.orgID+"/retention-policies", map[string]any{"action": "keep", "days": 10, "mailboxId": b.bobMailbox}, nil); got != 422 {
+		t.Errorf("creating a retention policy for another tenant's mailbox returned %d, want 422", got)
 	}
 	if got := orgAdmin.do("POST", "/me/app-passwords", map[string]string{"name": "steal", "mailboxId": b.aliceMailbox}, nil); got != 422 {
 		t.Errorf("creating an app password for another tenant's mailbox returned %d, want 422", got)

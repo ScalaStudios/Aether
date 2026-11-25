@@ -40,6 +40,7 @@ type Client struct {
 	doveadmURL     string
 	doveadmKey     string
 	http           *http.Client
+	bulk           *http.Client
 }
 
 func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser, masterPassword, doveadmURL, doveadmKey string) (*Client, error) {
@@ -61,11 +62,20 @@ func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser
 		tls:        &tls.Config{ServerName: hostname, RootCAs: roots, MinVersion: tls.VersionTLS12},
 		masterUser: masterUser, masterPassword: masterPassword,
 		doveadmURL: doveadmURL, doveadmKey: doveadmKey, http: &http.Client{Timeout: 10 * time.Second},
+		bulk: &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 
 func (c *Client) KickSessions(ctx context.Context, user string) error {
-	body, err := json.Marshal([]any{[]any{"kick", map[string][]string{"mask": {user}}, "kick"}})
+	return c.doveadm(ctx, c.http, "kick", map[string][]string{"mask": {user}})
+}
+
+func (c *Client) Expunge(ctx context.Context, user string, query []string) error {
+	return c.doveadm(ctx, c.bulk, "expunge", map[string]any{"user": user, "query": query})
+}
+
+func (c *Client) doveadm(ctx context.Context, client *http.Client, command string, params any) error {
+	body, err := json.Marshal([]any{[]any{command, params, command}})
 	if err != nil {
 		return err
 	}
@@ -75,14 +85,14 @@ func (c *Client) KickSessions(ctx context.Context, user string) error {
 	}
 	req.Header.Set("Authorization", "X-Dovecot-API "+base64.StdEncoding.EncodeToString([]byte(c.doveadmKey)))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("doveadm kick: %w", err)
+		return fmt.Errorf("doveadm %s: %w", command, err)
 	}
 	defer resp.Body.Close()
 	var out [][]json.RawMessage
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil || len(out) != 1 || len(out[0]) < 2 {
-		return fmt.Errorf("doveadm kick: unexpected response with HTTP status %d", resp.StatusCode)
+		return fmt.Errorf("doveadm %s: unexpected response with HTTP status %d", command, resp.StatusCode)
 	}
 	var kind string
 	var failure struct {
@@ -93,7 +103,7 @@ func (c *Client) KickSessions(ctx context.Context, user string) error {
 	if (kind == "doveadmResponse" && resp.StatusCode == http.StatusOK) || (kind == "error" && failure.ExitCode == 68) {
 		return nil
 	}
-	return fmt.Errorf("doveadm kick: HTTP status %d: %s", resp.StatusCode, out[0][1])
+	return fmt.Errorf("doveadm %s: HTTP status %d: %s", command, resp.StatusCode, out[0][1])
 }
 
 func (c *Client) masterLogin(address string) string {

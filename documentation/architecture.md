@@ -130,6 +130,7 @@ The data model is defined in `migrations/0001_init.sql`:
 - `app_passwords`
 - `mail_kicks`, IMAP session kicks waiting for Dovecot to confirm them, one row per address with a generation that each new revocation increments
 - `quarantine_messages`, one stored copy of each held message with its category, score and Rspamd symbols; `quarantine_items`, one row per mailbox it was held for, with its status and who requested or released it; `quarantine_policies` per organization; `quarantine_allowed_senders` per mailbox
+- `retention_policies`, retention policies for an organization or one mailbox, and `retention_runs`, when each mailbox is next due and the lease of the replica applying them
 - `oidc_providers`, `oidc_login_states`, `sessions`, `audit_events`
 
 Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data.
@@ -202,3 +203,17 @@ Organization and domain lists apply to mail arriving on port 25 from servers tha
 Personal lists are compiled into a second Sieve script for the mailbox, `aether-senders`, installed over ManageSieve without being activated. Dovecot runs it first, from `sieve_before`, then the spam-to-Junk script, then the person's rules. A blocked sender's message is discarded and nothing else runs, so it gets no automatic reply. A trusted sender's message has its `X-Spam` header removed with the `editheader` extension, so the spam-to-Junk script leaves it in the inbox and the person's rules still run. Both tests compare the header From and the envelope sender. A personal list cannot rescue a message that Rspamd already rejected.
 
 Spam thresholds per mailbox are not built.
+
+## Retention
+
+Organization administrators set retention policies under **Administration → Retention**, or with `/api/v1/organizations/{orgId}/retention-policies` and `/api/v1/retention-policies/{policyId}`. A policy applies to all mailboxes of the organization or to one mailbox, and is one of two kinds:
+
+- **Delete after** removes messages older than a number of days from one folder, such as `INBOX`, `Sent`, `Archive` or `Clients/Acme`. Subfolders are not included. In Trash and Junk, age counts from when a message was moved there; in other folders, from when it arrived. A policy without days never deletes, which exempts a mailbox from a policy for all mailboxes.
+- **Keep for** stops retention from deleting messages younger than a number of days, in every folder.
+
+A mailbox's policy for a folder replaces the organization's policy for the same folder. Without either, Trash and Junk are emptied of messages older than 30 days, as Dovecot's `autoexpunge` used to do. When several keep policies apply, the longest counts. Every change is an audit event: `retention_policy.create`, `retention_policy.update` or `retention_policy.remove`. Aether Mail shows the policy for the open folder above the message list, from `GET /api/v1/mailboxes/{mailboxId}/retention`.
+
+The API applies the policies once a day per active mailbox on an active, verified domain. Each replica claims one due mailbox at a time with a 30-minute lease in `retention_runs`, which never locks rows in `mailboxes`, and for each folder asks Dovecot's doveadm HTTP API to `expunge` with a search query: `savedbefore` for Trash and Junk, `before` for other folders, and `before` with the keep days when a keep policy applies. A folder that does not exist is skipped. If Dovecot cannot be reached, the mailbox is tried again an hour later. A change to a policy schedules the affected mailboxes straight away.
+
+Keep for limits what retention deletes. It does not stop a person, or an IMAP client, from deleting a message themselves; those deletions are permanent until deleted mail can be recovered.
+

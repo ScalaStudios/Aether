@@ -716,3 +716,25 @@ export interface SenderEntry {
   expiresAt: string | null
   createdAt: string
 }
+
+export type RetentionAction = "delete" | "keep"
+
+export interface RetentionPolicy {
+  id: string
+  mailboxId: string | null
+  mailboxAddress: string | null
+  action: RetentionAction
+  folder: string
+  days: number | null
+  updatedAt: string
+}
+
+export interface RetentionRule {
+  folder: string
+  days: number
+}
+
+export interface MailboxRetention {
+  keepDays: number
+  folders: RetentionRule[]
+}

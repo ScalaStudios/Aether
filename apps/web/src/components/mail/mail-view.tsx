@@ -21,9 +21,9 @@ import { useListView } from "@/hooks/use-list-view"
 import { api } from "@/lib/api"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
-import { buildDraft, folderLabel, snoozedFolder, type ComposeMode, type Draft } from "@/lib/mail"
+import { buildDraft, folderLabel, retentionNotice, snoozedFolder, type ComposeMode, type Draft } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { Folder, Mailbox, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
+import type { Folder, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
 
@@ -58,6 +58,13 @@ export function MailView() {
   const folders = trees.find((t) => t.mailbox.id === mbx)?.folders
   const [folderName, setFolderName] = useState<string | null>(null)
   const folder = folderName ?? folders?.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX"
+  const currentFolder: Pick<Folder, "name" | "specialUse"> = folders?.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }
+
+  const retention = useQuery({
+    queryKey: ["retention", mbx],
+    queryFn: () => api<MailboxRetention>(`/mailboxes/${mbx}/retention`),
+    enabled: !!mailbox,
+  })
 
   const scheduled = useQuery({
     queryKey: ["scheduled", mbx],
@@ -389,7 +396,8 @@ export function MailView() {
       ) : (
         <MessageList
           className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders || reading ? "hidden" : "flex")}
-          folder={folders?.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }}
+          folder={currentFolder}
+          notice={retentionNotice(retention.data, currentFolder)}
           search={search}
           onSearchChange={setSearch}
           searchRef={searchRef}
