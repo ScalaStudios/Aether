@@ -1849,21 +1849,13 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/MailImport" } }
     post:
       tags: [mail]
-      summary: Sign in to another IMAP account and copy its folders into this mailbox in the background. Messages whose Message-ID is already in the target folder are skipped. The password is used only for this import and is not stored.
+      summary: Sign in to another IMAP account and copy its folders into this mailbox in the background. Messages already in the target folder are skipped by Message-ID, with a content hash for messages without one. The password is used only for this import and is not stored.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [host, security, username, password]
-              properties:
-                host: { type: string }
-                port: { type: integer, default: 993 }
-                security: { type: string, enum: [tls, starttls] }
-                username: { type: string }
-                password: { type: string }
+            schema: { $ref: "#/components/schemas/ImportSource" }
       responses:
         "202":
           description: Started
@@ -1880,6 +1872,117 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: Cancelled }
+        "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/import-schedules:
+    parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+    get:
+      tags: [mail]
+      security: [{ session: [] }]
+      summary: List recurring imports for an accessible mailbox, with the latest run for each
+      responses:
+        "200": { $ref: "#/components/responses/ImportSchedules" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [mail]
+      security: [{ session: [] }]
+      summary: Start a recurring import for a writable mailbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportScheduleInput" }
+      responses:
+        "202": { $ref: "#/components/responses/ImportSchedules" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/import-schedules/{id}:
+    delete:
+      tags: [mail]
+      security: [{ session: [] }]
+      summary: Stop a recurring import and erase its stored password
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Stopped }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/import-schedules:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [mailboxes]
+      summary: List an organization's import schedules and latest run results
+      description: Requires an organization administrator or an API key with mailboxes:read or mailboxes:write.
+      responses:
+        "200": { $ref: "#/components/responses/ImportSchedules" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [mailboxes]
+      summary: Create a batch of recurring imports
+      description: Requires an organization administrator or an API key with mailboxes:write. The whole batch succeeds or fails together. The first run is due immediately and subsequent runs are due after the interval. Failed runs retry on the same interval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imports]
+              properties:
+                imports:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    allOf:
+                      - $ref: "#/components/schemas/ImportScheduleInput"
+                      - type: object
+                        required: [mailboxId]
+                        properties:
+                          mailboxId: { type: string, format: uuid }
+      responses:
+        "202": { $ref: "#/components/responses/ImportSchedules" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/import-schedules/stop:
+    post:
+      tags: [mailboxes]
+      summary: Stop a batch of import schedules and erase their stored passwords
+      description: Requires an organization administrator or an API key with mailboxes:write.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+      responses:
+        "204": { description: Stopped }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/import-schedules/{id}/runs:
+    get:
+      tags: [mailboxes]
+      summary: List up to 20 recent runs for an import schedule in this organization
+      description: Requires an organization administrator or an API key with mailboxes:read or mailboxes:write.
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Recent runs
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MailImport" } }
+        "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/folders:
     get:
@@ -3043,6 +3146,11 @@ components:
     traceFrom: { name: from, in: query, description: Received at or after this time, schema: { type: string, format: date-time } }
     traceTo: { name: to, in: query, description: Received before this time, schema: { type: string, format: date-time } }
   responses:
+    ImportSchedules:
+      description: Import schedules
+      content:
+        application/json:
+          schema: { type: array, items: { $ref: "#/components/schemas/ImportSchedule" } }
     Error:
       description: Error
       content:
@@ -3844,10 +3952,48 @@ components:
         uid: { type: integer }
         until: { type: string, format: date-time }
         returnFolder: { type: string }
+    ImportSource:
+      type: object
+      required: [host, security, username, password]
+      properties:
+        host: { type: string }
+        port: { type: integer, default: 993, minimum: 1, maximum: 65535 }
+        security: { type: string, enum: [tls, starttls] }
+        username: { type: string }
+        password: { type: string, writeOnly: true, format: password }
+    ImportScheduleInput:
+      allOf:
+        - $ref: "#/components/schemas/ImportSource"
+        - type: object
+          required: [intervalMinutes]
+          properties:
+            intervalMinutes: { type: integer, minimum: 1, maximum: 10080 }
+            endsAt: { type: [string, "null"], format: date-time, description: Optional future deadline for starting and running imports. }
+            syncFlags: { type: boolean, default: false, description: Mirror read, starred, answered and draft flags only on copies made by this schedule. }
+            syncDeletions: { type: boolean, default: false, description: Expunge only copies made by this schedule when their source messages are marked deleted or removed from the same folder. }
+    ImportSchedule:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mailboxId: { type: string, format: uuid }
+        address: { type: string }
+        host: { type: string }
+        username: { type: string }
+        status: { type: string, enum: [scheduled, stopped, expired] }
+        intervalMinutes: { type: integer }
+        endsAt: { type: [string, "null"], format: date-time }
+        nextRunAt: { type: [string, "null"], format: date-time }
+        syncFlags: { type: boolean }
+        syncDeletions: { type: boolean }
+        latestRun:
+          anyOf:
+            - $ref: "#/components/schemas/MailImport"
+            - type: "null"
     MailImport:
       type: object
       properties:
         id: { type: string, format: uuid }
+        scheduleId: { type: [string, "null"], format: uuid }
         host: { type: string }
         username: { type: string }
         status: { type: string, enum: [running, done, failed, cancelled, interrupted] }
@@ -3859,6 +4005,8 @@ components:
             foldersTotal: { type: integer }
             copied: { type: integer }
             skipped: { type: integer }
+            flagsUpdated: { type: integer }
+            deleted: { type: integer }
         error: { type: string }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: [string, "null"], format: date-time }

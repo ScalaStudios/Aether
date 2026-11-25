@@ -15,7 +15,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | Scope | Allows |
 | --- | --- |
 | `domains:read`, `domains:write` | Listing, adding, verifying, and removing domains, and DNS status |
-| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, converting, and removing mailboxes, and managing their delegates or members, mail rules, automatic replies, signatures, and calendar and contacts imports (see below) |
+| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, converting, and removing mailboxes, and managing their delegates or members, mail rules, automatic replies, signatures, calendar and contacts imports, and recurring mail imports (see below) |
 | `aliases:read`, `aliases:write` | Listing, creating, changing, and removing aliases and distribution lists |
 | `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
 | `audit:read`, `audit:write` | Reading the audit log and mailbox access reports, and changing the [mailbox access auditing](mailbox-auditing.md) settings |
@@ -44,6 +44,24 @@ Organization administrators, signed in or using a key, can prepare a mailbox on 
 | `GET`, `PUT /api/v1/organizations/{orgId}/forwarding` | The organization's forwarding policy and every rule that forwards outside it, as [Architecture](architecture.md#forwarding-to-outside-addresses) describes |
 
 An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate and member changes, conversions, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.
+
+## Recurring mail imports
+
+During a migration, mail keeps arriving at the old provider until the MX record changes and DNS caches expire. A recurring import copies new mail from the old IMAP account every few minutes until it is stopped or reaches its end time. Administrators schedule them under **Administration → Mail imports**, and mailbox owners under **Settings → Import mail** by choosing a repeat interval.
+
+| Route | What it does |
+| --- | --- |
+| `GET`, `POST /api/v1/organizations/{orgId}/import-schedules` | Lists the organization's schedules with their latest run, or creates up to 100 at once in `imports` |
+| `POST /api/v1/organizations/{orgId}/import-schedules/stop` | Stops up to 100 schedules listed in `ids` |
+| `GET /api/v1/organizations/{orgId}/import-schedules/{id}/runs` | The 20 most recent runs of one schedule |
+| `GET`, `POST /api/v1/mailboxes/{mailboxId}/import-schedules` and `DELETE /api/v1/mailboxes/{mailboxId}/import-schedules/{id}` | The same for one mailbox, for its owner and delegates; read-only delegates can only list |
+
+Each schedule takes the source `host`, `port`, `security` (`tls` or `starttls`), `username` and `password`, an `intervalMinutes` from 1 to 10080, an optional future `endsAt`, and two options that default to off:
+
+- `syncFlags` applies the source's read, answered, flagged and draft flags to messages this schedule copied.
+- `syncDeletions` removes copies made by this schedule when the source message is deleted or expunged from the same folder. It needs a destination with `UIDPLUS`, which Dovecot has.
+
+Every run is incremental: messages already in the destination folder are skipped by Message-ID, or by content when they have none. Each run reports the messages copied, skipped, updated and deleted, and a failed run is retried at the next interval. A run stops after 24 hours or at the end time. The source password is stored encrypted and erased when the schedule is stopped, reaches its end time, or loses its mailbox, its domain or, for one created by a mailbox owner, that person's access. Each API process runs at most four imports at a time, and only one import runs for a mailbox at once. Scheduling and stopping appear in the audit log as `mail_import.schedule` and `mail_import.stop`. API keys need `mailboxes:read` to list and `mailboxes:write` to schedule or stop.
 
 ## Webhooks
 

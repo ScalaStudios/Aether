@@ -46,6 +46,13 @@ func TestTenantIsolation(t *testing.T) {
 		{"PUT", "/organizations/" + b.orgID + "/personal-alias-key"},
 		{"DELETE", "/organizations/" + b.orgID + "/personal-alias-key"},
 		{"GET", "/organizations/" + b.orgID + "/mailboxes"},
+		{"GET", "/organizations/" + b.orgID + "/import-schedules"},
+		{"POST", "/organizations/" + b.orgID + "/import-schedules"},
+		{"POST", "/organizations/" + b.orgID + "/import-schedules/stop"},
+		{"GET", "/organizations/" + b.orgID + "/import-schedules/" + b.bobMailbox + "/runs"},
+		{"GET", "/mailboxes/" + b.bobMailbox + "/import-schedules"},
+		{"POST", "/mailboxes/" + b.bobMailbox + "/import-schedules"},
+		{"DELETE", "/mailboxes/" + b.bobMailbox + "/import-schedules/" + a.bobMailbox},
 		{"GET", "/organizations/" + b.orgID + "/members"},
 		{"GET", "/organizations/" + b.orgID + "/audit"},
 		{"GET", "/organizations/" + b.orgID + "/forwarding"},
@@ -171,6 +178,22 @@ func TestTenantIsolation(t *testing.T) {
 		orgAdmin.must("POST", "/organizations/"+a.orgID+"/personal-aliases", target, nil, 403)
 		orgAdmin.must("PUT", "/organizations/"+a.orgID+"/personal-alias-key", target, nil, 403)
 	}
+
+	aImports, bImports := "/organizations/"+a.orgID+"/import-schedules", "/organizations/"+b.orgID+"/import-schedules"
+	input := func(mailbox string) map[string]any {
+		return map[string]any{"mailboxId": mailbox, "host": "imap.example.test", "security": "tls", "username": "source", "password": "secret", "intervalMinutes": 60}
+	}
+	orgAdmin.must("POST", aImports, map[string]any{"imports": []any{input(a.bobMailbox), input(b.bobMailbox)}}, nil, 404)
+	var jobs []idOnly
+	orgAdmin.must("GET", aImports, nil, &jobs, 200)
+	if len(jobs) != 0 {
+		t.Fatal("cross-tenant batch partially created schedules")
+	}
+	b.admin.must("POST", bImports, map[string]any{"imports": []any{input(b.bobMailbox)}}, &jobs, 202)
+	orgAdmin.must("GET", aImports+"/"+jobs[0].ID+"/runs", nil, nil, 404)
+	orgAdmin.must("POST", aImports+"/stop", map[string]any{"ids": []string{jobs[0].ID}}, nil, 404)
+	b.admin.must("POST", bImports+"/stop", map[string]any{"ids": []string{jobs[0].ID}}, nil, 204)
+	b.bob.must("GET", bImports, nil, nil, 403)
 
 	member := b.bob
 	if got := member.do("GET", "/organizations/"+b.orgID+"/mailboxes", nil, nil); got != 403 {

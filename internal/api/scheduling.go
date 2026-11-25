@@ -240,6 +240,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		for s.sendNextScheduled(ctx) {
 		}
 		s.wakeSnoozed(ctx)
+		s.dispatchImports(ctx)
 		s.deliverWebhooks(ctx)
 		s.sweepQuarantine(ctx)
 		s.sendQuarantineDigests(ctx)

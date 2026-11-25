@@ -29,6 +29,7 @@ import { SecurityTab } from "@/components/admin/security-tab"
 import { OutboundRoutingTab } from "@/components/admin/outbound-routing-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
+import { ImportMail } from "@/components/settings/import-mail"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { PageContainer } from "@/components/page-container"
@@ -53,6 +54,7 @@ type OrgValues = z.infer<typeof orgSchema>
 const orgTabs = [
   { value: "domains", label: "Domains", Component: DomainsTab },
   { value: "mailboxes", label: "Mailboxes", Component: MailboxesTab },
+  { value: "imports", label: "Mail imports", Component: ImportMail },
   { value: "aliases", label: "Aliases", Component: AliasesTab },
   { value: "senders", label: "Senders", Component: SendersTab },
   { value: "resources", label: "Rooms and equipment", Component: ResourcesTab },

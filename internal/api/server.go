@@ -38,11 +38,12 @@ type Server struct {
 	resolve       resolver
 	webhookClient *http.Client
 	imports       sync.Map
+	importSlots   chan struct{}
 	kickWake      chan struct{}
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1)}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -226,6 +227,13 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/mailboxes/{mailboxId}/imports", s.listImports)
 	authed("POST /api/v1/mailboxes/{mailboxId}/imports", s.startImport)
 	authed("POST /api/v1/mailboxes/{mailboxId}/imports/{id}/cancel", s.cancelImport)
+	authed("GET /api/v1/mailboxes/{mailboxId}/import-schedules", s.listMailboxImportSchedules)
+	authed("POST /api/v1/mailboxes/{mailboxId}/import-schedules", s.startMailboxImportSchedule)
+	authed("DELETE /api/v1/mailboxes/{mailboxId}/import-schedules/{id}", s.stopMailboxImport)
+	authed("GET /api/v1/organizations/{orgId}/import-schedules", s.listOrgImportSchedules)
+	authed("POST /api/v1/organizations/{orgId}/import-schedules", s.startBulkImports)
+	authed("POST /api/v1/organizations/{orgId}/import-schedules/stop", s.stopBulkImports)
+	authed("GET /api/v1/organizations/{orgId}/import-schedules/{id}/runs", s.orgImportRuns)
 	authed("PUT /api/v1/me/avatar", s.putAvatar)
 	authed("PUT /api/v1/me/profile", s.updateProfile)
 	authed("DELETE /api/v1/me/avatar", s.deleteAvatar)

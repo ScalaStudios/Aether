@@ -933,7 +933,7 @@ func transfer(src, dst *imapclient.Client, folder string, uids []uint32, target 
 		if len(msgs) == 0 || msgs[0].FindBodySection(body) == nil {
 			continue
 		}
-		if err := appendOriginal(dst, target, msgs[0], msgs[0].FindBodySection(body)); err != nil {
+		if _, err := appendOriginal(dst, target, msgs[0], msgs[0].FindBodySection(body)); err != nil {
 			return n, err
 		}
 		n++

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -17,8 +18,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-sasl"
 	"github.com/emersion/go-smtp"
+	"github.com/scalastudios/aether/internal/mail"
 )
 
 type world struct {
@@ -798,4 +801,169 @@ func TestDomainCoexistenceRouting(t *testing.T) {
 	w.admin.must("DELETE", "/aliases/"+catchAll.ID, nil, nil, 204)
 	w.admin.must("PUT", path, map[string]string{"host": ""}, nil, 200)
 	assertRejected(old, "User unknown")
+}
+
+type importTestRun struct {
+	ID, Status, Error string
+	Progress          mail.ImportProgress
+}
+
+type importTestSchedule struct {
+	ID, MailboxID, Status string
+	LatestRun             *importTestRun
+}
+
+func TestRecurringMailImports(t *testing.T) {
+	proxy := dovecotProxy(t, "imap")
+	w, old := setupWorld(t), setupWorld(t)
+	ctx, db := context.Background(), testDB(t)
+	oldAddress := "alice@" + old.domain
+	source, err := imapLogin(t, oldAddress, old.aliceAppPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destination, err := imapLogin(t, "bob@"+w.domain, createAppPassword(t, w.bob, w.bobMailbox))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	copied := rfc822(oldAddress, "bob@"+w.domain, "tracked message", "first")
+	existing := rfc822(oldAddress, "bob@"+w.domain, "existing message", "already there")
+	withoutID := "From: " + oldAddress + "\r\nSubject: no ID\r\n\r\nBody with no ID\r\n"
+	for _, raw := range []string{copied, copied, existing, withoutID} {
+		imapAppend(t, source, "INBOX", raw, time.Now())
+	}
+	imapAppend(t, destination, "INBOX", existing, time.Now(), imap.FlagDeleted)
+
+	var key struct{ Token string }
+	w.admin.must("POST", "/organizations/"+w.orgID+"/api-keys", map[string]any{"name": "migration", "scopes": []string{"mailboxes:write"}}, &key, 201)
+	client := &apiClient{t: t, base: w.admin.base, http: &http.Client{Timeout: 30 * time.Second}, bearer: key.Token}
+	path := "/organizations/" + w.orgID + "/import-schedules"
+	sourceHost := env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test")
+	params := func(mailbox string, sync bool) map[string]any {
+		return map[string]any{"mailboxId": mailbox, "host": sourceHost, "port": 143, "security": "starttls", "username": oldAddress,
+			"password": old.aliceAppPassword, "intervalMinutes": 1, "syncFlags": sync, "syncDeletions": sync}
+	}
+	var jobs []importTestSchedule
+	client.must("POST", path, map[string]any{"imports": []any{params(w.bobMailbox, true), params(w.aliceMailbox, false)}}, &jobs, 202)
+	if len(jobs) != 2 {
+		t.Fatalf("got %d scheduled imports, want 2", len(jobs))
+	}
+	var sealed []byte
+	if err := db.QueryRow(ctx, `SELECT credential FROM mail_import_schedules WHERE id = $1`, jobs[0].ID).Scan(&sealed); err != nil || len(sealed) == 0 || bytes.Contains(sealed, []byte(old.aliceAppPassword)) {
+		t.Fatalf("credential was missing or plaintext: %v", err)
+	}
+	if body := client.raw("GET", path); bytes.Contains(body, []byte(old.aliceAppPassword)) || bytes.Contains(body, []byte("credential")) {
+		t.Fatal("schedule response contains credentials")
+	}
+	waitRun := func(job string, previous string, status string, limit time.Duration) importTestRun {
+		t.Helper()
+		var latest importTestRun
+		waitUpTo(t, limit, "run "+status+" for "+job, func() bool {
+			var runs []importTestRun
+			client.must("GET", path+"/"+job+"/runs", nil, &runs, 200)
+			if len(runs) == 0 {
+				return false
+			}
+			latest = runs[0]
+			return latest.ID != previous && latest.Status == status
+		})
+		return latest
+	}
+	first := waitRun(jobs[0].ID, "", "done", 35*time.Second)
+	other := waitRun(jobs[1].ID, "", "done", 35*time.Second)
+	if first.Progress.Copied != 2 || first.Progress.Skipped != 2 || other.Progress.Copied != 3 {
+		t.Fatalf("initial import counts: %+v and %+v", first.Progress, other.Progress)
+	}
+	imapOriginal(t, destination, "INBOX", "tracked message")
+	untracked := imapOriginal(t, destination, "INBOX", "existing message")
+	if !slices.Contains(untracked.Flags, imap.FlagDeleted) {
+		t.Fatal("initial import modified an existing target message")
+	}
+	imapOriginal(t, destination, "INBOX", "no ID")
+	if _, err := source.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	uidFor := func(subject string) imap.UIDSet {
+		t.Helper()
+		result, err := source.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Subject", Value: subject}}}, nil).Wait()
+		if err != nil || len(result.AllUIDs()) == 0 {
+			t.Fatalf("find %s: %v", subject, err)
+		}
+		return imap.UIDSetNum(result.AllUIDs()...)
+	}
+	if err := source.Store(uidFor("tracked message"), &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagSeen, imap.FlagFlagged}}, nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	remove := uidFor("no ID")
+	if err := source.Store(remove, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}}, nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.UIDExpunge(remove).Close(); err != nil {
+		t.Fatal(err)
+	}
+	imapAppend(t, source, "INBOX", rfc822(oldAddress, "bob@"+w.domain, "arrived after first run", "new"), time.Now())
+	proxy.cut()
+	if _, err := db.Exec(ctx, `UPDATE mail_import_schedules SET next_run_at = now() WHERE id = $1`, jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	failed := waitRun(jobs[0].ID, first.ID, "failed", 35*time.Second)
+	if failed.Progress.Copied != 0 || failed.Error == "" {
+		t.Fatalf("failed import report: %+v", failed)
+	}
+	proxy.restore()
+	retry := waitRun(jobs[0].ID, failed.ID, "done", 85*time.Second)
+	if retry.Progress.Copied != 1 || retry.Progress.FlagsUpdated != 1 || retry.Progress.Deleted != 1 {
+		t.Fatalf("retry should copy only new mail and reconcile opted-in changes: %+v", retry.Progress)
+	}
+	now := imapOriginal(t, destination, "INBOX", "tracked message")
+	if !slices.Contains(now.Flags, imap.FlagSeen) || !slices.Contains(now.Flags, imap.FlagFlagged) {
+		t.Fatal("destination flags were not updated")
+	}
+	if imapFindSubject(t, destination, "INBOX", "no ID") != nil {
+		t.Fatal("source expunge did not remove the tracked copy")
+	}
+	imapOriginal(t, destination, "INBOX", "existing message")
+	imapOriginal(t, destination, "INBOX", "arrived after first run")
+	ownerPath := "/mailboxes/" + w.aliceMailbox + "/imports"
+	var runs []importTestRun
+	w.alice.must("GET", ownerPath, nil, &runs, 200)
+	if len(runs) < 2 || runs[0].Progress.Deleted != 0 || runs[0].Progress.FlagsUpdated != 0 || findInAPI(w.alice, w.aliceMailbox, "INBOX", "no ID") == 0 {
+		t.Fatalf("copy-only schedule unexpectedly reconciled flags or deletions: %+v", runs)
+	}
+	client.must("POST", path+"/stop", map[string]any{"ids": []string{jobs[0].ID, jobs[1].ID}}, nil, 204)
+	for _, job := range jobs {
+		var stopped bool
+		if err := db.QueryRow(ctx, `SELECT credential IS NULL AND status = 'stopped' FROM mail_import_schedules WHERE id = $1`, job.ID).Scan(&stopped); err != nil || !stopped {
+			t.Fatalf("schedule %s still active or has credentials: %v", job.ID, err)
+		}
+	}
+}
+
+func TestRecurringImportDeadlineInterruptsIMAP(t *testing.T) {
+	proxy := dovecotProxy(t, "imap")
+	w := setupWorld(t)
+	path := "/mailboxes/" + w.bobMailbox + "/import-schedules"
+	proxy.hold(0)
+	deadline := time.Now().Add(25 * time.Second)
+	var jobs []importTestSchedule
+	w.bob.must("POST", path, map[string]any{
+		"host": env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test"), "port": 143, "security": "starttls",
+		"username": "alice@" + w.domain, "password": w.aliceAppPassword, "intervalMinutes": 1, "endsAt": deadline,
+	}, &jobs, 202)
+	waitFor(t, "the import to reach stalled IMAP", func() bool {
+		var list []importTestSchedule
+		w.bob.must("GET", path, nil, &list, 200)
+		return len(list) == 1 && list[0].LatestRun != nil && list[0].LatestRun.Status == "running"
+	})
+	waitUpTo(t, 40*time.Second, "IMAP cancellation and credential expiry", func() bool {
+		var list []importTestSchedule
+		w.bob.must("GET", path, nil, &list, 200)
+		return len(list) == 1 && list[0].Status == "expired" && list[0].LatestRun.Status == "failed"
+	})
+	var cleared bool
+	if err := testDB(t).QueryRow(context.Background(), `SELECT credential IS NULL FROM mail_import_schedules WHERE id = $1`, jobs[0].ID).Scan(&cleared); err != nil || !cleared {
+		t.Fatalf("expired schedule retained credentials: %v", err)
+	}
 }

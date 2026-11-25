@@ -95,7 +95,7 @@ func TestImportCopiesFoldersAndSkipsDuplicates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := copyFolder(context.Background(), from, to, folder.Mailbox, target, &p, func(ImportProgress) {}); err != nil {
+		if err := copyFolder(context.Background(), from, to, folder.Mailbox, target, &p, func(ImportProgress) {}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -132,7 +132,7 @@ func TestImportNeverTouchesSharedFolders(t *testing.T) {
 	appendMessage(t, to, support, "known@example.com")
 
 	var p ImportProgress
-	if err := importFolders(context.Background(), from, to, "source", func(last ImportProgress) { p = last }); err != nil {
+	if err := importFolders(context.Background(), from, to, "source", func(last ImportProgress) { p = last }, nil); err != nil {
 		t.Fatal(err)
 	}
 	if p.FoldersDone != 4 || p.FoldersTotal != 4 || p.Copied != 1 || p.Skipped != 0 {

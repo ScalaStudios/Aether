@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -30,6 +31,8 @@ type ImportProgress struct {
 	FoldersTotal int    `json:"foldersTotal"`
 	Copied       int    `json:"copied"`
 	Skipped      int    `json:"skipped"`
+	FlagsUpdated int    `json:"flagsUpdated"`
+	Deleted      int    `json:"deleted"`
 }
 
 var ErrImportLogin = errors.New("the other server rejected the username or password")
@@ -38,62 +41,87 @@ var skippedSourceFolders = []imap.MailboxAttr{imap.MailboxAttrNoSelect, imap.Mai
 
 const importBatch = 25
 
-func dialSource(ctx context.Context, src ImportSource) (*imapclient.Client, error) {
+func dialSource(ctx context.Context, src ImportSource) (*imapclient.Client, func(), error) {
 	conn, err := src.Dial(ctx, "tcp", net.JoinHostPort(src.Host, strconv.Itoa(src.Port)))
 	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", src.Host, err)
+		return nil, nil, fmt.Errorf("connect to %s: %w", src.Host, err)
 	}
-	cfg := &tls.Config{ServerName: src.Host, MinVersion: tls.VersionTLS12}
-	if src.StartTLS {
+	return importConnection(ctx, conn, &tls.Config{ServerName: src.Host, MinVersion: tls.VersionTLS12}, src.StartTLS)
+}
+
+func importConnection(ctx context.Context, conn net.Conn, cfg *tls.Config, startTLS bool) (*imapclient.Client, func(), error) {
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	closeConn := func() { stop(); conn.Close() }
+	if startTLS {
 		ic, err := imapclient.NewStartTLS(conn, &imapclient.Options{TLSConfig: cfg})
 		if err != nil {
-			return nil, fmt.Errorf("start TLS with %s: %w", src.Host, err)
+			closeConn()
+			return nil, nil, err
 		}
-		return ic, nil
+		return ic, closeConn, nil
 	}
 	tc := tls.Client(conn, cfg)
 	if err := tc.HandshakeContext(ctx); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("TLS with %s: %w", src.Host, err)
+		closeConn()
+		return nil, nil, err
 	}
-	return imapclient.New(tc, nil), nil
+	return imapclient.New(tc, nil), closeConn, nil
 }
 
-func CheckImportSource(ctx context.Context, src ImportSource) error {
-	ic, err := dialSource(ctx, src)
-	if err != nil {
-		return err
-	}
-	defer ic.Close()
-	if err := ic.Login(src.Username, src.Password).Wait(); err != nil {
-		return ErrImportLogin
-	}
-	ic.Logout().Wait()
-	return nil
-}
-
-func (c *Client) Import(ctx context.Context, address string, src ImportSource, progress func(ImportProgress)) error {
-	from, err := dialSource(ctx, src)
-	if err != nil {
-		return err
-	}
-	defer from.Close()
-	if err := from.Login(src.Username, src.Password).Wait(); err != nil {
-		return ErrImportLogin
-	}
-	to, err := c.open(address)
-	if err != nil {
-		return err
-	}
+func CheckImportSource(ctx context.Context, src ImportSource) (err error) {
 	defer func() {
-		to.Logout().Wait()
-		to.Close()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 	}()
-
-	return importFolders(ctx, from, to, src.Host, progress)
+	ic, closeConn, err := dialSource(ctx, src)
+	if err != nil {
+		return err
+	}
+	defer closeConn()
+	return importLogin(ic, src)
 }
 
-func importFolders(ctx context.Context, from, to *imapclient.Client, host string, progress func(ImportProgress)) error {
+func importLogin(ic *imapclient.Client, src ImportSource) error {
+	err := ic.Login(src.Username, src.Password).Wait()
+	var response *imap.Error
+	if errors.As(err, &response) && response.Type == imap.StatusResponseTypeNo {
+		return ErrImportLogin
+	}
+	return err
+}
+
+func (c *Client) Import(ctx context.Context, address string, src ImportSource, progress func(ImportProgress), sync *ImportSync) (err error) {
+	defer func() {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
+	from, closeSource, err := dialSource(ctx, src)
+	if err != nil {
+		return err
+	}
+	defer closeSource()
+	if err := importLogin(from, src); err != nil {
+		return err
+	}
+	dialer := net.Dialer{Timeout: 30 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", c.imapAddr)
+	if err != nil {
+		return err
+	}
+	to, closeTarget, err := importConnection(ctx, conn, c.tls, true)
+	if err != nil {
+		return err
+	}
+	defer closeTarget()
+	if _, err := c.login(to, address); err != nil {
+		return err
+	}
+	return importFolders(ctx, from, to, src.Host, progress, sync)
+}
+
+func importFolders(ctx context.Context, from, to *imapclient.Client, host string, progress func(ImportProgress), sync *ImportSync) error {
 	sources, err := from.List("", "*", &imap.ListOptions{ReturnSpecialUse: true}).Collect()
 	if err != nil {
 		return fmt.Errorf("list folders on %s: %w", host, err)
@@ -119,7 +147,7 @@ func importFolders(ctx context.Context, from, to *imapclient.Client, host string
 			return err
 		}
 		if target != "" {
-			if err := copyFolder(ctx, from, to, folder.Mailbox, target, &p, progress); err != nil {
+			if err := copyFolder(ctx, from, to, folder.Mailbox, target, &p, progress, sync); err != nil {
 				return fmt.Errorf("copy %s: %w", folder.Mailbox, err)
 			}
 		}
@@ -164,90 +192,167 @@ func importTarget(to *imapclient.Client, folder *imap.ListData, targets []*imap.
 	return name, nil
 }
 
-func existingMessageIDs(to *imapclient.Client, target string) (map[string]bool, error) {
-	seen := map[string]bool{}
-	data, err := to.Select(target, nil).Wait()
+func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target string, p *ImportProgress, progress func(ImportProgress), sync *ImportSync) error {
+	sourceData, err := from.Select(source, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if data.NumMessages == 0 {
-		return seen, nil
+	if sourceData.NumMessages == 0 && sync == nil {
+		return nil
 	}
-	msgs, err := to.Fetch(imap.SeqSet{{Start: 1, Stop: 0}}, &imap.FetchOptions{Envelope: true}).Collect()
+	targetData, err := to.Select(target, &imap.SelectOptions{ReadOnly: sync == nil}).Wait()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	for _, m := range msgs {
-		if m.Envelope != nil && m.Envelope.MessageID != "" {
-			seen[m.Envelope.MessageID] = true
+	folder := ImportFolder{source, target, sourceData.UIDValidity, targetData.UIDValidity}
+	if sync != nil && !to.Caps().Has(imap.CapUIDPlus) {
+		return errors.New("the destination does not support UIDPLUS")
+	}
+	var copies map[imap.UID]imap.UID
+	if sync != nil {
+		copies, err = sync.Load(ctx, folder)
+		if err != nil {
+			return err
 		}
 	}
-	return seen, nil
-}
-
-func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target string, p *ImportProgress, progress func(ImportProgress)) error {
-	seen, err := existingMessageIDs(to, target)
-	if err != nil {
-		return err
-	}
-	data, err := from.Select(source, &imap.SelectOptions{ReadOnly: true}).Wait()
-	if err != nil {
-		return err
-	}
-	if data.NumMessages == 0 {
-		return nil
+	seen := map[string]bool{}
+	targets := map[imap.UID][]imap.Flag{}
+	var missingIDs []imap.UID
+	if targetData.NumMessages > 0 {
+		msgs, err := to.Fetch(imap.SeqSet{{Start: 1, Stop: 0}}, &imap.FetchOptions{UID: true, Envelope: true, Flags: sync != nil}).Collect()
+		if err != nil {
+			return err
+		}
+		for _, m := range msgs {
+			if id := importMessageID(m); id != "" {
+				seen[id] = true
+			} else {
+				missingIDs = append(missingIDs, m.UID)
+			}
+			if sync != nil {
+				targets[m.UID] = m.Flags
+			}
+		}
 	}
 	found, err := from.UIDSearch(&imap.SearchCriteria{}, nil).Wait()
 	if err != nil {
 		return err
 	}
 	uids := found.AllUIDs()
+	slices.Sort(uids)
+	var targetHashes map[[32]byte]bool
 	body := &imap.FetchItemBodySection{Peek: true}
 	for start := 0; start < len(uids); start += importBatch {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		batch := uids[start:min(start+importBatch, len(uids))]
-		heads, err := from.Fetch(imap.UIDSetNum(batch...), &imap.FetchOptions{UID: true, Envelope: true}).Collect()
+		heads, err := from.Fetch(imap.UIDSetNum(batch...), &imap.FetchOptions{UID: true, Envelope: true, Flags: sync != nil}).Collect()
 		if err != nil {
 			return err
 		}
 		var wanted []imap.UID
 		for _, m := range heads {
-			if m.Envelope != nil && m.Envelope.MessageID != "" && seen[m.Envelope.MessageID] {
+			if uid, tracked := copies[m.UID]; tracked {
+				delete(copies, m.UID)
+				if flags, exists := targets[uid]; exists {
+					if err := sync.update(to, uid, flags, m.Flags, p); err != nil {
+						return err
+					}
+					p.Skipped++
+					continue
+				}
+			}
+			if seen[importMessageID(m)] || (sync != nil && sync.Deletions && slices.Contains(m.Flags, imap.FlagDeleted)) {
 				p.Skipped++
 				continue
 			}
 			wanted = append(wanted, m.UID)
 		}
-		if len(wanted) == 0 {
-			progress(*p)
-			continue
-		}
-		msgs, err := from.Fetch(imap.UIDSetNum(wanted...), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}}).Collect()
-		if err != nil {
-			return err
-		}
-		for _, m := range msgs {
-			raw := m.FindBodySection(body)
-			if raw == nil {
-				p.Skipped++
-				continue
-			}
-			if err := appendOriginal(to, target, m, raw); err != nil {
+		if len(wanted) > 0 {
+			msgs, err := from.Fetch(imap.UIDSetNum(wanted...), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}}).Collect()
+			if err != nil {
 				return err
 			}
-			if m.Envelope != nil && m.Envelope.MessageID != "" {
-				seen[m.Envelope.MessageID] = true
+			for _, m := range msgs {
+				raw, id := m.FindBodySection(body), importMessageID(m)
+				if raw == nil || seen[id] || (sync != nil && sync.Deletions && slices.Contains(m.Flags, imap.FlagDeleted)) {
+					p.Skipped++
+					continue
+				}
+				if id == "" {
+					if targetHashes == nil {
+						targetHashes, err = importBodyHashes(to, missingIDs, body)
+						if err != nil {
+							return err
+						}
+					}
+					hash := sha256.Sum256(raw)
+					if targetHashes[hash] {
+						p.Skipped++
+						continue
+					}
+					targetHashes[hash] = true
+				}
+				appended, err := appendOriginal(to, target, m, raw)
+				if err != nil {
+					return err
+				}
+				p.Copied++
+				progress(*p)
+				if sync != nil {
+					if appended == nil || appended.UIDValidity != folder.TargetValidity || appended.UID == 0 {
+						return errors.New("the destination did not confirm the copied message UID")
+					}
+					if err := sync.Save(ctx, folder, m.UID, appended.UID); err != nil {
+						return err
+					}
+				}
+				if id != "" {
+					seen[id] = true
+				}
 			}
-			p.Copied++
 		}
 		progress(*p)
+	}
+	if sync != nil && sync.Deletions {
+		for sourceUID, uid := range copies {
+			_, stillPresent := slices.BinarySearch(uids, sourceUID)
+			if _, exists := targets[uid]; exists && !stillPresent {
+				if err := deleteImportCopy(to, uid, p); err != nil {
+					return err
+				}
+				progress(*p)
+			}
+		}
 	}
 	return nil
 }
 
-func appendOriginal(to *imapclient.Client, target string, m *imapclient.FetchMessageBuffer, raw []byte) error {
+func importMessageID(m *imapclient.FetchMessageBuffer) string {
+	if m.Envelope != nil {
+		return m.Envelope.MessageID
+	}
+	return ""
+}
+
+func importBodyHashes(to *imapclient.Client, uids []imap.UID, body *imap.FetchItemBodySection) (map[[32]byte]bool, error) {
+	hashes := map[[32]byte]bool{}
+	for start := 0; start < len(uids); start += importBatch {
+		msgs, err := to.Fetch(imap.UIDSetNum(uids[start:min(start+importBatch, len(uids))]...), &imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{body}}).Collect()
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range msgs {
+			if raw := m.FindBodySection(body); raw != nil {
+				hashes[sha256.Sum256(raw)] = true
+			}
+		}
+	}
+	return hashes, nil
+}
+
+func appendOriginal(to *imapclient.Client, target string, m *imapclient.FetchMessageBuffer, raw []byte) (*imap.AppendData, error) {
 	flags := slices.DeleteFunc(slices.Clone(m.Flags), func(f imap.Flag) bool { return f == imap.FlagDeleted || f == "\\Recent" })
 	date := m.InternalDate
 	if date.IsZero() {
@@ -255,11 +360,10 @@ func appendOriginal(to *imapclient.Client, target string, m *imapclient.FetchMes
 	}
 	cmd := to.Append(target, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: date})
 	if _, err := cmd.Write(raw); err != nil {
-		return err
+		return nil, err
 	}
 	if err := cmd.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	_, err := cmd.Wait()
-	return err
+	return cmd.Wait()
 }

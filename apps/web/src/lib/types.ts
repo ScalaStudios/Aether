@@ -834,13 +834,27 @@ export interface SnoozedMessage {
 
 export type MailImport = {
   id: string
+  scheduleId: string | null
   host: string
   username: string
   status: "running" | "done" | "failed" | "cancelled" | "interrupted"
-  progress: { folder?: string; foldersDone?: number; foldersTotal?: number; copied?: number; skipped?: number }
+  progress: { folder?: string; foldersDone?: number; foldersTotal?: number; copied?: number; skipped?: number; flagsUpdated?: number; deleted?: number }
   error: string
   createdAt: string
   finishedAt: string | null
+}
+
+export type MailImportSchedule = {
+  id: string
+  mailboxId: string
+  address: string
+  host: string
+  username: string
+  status: "scheduled" | "stopped" | "expired"
+  intervalMinutes: number
+  endsAt: string | null
+  nextRunAt: string | null
+  latestRun: MailImport | null
 }
 
 export type BrandTheme = "dark" | "light"
