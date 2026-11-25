@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const mailTokenCacheTTL = 5 * time.Minute
@@ -87,6 +90,35 @@ func (s *Server) verifyMailToken(w http.ResponseWriter, r *http.Request) {
 	if !allowed {
 		w.WriteHeader(http.StatusForbidden)
 		return
+	}
+	if session := r.PostFormValue("session"); session != "" {
+		_, err := s.db.Exec(r.Context(), `
+			INSERT INTO mail_sessions (session, user_id, mailbox_id, client)
+			SELECT $1, $2, m.id, 'token' FROM mailboxes m LEFT JOIN mailbox_audit_settings st ON st.org_id = m.org_id
+			WHERE m.address = $3 AND (m.owner_user_id IS DISTINCT FROM $2 OR coalesce(st.enabled AND st.log_owner_deletes, false))
+			ON CONFLICT DO NOTHING`, session, userID, address)
+		if err != nil {
+			s.log.Warn("recording the mail session failed", "err", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+	}
+	if r.PostFormValue("service") == "smtp" {
+		var login string
+		err := s.db.QueryRow(r.Context(), `
+			SELECT ms.login FROM mail_senders ms JOIN mailboxes own ON own.address = ms.login AND own.owner_user_id = $2
+			JOIN mailboxes m ON m.address = ms.sender AND m.owner_user_id IS DISTINCT FROM $2
+			WHERE ms.sender = $1 ORDER BY ms.login LIMIT 1`, address, userID).Scan(&login)
+		if err == nil {
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte(login))
+			return
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.log.Warn("mail token check failed", "err", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

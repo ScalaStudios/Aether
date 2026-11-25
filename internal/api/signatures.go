@@ -84,5 +84,6 @@ func (s *Server) saveSignatures(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.signatures.update", "mailbox", m.ID, map[string]any{"signatures": len(in.Signatures)})
+	s.recordAccess(r, p, m, "signatures.update", "", nil, map[string]any{"signatures": len(in.Signatures)})
 	writeJSON(w, http.StatusOK, in)
 }

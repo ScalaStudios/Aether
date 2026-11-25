@@ -162,6 +162,8 @@ Postfix runs [mail flow rules](mail-flow-rules.md) by calling two milters in the
 
 The API passes approved messages back to Postfix through the Sieve relay port 10025, signed in with `AETHER_SIEVE_RELAY_PASSWORD`; Compose and the Helm chart give it the same password as Dovecot. If the API runs elsewhere, set `AETHER_SIEVE_RELAY_ADDR` (default `postfix:10025`) and open that port to the API.
 
+Postfix also calls the API's [mailbox access audit](mailbox-auditing.md) milter on port 10047 for every message. The API listens on `AETHER_AUDIT_MILTER_LISTEN` (default `:10047`), and Postfix connects to `AETHER_AUDIT_MILTER_SERVICE` (default `api:10047`). If the API cannot be reached, mail is still delivered, unrecorded.
+
 ## Dovecot management API
 
 Dovecot serves its doveadm HTTP API on port 8089 inside the Compose network, protected by `AETHER_DOVECOT_API_KEY`, which `setup.sh` generates. The API uses it to end a member's IMAP sessions when their shared mailbox access changes. Only the API and the Dovecot containers receive the key, and neither starts without it; Postfix does not get it. Never publish the port: the key allows every doveadm command, including reading any mailbox. If the API runs elsewhere, set `AETHER_DOVECOT_API_URL` (default `http://dovecot:8089`) and open the port to the API only.

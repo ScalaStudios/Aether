@@ -41,6 +41,7 @@ type Config struct {
 	MilterAfterListen     string
 	RelayAddr             string
 	RelayPassword         string
+	AuditMilterListen     string
 	CustomCSS             bool
 }
 
@@ -75,6 +76,7 @@ func Load() (*Config, error) {
 		MilterAfterListen:     env("AETHER_MILTER_AFTER_LISTEN", ":10046"),
 		RelayAddr:             env("AETHER_SIEVE_RELAY_ADDR", "postfix:10025"),
 		RelayPassword:         os.Getenv("AETHER_SIEVE_RELAY_PASSWORD"),
+		AuditMilterListen:     env("AETHER_AUDIT_MILTER_LISTEN", ":10047"),
 		CustomCSS:             env("AETHER_CUSTOM_CSS", "true") == "true",
 	}
 	var errs []error

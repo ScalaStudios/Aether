@@ -429,6 +429,7 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 			writeError(w, http.StatusBadGateway, "send_failed", "Your calendar was updated, but the reply to the organizer could not be sent: "+err.Error())
 			return
 		}
+		s.recordAccess(r, p, m, sendAction(m), "", []accessItem{{Subject: replyVerbs[partStat] + ": " + title}}, map[string]any{"invitationReply": true})
 	case method == "REPLY" && in.Response == "apply":
 		if stored == nil {
 			writeError(w, http.StatusNotFound, "not_found", "The event this reply is about is no longer in your calendar.")

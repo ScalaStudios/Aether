@@ -231,6 +231,44 @@ export interface MailQueue {
   messages: QueuedMessage[]
 }
 
+export interface MailboxAuditSettings {
+  enabled: boolean
+  logReads: boolean
+  logOwnerDeletes: boolean
+  ownersCanView: boolean
+  retentionDays: number
+}
+
+export type AccessRole = "owner" | "delegate" | "member" | "admin"
+
+export interface MailboxAccessEvent {
+  id: number
+  createdAt: string
+  actorEmail: string
+  actorRole: AccessRole
+  action: string
+  folder: string
+  subject: string
+  messageId: string
+  client: "web" | "imap" | "app_password" | "token" | "smtp"
+  ip: string
+  metadata: Record<string, unknown>
+}
+
+export interface MailboxAccessSummary {
+  actorEmail: string
+  actorRole: AccessRole
+  events: number
+  first: string
+  last: string
+}
+
+export interface MailboxAccessReport {
+  address: string
+  summary: MailboxAccessSummary[]
+  events: MailboxAccessEvent[]
+}
+
 export interface APIKey {
   id: string
   name: string

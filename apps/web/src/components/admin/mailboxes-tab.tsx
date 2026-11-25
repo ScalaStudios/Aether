@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -13,6 +13,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
+import { MailboxAccessReport } from "@/components/mailbox-access-report"
 import { SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
 import { RecoverDialog } from "@/components/mail/recover-dialog"
@@ -283,6 +284,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
   const [managing, setManaging] = useState<Mailbox | null>(null)
+  const [auditing, setAuditing] = useState<Mailbox | null>(null)
   const [converting, setConverting] = useState<Mailbox | null>(null)
   const [recovering, setRecovering] = useState<Mailbox | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -433,6 +435,10 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                               <ArchiveRestore aria-hidden />
                               Recover deleted items…
                             </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setAuditing(m)}>
+                              <ShieldCheck aria-hidden />
+                              Access report
+                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
                               <CalendarArrowUp aria-hidden />
                               Import calendar (.ics)
@@ -531,6 +537,16 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <SheetDescription>{managing?.address}</SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} />}</div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={!!auditing} onOpenChange={(open) => !open && setAuditing(null)}>
+        <SheetContent side="right" className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[960px]">
+          <SheetHeader className="border-b border-border p-6">
+            <SheetTitle>Access report</SheetTitle>
+            <SheetDescription>{auditing ? `Who other than the owner accessed ${auditing.address}.` : ""}</SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{auditing && <MailboxAccessReport key={auditing.id} mailboxId={auditing.id} />}</div>
         </SheetContent>
       </Sheet>
 

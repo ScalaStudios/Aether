@@ -189,6 +189,15 @@ func serve(log *slog.Logger) error {
 		}()
 		defer ln.Close()
 	}
+	auditMilter, err := net.Listen("tcp", cfg.AuditMilterListen)
+	if err != nil {
+		return err
+	}
+	go func() {
+		log.Info("mailbox audit milter listening", "addr", cfg.AuditMilterListen)
+		errCh <- srv.ServeAuditMilter(auditMilter)
+	}()
+	defer auditMilter.Close()
 	go func() {
 		log.Info("aether api listening", "addr", cfg.Listen, "public_url", cfg.PublicURL.String())
 		errCh <- httpServer.ListenAndServe()

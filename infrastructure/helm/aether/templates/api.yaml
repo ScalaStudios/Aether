@@ -12,6 +12,7 @@ spec:
     - { name: policy, port: 10040, targetPort: 10040 }
     - { name: milter, port: 10045, targetPort: 10045 }
     - { name: milter-after, port: 10046, targetPort: 10046 }
+    - { name: audit-milter, port: 10047, targetPort: 10047 }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -63,6 +64,7 @@ spec:
             - { name: policy, containerPort: 10040 }
             - { name: milter, containerPort: 10045 }
             - { name: milter-after, containerPort: 10046 }
+            - { name: audit-milter, containerPort: 10047 }
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 10

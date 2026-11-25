@@ -89,6 +89,8 @@ Deactivating a shared mailbox removes every member's rights from its folders in 
 | `DELETE /api/v1/mailboxes/{mailboxId}/delegates/{userId}` | Removes a member |
 | `GET /api/v1/me/mailboxes` | Every mailbox the caller may open, with `kind`, `access`, `sendAs` and `sendOnBehalf` |
 
+What members do inside a shared mailbox can be recorded with [mailbox access auditing](mailbox-auditing.md).
+
 API keys need the `mailboxes` scope. The changes appear in the audit log as `mailbox.create` with the kind, `mailbox.convert`, `mailbox.delegate_add` with the rights, and `mailbox.delegate_remove`.
 
 ## Operating shared mailboxes

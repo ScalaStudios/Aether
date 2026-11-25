@@ -248,6 +248,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 			cleaned = time.Now()
 		}
 		go s.purgeRecoverable(ctx)
+		s.pruneMailboxAudit(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -262,20 +263,21 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		return false
 	}
 	defer tx.Rollback(ctx)
-	var id, mailboxID, address, name, inReplyTo string
+	var id, mailboxID, address, name, inReplyTo, subject, mode string
+	var senderID *string
 	var recipients []string
 	var raw []byte
 	var attempts int
 	var usable, permitted, writable bool
 	err = tx.QueryRow(ctx, `
-		SELECT s.id, s.mailbox_id, m.address, m.display_name, s.recipients, s.raw, s.in_reply_to, s.attempts,
+		SELECT s.id, s.mailbox_id, m.address, m.display_name, s.recipients, s.raw, s.in_reply_to, s.attempts, s.subject, s.sender_mode, s.sender_user_id,
 		       m.active AND d.active AND d.verified_at IS NOT NULL,
 		       coalesce(u.status = 'active' AND CASE s.sender_mode WHEN 'send_as' THEN `+mailboxSendAs("s.sender_user_id")+` ELSE `+mailboxSendOnBehalf("s.sender_user_id")+` END, false),
 		       `+mailboxAccessLevel("s.sender_user_id")+` IN ('owner', 'full')
 		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id LEFT JOIN users u ON u.id = s.sender_user_id
 		WHERE s.error IS NULL AND s.send_at <= now()
 		ORDER BY s.send_at LIMIT 1 FOR UPDATE OF s SKIP LOCKED`).
-		Scan(&id, &mailboxID, &address, &name, &recipients, &raw, &inReplyTo, &attempts, &usable, &permitted, &writable)
+		Scan(&id, &mailboxID, &address, &name, &recipients, &raw, &inReplyTo, &attempts, &subject, &mode, &senderID, &usable, &permitted, &writable)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.log.Error("loading scheduled messages failed", "err", err)
@@ -311,6 +313,9 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	}
 	if err := s.mail.SaveSent(address, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
+	}
+	if senderID != nil {
+		s.recordScheduledSend(ctx, mailboxID, *senderID, mode, subject, raw, len(recipients))
 	}
 	if inReplyTo != "" && writable {
 		s.mail.MarkAnswered(address, inReplyTo)

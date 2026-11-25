@@ -58,6 +58,7 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request, p *princip
 		s.mailError(w, r, err)
 		return
 	}
+	s.recordAccess(r, p, m, "folder.create", name, nil, nil)
 	writeJSON(w, http.StatusCreated, map[string]string{"name": name})
 }
 
@@ -104,6 +105,7 @@ func (s *Server) updateFolder(w http.ResponseWriter, r *http.Request, p *princip
 			s.mailError(w, r, err)
 			return
 		}
+		s.recordAccess(r, p, m, "folder.rename", folder, nil, map[string]any{"to": name})
 		if err := s.renameRuleFolders(r.Context(), m, folder, name); err != nil {
 			mailBackendErrs.Inc()
 			s.log.Error("updating mail rules after a folder rename failed", "mailbox", m.ID, "err", err)
@@ -138,18 +140,19 @@ func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request, p *princip
 		s.mailError(w, r, err)
 		return
 	}
+	s.recordAccess(r, p, m, "folder.delete", folder, nil, map[string]any{"moveTo": moveTo})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) emptyFolder(w http.ResponseWriter, r *http.Request, p *principal) {
-	s.folderAction(w, r, p, s.mail.EmptyFolder)
+	s.folderAction(w, r, p, "folder.empty", s.mail.EmptyFolder)
 }
 
 func (s *Server) markFolderRead(w http.ResponseWriter, r *http.Request, p *principal) {
-	s.folderAction(w, r, p, s.mail.MarkFolderRead)
+	s.folderAction(w, r, p, "", s.mail.MarkFolderRead)
 }
 
-func (s *Server) folderAction(w http.ResponseWriter, r *http.Request, p *principal, action func(address, folder string) error) {
+func (s *Server) folderAction(w http.ResponseWriter, r *http.Request, p *principal, accessAction string, action func(address, folder string) error) {
 	m, ok := s.ownedMailbox(w, r, p)
 	if !ok {
 		return
@@ -161,6 +164,9 @@ func (s *Server) folderAction(w http.ResponseWriter, r *http.Request, p *princip
 	if err := action(m.Address, folder); err != nil {
 		s.mailError(w, r, err)
 		return
+	}
+	if accessAction != "" {
+		s.recordAccess(r, p, m, accessAction, folder, nil, nil)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

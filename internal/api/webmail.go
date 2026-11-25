@@ -161,6 +161,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, p *princip
 		s.mailError(w, r, err)
 		return
 	}
+	s.recordAccess(r, p, m, "folder.open", folderParam(r), nil, nil)
 	writeJSON(w, http.StatusOK, page)
 }
 
@@ -184,6 +185,7 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, p *principal
 			inv = s.describeInvitation(ctx, p.User, m, strings.ToLower(msg.From[0].Address), msg.Calendar)
 		}
 	}
+	s.recordAccess(r, p, m, "message.read", folderParam(r), []accessItem{{UID: uid, Subject: msg.Subject, MessageID: msg.MessageID}}, nil)
 	related, err := s.mail.Related(m.Address, folderParam(r), msg)
 	if err != nil {
 		s.log.Warn("finding related messages failed", "mailbox", m.ID, "err", err)
@@ -227,10 +229,12 @@ func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request, p *princi
 	if !ok {
 		return
 	}
+	commit := s.accessAudit(r, p, m, "message.delete", folderParam(r), uid)
 	if err := s.mail.Delete(m.Address, folderParam(r), uid); err != nil {
 		s.mailError(w, r, err)
 		return
 	}
+	commit(nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -272,11 +276,17 @@ func (s *Server) transferMessages(w http.ResponseWriter, r *http.Request, p *pri
 		return
 	}
 	folder, targetID := folderParam(r), strings.ToLower(in.MailboxID)
+	accessAction := "message.move"
+	if keep {
+		accessAction = "message.copy"
+	}
 	if targetID == "" || targetID == m.ID {
+		commit := s.accessAudit(r, p, m, accessAction, folder, uids...)
 		if err := s.mail.Move(m.Address, folder, uids, in.To, keep); err != nil {
 			s.mailError(w, r, err)
 			return
 		}
+		commit(map[string]any{"to": in.To})
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -293,8 +303,10 @@ func (s *Server) transferMessages(w http.ResponseWriter, r *http.Request, p *pri
 		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to the destination mailbox.")
 		return
 	}
+	commit := s.accessAudit(r, p, m, accessAction, folder, uids...)
 	n, err := s.mail.Transfer(m.Address, folder, uids, target.Address, in.To, keep)
 	if n > 0 {
+		commit(map[string]any{"to": in.To, "toMailbox": target.Address, "transferred": n})
 		action := "mailbox.messages.move"
 		if keep {
 			action = "mailbox.messages.copy"
@@ -333,6 +345,7 @@ func (s *Server) getAttachment(w http.ResponseWriter, r *http.Request, p *princi
 		s.mailError(w, r, err)
 		return
 	}
+	s.recordAccess(r, p, m, "message.read", folderParam(r), []accessItem{{UID: uid}}, map[string]any{"attachment": a.Filename})
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mailpkg.ContentDisposition(a.Filename))
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
@@ -472,6 +485,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	mailSends.WithLabelValues("accepted").Inc()
+	s.recordAccess(r, p, m, sendAction(m), "", []accessItem{{Subject: out.Subject, MessageID: messageID}}, map[string]any{"recipients": len(out.Recipients())})
 	if err := s.mail.SaveSent(m.Address, raw); err != nil {
 		s.log.Error("saving to Sent failed", "mailbox", m.ID, "err", err)
 	}
@@ -539,6 +553,7 @@ func (s *Server) deleteDraft(w http.ResponseWriter, r *http.Request, p *principa
 		s.mailError(w, r, err)
 		return
 	}
+	s.recordAccess(r, p, m, "message.delete", "Drafts", []accessItem{{UID: uid}}, map[string]any{"draft": true})
 	w.WriteHeader(http.StatusNoContent)
 }
 

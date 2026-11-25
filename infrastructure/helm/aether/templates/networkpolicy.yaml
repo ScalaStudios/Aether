@@ -60,7 +60,7 @@ spec:
     - ports: [{ port: 9090 }]
     - from:
         {{- include "aether.allowFrom" (list "postfix") | nindent 8 }}
-      ports: [{ port: 2424 }, { port: 10040 }, { port: 10045 }, { port: 10046 }]
+      ports: [{ port: 2424 }, { port: 10040 }, { port: 10045 }, { port: 10046 }, { port: 10047 }]
     - from:
         {{- include "aether.allowFrom" (list "rspamd") | nindent 8 }}
       ports: [{ port: 8080 }]

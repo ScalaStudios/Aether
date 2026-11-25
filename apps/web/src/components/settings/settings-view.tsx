@@ -18,6 +18,7 @@ import { PageContainer } from "@/components/page-container"
 import { HeldMessages } from "@/components/settings/approvals"
 import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
+import { MailboxAccess } from "@/components/settings/mailbox-access"
 import { ManagedLists } from "@/components/settings/managed-lists"
 import { SenderLists } from "@/components/settings/sender-lists"
 import { Signatures } from "@/components/settings/signatures"
@@ -81,6 +82,7 @@ export function SettingsView() {
       <HeldMessages queryKey={["my-held"]} path="/me/held-messages" hideWhenEmpty />
       <ManagedLists />
       <ImportMail />
+      <MailboxAccess />
       <AppPasswords />
       <CalendarApps />
     </PageContainer>

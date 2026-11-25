@@ -53,6 +53,11 @@ func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *princip
 		return false
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.rules.update", "mailbox", m.ID, map[string]any{"rules": len(rules), "autoReply": reply.Enabled})
+	if _, autoReply := response.(mailpkg.AutoReply); autoReply {
+		s.recordAccess(r, p, m, "auto_reply.update", "", nil, map[string]any{"enabled": reply.Enabled})
+	} else {
+		s.recordAccess(r, p, m, "rules.update", "", nil, map[string]any{"rules": len(rules)})
+	}
 	writeJSON(w, http.StatusOK, response)
 	return true
 }

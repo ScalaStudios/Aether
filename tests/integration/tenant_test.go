@@ -32,6 +32,9 @@ func TestTenantIsolation(t *testing.T) {
 		{"GET", "/organizations/" + b.orgID + "/message-trace"},
 		{"GET", "/organizations/" + b.orgID + "/message-trace/export"},
 		{"GET", "/organizations/" + b.orgID + "/message-trace/1"},
+		{"GET", "/organizations/" + b.orgID + "/mailbox-audit"},
+		{"PUT", "/organizations/" + b.orgID + "/mailbox-audit"},
+		{"GET", "/mailboxes/" + b.bobMailbox + "/access-log"},
 		{"GET", "/domains/" + b.domainID},
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},
@@ -57,6 +60,9 @@ func TestTenantIsolation(t *testing.T) {
 		var body any
 		if d.method == "PUT" {
 			body = map[string]any{"subject": "x"}
+		}
+		if d.path == "/organizations/"+b.orgID+"/mailbox-audit" && d.method == "PUT" {
+			body = map[string]any{"enabled": true, "retentionDays": 30}
 		}
 		if d.method == "PATCH" {
 			body = map[string]bool{"active": false}

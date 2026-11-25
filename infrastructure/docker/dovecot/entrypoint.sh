@@ -16,7 +16,7 @@ umask 027
 cat > /run/dovecot-secrets/sql.conf.ext <<SQL
 driver = pgsql
 connect = host=${DB_HOST} dbname=${DB_NAME} user=aether_mail password=${AETHER_MAIL_DB_PASSWORD}
-password_query = SELECT address AS user, NULL AS password, 'Y' AS nopassword FROM mail_credentials WHERE address = '%u' AND token_hash = '%{sha256:password}' LIMIT 1
+password_query = SELECT address AS user, NULL AS password, 'Y' AS nopassword FROM aether_mail_login('%u', '%{sha256:password}', '%{session}', '%{service}')
 user_query = SELECT '/var/vmail/' || id AS home, 'vmail' AS uid, 'vmail' AS gid, CASE WHEN quota_bytes > 0 THEN '*:bytes=' || quota_bytes END AS quota_rule, CASE WHEN held THEN '0' END AS "namespace/expunged/mailbox/*/autoexpunge", CASE WHEN held THEN 'vfile:/etc/dovecot/dovecot-acl-held' END AS acl, CASE WHEN held THEN '' END AS lazy_expunge_exclude FROM mail_userdb WHERE address = '%u'
 iterate_query = SELECT address AS user FROM mail_users
 SQL
@@ -45,6 +45,17 @@ MSMTP
 chown vmail:vmail /run/aether-msmtp/msmtprc
 chmod 0600 /run/aether-msmtp/msmtprc
 printf 'doveadm_api_key = %s\n' "$AETHER_DOVECOT_API_KEY" > /run/dovecot-secrets/doveadm.conf
+API_URL="${AETHER_API_INTERNAL_URL:-http://api:8080}"
+API_KEY_USERINFO=$(printf '%s' "$AETHER_DOVECOT_API_KEY" | od -An -v -tx1 | tr -d ' \n' | sed 's/../%&/g')
+cat > /run/dovecot-secrets/mail-audit.conf <<AUDIT
+event_exporter mail_audit {
+  format = json
+  format_args = time-rfc3339
+  transport = http-post
+  transport_args = ${API_URL%%://*}://dovecot:${API_KEY_USERINFO}@${API_URL#*://}/internal/mail-events
+  transport_timeout = 5sec
+}
+AUDIT
 chgrp dovecot /run/dovecot-secrets/*
 chmod 0640 /run/dovecot-secrets/*
 

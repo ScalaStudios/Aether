@@ -818,6 +818,37 @@ func (c *Client) Attachment(address, folder string, uid uint32, part []int) (*At
 	return out, err
 }
 
+type Envelope struct {
+	UID       uint32
+	Subject   string
+	MessageID string
+}
+
+func (c *Client) Envelopes(address, folder string, uids []uint32) ([]Envelope, error) {
+	if SharedFolder(folder) {
+		return nil, ErrNotFound
+	}
+	var out []Envelope
+	err := c.with(address, func(ic *imapclient.Client) error {
+		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+			return ErrNotFound
+		}
+		msgs, err := ic.Fetch(uidSet(uids), &imap.FetchOptions{UID: true, Envelope: true}).Collect()
+		if err != nil {
+			return err
+		}
+		for _, m := range msgs {
+			e := Envelope{UID: uint32(m.UID)}
+			if m.Envelope != nil {
+				e.Subject, e.MessageID = m.Envelope.Subject, angleID(m.Envelope.MessageID)
+			}
+			out = append(out, e)
+		}
+		return nil
+	})
+	return out, err
+}
+
 func (c *Client) SetFlags(address, folder string, uid uint32, seen, flagged *bool) error {
 	if SharedFolder(folder) {
 		return ErrNotFound
