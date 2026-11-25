@@ -11,6 +11,8 @@ Mail that Rspamd would reject, mail that scores 10 or more, and mail in which Cl
 
 A message matching more than one category takes the most severe one, in the order malware, phishing, high-confidence spam, spam.
 
+A message refused by the organization's [attachment policy](installation.md#attachment-filtering) is still rejected during the SMTP session and is not quarantined.
+
 ## For people
 
 **Quarantine** appears under the folders of the mailbox you are looking at in Aether Mail, with the number of messages held for it. Messages held as categories you may not see are not listed.

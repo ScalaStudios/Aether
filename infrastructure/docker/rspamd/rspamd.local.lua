@@ -36,7 +36,7 @@ rspamd_config:register_symbol({
   priority = 10,
   flags = 'empty,ignore_passthrough',
   callback = function(task)
-    if task:get_user() then
+    if task:get_user() or task:has_symbol('AETHER_BLOCKED_ATTACHMENT') then
       return
     end
     local action = task:get_metric_action()
