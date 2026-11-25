@@ -157,7 +157,26 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, p *princip
 		writeError(w, http.StatusUnprocessableEntity, "invalid_date", "Write since and until as dates like 2026-10-31.")
 		return
 	}
-	page, err := s.mail.List(m.Address, folderParam(r), o)
+	folder := folderParam(r)
+	all := false
+	if !s.resolveList(w, r, m, &o, &folder, &all) {
+		return
+	}
+	var page *mailpkg.Page
+	if all {
+		folders, ferr := s.mail.Folders(m.Address)
+		if ferr != nil {
+			s.mailError(w, r, ferr)
+			return
+		}
+		names := make([]string, 0, len(folders))
+		for _, f := range folders {
+			names = append(names, f.Name)
+		}
+		page, err = s.mail.ListAcross(m.Address, names, o)
+	} else {
+		page, err = s.mail.List(m.Address, folder, o)
+	}
 	if err != nil {
 		s.mailError(w, r, err)
 		return
@@ -213,15 +232,28 @@ func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	var in struct {
-		Seen    *bool `json:"seen"`
-		Flagged *bool `json:"flagged"`
+		Seen         *bool    `json:"seen"`
+		Flagged      *bool    `json:"flagged"`
+		AddLabels    []string `json:"addLabels"`
+		RemoveLabels []string `json:"removeLabels"`
 	}
-	if !decode(w, r, 1<<10, &in) {
+	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	if err := s.mail.SetFlags(m.Address, folderParam(r), uid, in.Seen, in.Flagged); err != nil {
-		s.mailError(w, r, err)
+	if in.Seen == nil && in.Flagged == nil && len(in.AddLabels) == 0 && len(in.RemoveLabels) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_message", "Choose what to change on the message.")
 		return
+	}
+	if in.Seen != nil || in.Flagged != nil {
+		if err := s.mail.SetFlags(m.Address, folderParam(r), uid, in.Seen, in.Flagged); err != nil {
+			s.mailError(w, r, err)
+			return
+		}
+	}
+	if len(in.AddLabels) > 0 || len(in.RemoveLabels) > 0 {
+		if !s.applyLabels(w, r, m, folderParam(r), []uint32{uid}, in.AddLabels, in.RemoveLabels) {
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

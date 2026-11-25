@@ -10,6 +10,7 @@ import { cn } from "cn"
 import { useLiveConnected } from "@/components/live-events"
 import { Composer } from "@/components/mail/composer"
 import { FolderPane } from "@/components/mail/folder-pane"
+import { SearchDialog } from "@/components/mail/label-controls"
 import { MessageList } from "@/components/mail/message-list"
 import { QuarantineList } from "@/components/mail/quarantine-list"
 import { QuarantinePane } from "@/components/mail/quarantine-pane"
@@ -20,16 +21,22 @@ import { StorageBanner } from "@/components/mail/storage-banner"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useListView } from "@/hooks/use-list-view"
-import { api } from "@/lib/api"
+import { api, errorMessage } from "@/lib/api"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
-import { buildDraft, composeIdentity, folderLabel, retentionNotice, senderIdentities, snoozedFolder, type ComposeMode, type Draft, type SenderIdentity } from "@/lib/mail"
-import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { Folder, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
+import { buildDraft, composeIdentity, defaultListView, describeSearch, filtersFromFlags, folderLabel, retentionNotice, savedSearchBody, senderIdentities, snoozedFolder, type ComposeMode, type Draft, type ListView, type SenderIdentity } from "@/lib/mail"
+import { foldersQuery, labelsQuery, myMailboxesQuery, savedSearchesQuery } from "@/lib/queries"
+import type { Folder, Label, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, SavedSearch, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
 
 type Flags = { seen?: boolean; flagged?: boolean }
+type Browse = { kind: "label" | "search"; id: string }
+type Selection = { uid: number; folder: string }
+
+function sameFilters(left: ListView["filters"], right: ListView["filters"]) {
+  return left.length === right.length && left.every((item) => right.includes(item))
+}
 
 function isTyping(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
@@ -62,7 +69,6 @@ export function MailView() {
   const folders = trees.find((t) => t.mailbox.id === mbx)?.folders
   const [folderName, setFolderName] = useState<string | null>(null)
   const folder = folderName ?? folders?.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX"
-  const currentFolder: Pick<Folder, "name" | "specialUse"> = folders?.data?.find((f) => f.name === folder) ?? { name: folder, specialUse: "" }
 
   const retention = useQuery({
     queryKey: ["retention", mbx],
@@ -101,26 +107,60 @@ export function MailView() {
   const [search, setSearch] = useState("")
   const q = useDebouncedValue(search.trim(), 300)
 
-  const specialUse = folders?.data?.find((f) => f.name === folder)?.specialUse
-  const isDrafts = specialUse === "drafts"
-  const isJunk = specialUse === "junk"
-  const spamTarget = folders?.data?.find((f) => f.specialUse === (isJunk ? "inbox" : "junk"))
-  const [view, setView] = useListView(`${mbx}/${folder}`)
-  const listKey = ["messages", mbx, folder]
+  const [browse, setBrowse] = useState<Browse | null>(null)
+  const [heldSearch, setHeldSearch] = useState("")
+  const [searchView, setSearchView] = useState<ListView>(defaultListView)
+  const [savingSearch, setSavingSearch] = useState(false)
+  const [searchError, setSearchError] = useState("")
+  const labels = useQuery({ ...labelsQuery(mbx), enabled: !!mailbox })
+  const searches = useQuery({ ...savedSearchesQuery(mbx), enabled: !!mailbox })
+  const activeSearch = browse?.kind === "search" ? searches.data?.find((item) => item.id === browse.id) : undefined
+  const activeLabel = browse?.kind === "label" ? labels.data?.find((item) => item.id === browse.id) : undefined
+  const [folderView, setFolderView] = useListView(`${mbx}/${folder}`)
+  const [labelView, setLabelView] = useListView(`${mbx}/label/${browse?.kind === "label" ? browse.id : "none"}`)
+  const view = browse?.kind === "search" ? searchView : browse?.kind === "label" ? labelView : folderView
+  const searchDirty = !!(activeSearch && (search.trim() !== activeSearch.query || (view.labelId || "") !== (activeSearch.labelId || "") || !sameFilters(view.filters, filtersFromFlags(activeSearch))))
+  const spanning = browse?.kind === "label" || (!!activeSearch && activeSearch.allFolders)
+  const scopeFolder = activeSearch && !activeSearch.allFolders ? activeSearch.folder : folder
+  const specialUse = folders?.data?.find((f) => f.name === scopeFolder)?.specialUse
+  const isDrafts = !spanning && specialUse === "drafts"
+  const isJunk = !spanning && specialUse === "junk"
+  const spamTarget = spanning ? undefined : folders?.data?.find((f) => f.specialUse === (isJunk ? "inbox" : "junk"))
+  const cleanSaved = browse?.kind === "search" && !!activeSearch && !searchDirty
+  const listKey = ["messages", mbx, browse?.kind ?? "folder", browse?.id ?? scopeFolder]
   const messages = useInfiniteQuery({
-    queryKey: [...listKey, q, view],
-    queryFn: ({ pageParam }) =>
-      api<MessagePage>(`/mailboxes/${mbx}/messages`, {
-        query: { folder, q, cursor: pageParam, limit: 50, threads: isDrafts ? undefined : "true", sort: view.sort, order: view.order, ...Object.fromEntries(view.filters.map((f) => [f, "true"])) },
-      }),
+    queryKey: [...listKey, cleanSaved ? "saved" : q, view, browse?.kind === "search" && !activeSearch ? "missing" : "ready"],
+    queryFn: ({ pageParam }): Promise<MessagePage> =>
+      browse?.kind === "search" && !activeSearch
+        ? Promise.resolve({ messages: [], total: 0 })
+        : api<MessagePage>(`/mailboxes/${mbx}/messages`, {
+            query: cleanSaved
+              ? { saved: activeSearch?.id, cursor: pageParam, limit: 50, sort: view.sort, order: view.order, threads: isDrafts ? undefined : "true" }
+              : {
+                  folder: spanning ? undefined : scopeFolder,
+                  folders: spanning ? "all" : undefined,
+                  q,
+                  label: browse?.kind === "label" ? browse.id : view.labelId,
+                  cursor: pageParam,
+                  limit: 50,
+                  threads: spanning || isDrafts ? undefined : "true",
+                  sort: view.sort,
+                  order: view.order,
+                  from: browse?.kind === "search" ? activeSearch?.from : undefined,
+                  to: browse?.kind === "search" ? activeSearch?.to : undefined,
+                  since: browse?.kind === "search" ? activeSearch?.since : undefined,
+                  until: browse?.kind === "search" ? activeSearch?.until : undefined,
+                  ...Object.fromEntries(view.filters.map((f) => [f, "true"])),
+                },
+          }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
-    enabled: !!folders?.isSuccess,
+    enabled: !!folders?.isSuccess && (browse?.kind !== "search" || searches.isFetched),
     refetchInterval: refresh,
   })
   const summaries = messages.data?.pages.flatMap((p) => p.messages) ?? []
 
-  const [selectedUid, setSelectedUid] = useState<number | null>(null)
+  const [selected, setSelected] = useState<Selection | null>(null)
   const [showFolders, setShowFolders] = useState(false)
   const [compose, setCompose] = useState<{ key: number; draft: Draft; initial: SenderIdentity } | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
@@ -148,17 +188,18 @@ export function MailView() {
       setMailboxId(target.id)
       setQuarantineView(true)
       setQuarantineId(params.get("item"))
-      setSelectedUid(null)
+      setSelected(null)
     }
   }
   if (mailbox && linkKey && appliedLink !== linkKey && linkMailbox && linkFolder && mailboxes.data?.some((m) => m.id === linkMailbox)) {
     setAppliedLink(linkKey)
     setMailboxId(linkMailbox)
     setFolderName(linkFolder)
+    setBrowse(null)
     setScheduledView(false)
     setQuarantineView(false)
     const uid = Number(linkMessage)
-    if (linkMessage && Number.isInteger(uid) && uid > 0) setSelectedUid(uid)
+    if (linkMessage && Number.isInteger(uid) && uid > 0) setSelected({ uid, folder: linkFolder })
   }
   useEffect(() => {
     if ((composeTo && composeTo === composedTo) || (linked && linked === linkedTo) || (linkKey && appliedLink === linkKey && !composeTo)) router.replace("/mail", { scroll: false })
@@ -175,60 +216,64 @@ export function MailView() {
   }, [live, mbx, folder, linkMailbox, linkFolder])
 
   const message = useQuery({
-    queryKey: ["message", mbx, folder, selectedUid],
-    queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${selectedUid}`, { query: { folder } }),
-    enabled: selectedUid !== null,
+    queryKey: ["message", mbx, selected?.folder, selected?.uid],
+    queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${selected?.uid}`, { query: { folder: selected?.folder } }),
+    enabled: selected !== null,
   })
 
-  function patchCaches(uid: number, patch: Partial<MessageSummary> | null) {
+  function located(summary: MessageSummary) {
+    return summary.folder || scopeFolder
+  }
+
+  function patchCaches(uid: number, messageFolder: string, patch: Partial<MessageSummary> | null) {
     qc.setQueriesData<InfiniteData<MessagePage>>({ queryKey: listKey }, (data) =>
       data && {
         ...data,
         pages: data.pages.map((page) => ({
           ...page,
           messages: patch
-            ? page.messages.map((m) => (m.uid === uid ? { ...m, ...patch } : m))
-            : page.messages.filter((m) => m.uid !== uid),
+            ? page.messages.map((m) => (m.uid === uid && located(m) === messageFolder ? { ...m, ...patch } : m))
+            : page.messages.filter((m) => !(m.uid === uid && located(m) === messageFolder)),
         })),
       }
     )
-    if (patch) qc.setQueryData<Message>(["message", mbx, folder, uid], (m) => m && { ...m, ...patch })
+    if (patch) qc.setQueryData<Message>(["message", mbx, messageFolder, uid], (m) => m && { ...m, ...patch })
   }
 
   const setFlags = useMutation({
-    mutationFn: ({ uid, flags }: { uid: number; flags: Flags }) =>
-      api(`/mailboxes/${mbx}/messages/${uid}`, { method: "PATCH", query: { folder }, body: flags }),
-    onMutate: ({ uid, flags }) => patchCaches(uid, flags),
-    onError: (_e, { uid, flags }) =>
-      patchCaches(uid, Object.fromEntries(Object.entries(flags).map(([k, v]) => [k, !v]))),
-    onSettled: (_d, _e, { uid }) => {
+    mutationFn: ({ uid, folder: messageFolder, flags }: { uid: number; folder: string; flags: Flags }) =>
+      api(`/mailboxes/${mbx}/messages/${uid}`, { method: "PATCH", query: { folder: messageFolder }, body: flags }),
+    onMutate: ({ uid, folder: messageFolder, flags }) => patchCaches(uid, messageFolder, flags),
+    onError: (_e, { uid, folder: messageFolder, flags }) =>
+      patchCaches(uid, messageFolder, Object.fromEntries(Object.entries(flags).map(([k, v]) => [k, !v]))),
+    onSettled: (_d, _e, { uid, folder: messageFolder }) => {
       qc.invalidateQueries({ queryKey: ["folders", mbx] })
-      qc.invalidateQueries({ queryKey: ["message", mbx, folder, uid] })
+      qc.invalidateQueries({ queryKey: ["message", mbx, messageFolder, uid] })
     },
   })
 
   const markedSeen = useRef("")
   useEffect(() => {
-    const key = `${mbx}/${folder}/${selectedUid}`
-    if (selectedUid === null || readOnly || !message.data || message.data.uid !== selectedUid || message.data.seen || markedSeen.current === key) return
+    const key = `${mbx}/${selected?.folder}/${selected?.uid}`
+    if (selected === null || readOnly || !message.data || message.data.uid !== selected.uid || message.data.seen || markedSeen.current === key) return
     markedSeen.current = key
-    setFlags.mutate({ uid: selectedUid, flags: { seen: true } })
-  }, [mbx, folder, selectedUid, readOnly, message.data, setFlags])
+    setFlags.mutate({ uid: selected.uid, folder: selected.folder, flags: { seen: true } })
+  }, [mbx, selected, readOnly, message.data, setFlags])
 
   const remove = useMutation({
-    mutationFn: ({ uid, to, target, until, unsnooze }: { uid: number; to?: Folder; target?: Mailbox; until?: Date; unsnooze?: boolean; notice?: string }) =>
+    mutationFn: ({ uid, source, to, target, until, unsnooze }: { uid: number; source: string; to?: Folder; target?: Mailbox; until?: Date; unsnooze?: boolean; notice?: string }) =>
       unsnooze
         ? api(`/mailboxes/${mbx}/snoozed/${uid}`, { method: "DELETE" })
         : until
-          ? api(`/mailboxes/${mbx}/messages/${uid}/snooze`, { method: "POST", query: { folder }, body: { until: toRFC3339(until) } })
+          ? api(`/mailboxes/${mbx}/messages/${uid}/snooze`, { method: "POST", query: { folder: source }, body: { until: toRFC3339(until) } })
           : to
-            ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder }, body: { to: to.name, mailboxId: target?.id } })
-            : api(`/mailboxes/${mbx}/messages/${uid}`, { method: "DELETE", query: { folder } }),
-    onSuccess: (_d, { uid, to, target, until, unsnooze, notice }) => {
-      const index = summaries.findIndex((m) => m.uid === uid)
+            ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder: source }, body: { to: to.name, mailboxId: target?.id } })
+            : api(`/mailboxes/${mbx}/messages/${uid}`, { method: "DELETE", query: { folder: source } }),
+    onSuccess: (_d, { uid, source, to, target, until, unsnooze, notice }) => {
+      const index = summaries.findIndex((m) => m.uid === uid && located(m) === source)
       const next = summaries[index + 1] ?? summaries[index - 1]
-      patchCaches(uid, null)
-      if (selectedUid === uid) setSelectedUid(next?.uid ?? null)
+      patchCaches(uid, source, null)
+      if (selected?.uid === uid && selected.folder === source) setSelected(next ? { uid: next.uid, folder: located(next) } : null)
       toast.success(
         notice ??
         (unsnooze
@@ -246,8 +291,8 @@ export function MailView() {
   })
 
   const copy = useMutation({
-    mutationFn: ({ uid, to, target }: { uid: number; to: Folder; target?: Mailbox }) =>
-      api(`/mailboxes/${mbx}/messages/${uid}/copy`, { method: "POST", query: { folder }, body: { to: to.name, mailboxId: target?.id } }),
+    mutationFn: ({ uid, source, to, target }: { uid: number; source: string; to: Folder; target?: Mailbox }) =>
+      api(`/mailboxes/${mbx}/messages/${uid}/copy`, { method: "POST", query: { folder: source }, body: { to: to.name, mailboxId: target?.id } }),
     onSuccess: (_d, { to, target }) => {
       toast.success(`Copied to ${folderLabel(to)}${target ? ` in ${target.address}` : ""}`)
       qc.invalidateQueries({ queryKey: ["folders", target?.id ?? mbx] })
@@ -277,15 +322,110 @@ export function MailView() {
     },
   })
 
-  async function open(summary: MessageSummary) {
-    if (isDrafts && from?.mailbox.id === mbx) return openDraft(summary.uid, folder)
-    setSelectedUid(summary.uid)
-    if (!summary.seen && !readOnly) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, flags: { seen: true } })
+  function rememberSearch() {
+    if (browse?.kind === "search") setSearch(heldSearch)
   }
+
+  function selectSearch(id: string, mailbox: string, found = qc.getQueryData<SavedSearch[]>(["saved-searches", mailbox])?.find((item) => item.id === id)) {
+    if (!found) return
+    if (browse?.kind !== "search") setHeldSearch(search)
+    setMailboxId(mailbox)
+    setBrowse({ kind: "search", id })
+    setSearch(found.query)
+    setSearchView({ sort: view.sort, order: view.order, filters: filtersFromFlags(found), labelId: found.labelId || undefined })
+    setScheduledView(false)
+    setQuarantineView(false)
+    setQuarantineId(null)
+    setSelected(null)
+    setShowFolders(false)
+  }
+
+  function searchInput(name: string) {
+    const saved = browse?.kind === "search" ? activeSearch : undefined
+    const allFolders = saved ? saved.allFolders : browse?.kind === "label"
+    return savedSearchBody({
+      name,
+      query: search.trim(),
+      unread: view.filters.includes("unread"),
+      flagged: view.filters.includes("flagged"),
+      hasAttachments: view.filters.includes("hasAttachments"),
+      from: saved?.from,
+      to: saved?.to,
+      since: saved?.since,
+      until: saved?.until,
+      labelId: browse?.kind === "label" ? browse.id : view.labelId,
+      folder: allFolders ? "" : saved?.folder || scopeFolder,
+      allFolders,
+    })
+  }
+
+  function storeSearch(saved: SavedSearch) {
+    qc.setQueryData<SavedSearch[]>(["saved-searches", mbx], (current) =>
+      [...(current ?? []).filter((item) => item.id !== saved.id), saved].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name))
+    )
+  }
+
+  const createSearch = useMutation({
+    meta: { silent: true },
+    mutationFn: (name: string) => api<SavedSearch>(`/mailboxes/${mbx}/saved-searches`, { method: "POST", body: searchInput(name) }),
+    onSuccess: (saved) => {
+      storeSearch(saved)
+      setSavingSearch(false)
+      setSearchError("")
+      toast.success(`Saved ${saved.name}`)
+      selectSearch(saved.id, mbx, saved)
+    },
+    onError: (e) => setSearchError(errorMessage(e)),
+  })
+
+  const updateSearch = useMutation({
+    meta: { silent: true },
+    mutationFn: () => api<SavedSearch>(`/mailboxes/${mbx}/saved-searches/${activeSearch?.id}`, { method: "PATCH", body: searchInput(activeSearch?.name ?? "") }),
+    onSuccess: (saved) => {
+      storeSearch(saved)
+      setSearchView((current) => ({ ...current, filters: filtersFromFlags(saved), labelId: saved.labelId || undefined }))
+      setSearch(saved.query)
+      toast.success(`Updated ${saved.name}`)
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+
+  const setLabels = useMutation({
+    meta: { silent: true },
+    mutationFn: ({ uid, folder: messageFolder, label, on }: { uid: number; folder: string; label: Label; on: boolean }) =>
+      api(`/mailboxes/${mbx}/messages/${uid}`, {
+        method: "PATCH",
+        query: { folder: messageFolder },
+        body: on ? { addLabels: [label.id] } : { removeLabels: [label.id] },
+      }),
+    onMutate: ({ uid, folder: messageFolder, label, on }) => {
+      const previous = qc.getQueryData<Message>(["message", mbx, messageFolder, uid])?.keywords
+      const next = (previous ?? summaries.find((m) => m.uid === uid && located(m) === messageFolder)?.keywords ?? []).filter((keyword) => keyword !== label.keyword)
+      if (on) next.push(label.keyword)
+      patchCaches(uid, messageFolder, { keywords: next })
+      return { previous, uid, folder: messageFolder }
+    },
+    onError: (e, _vars, ctx) => {
+      if (ctx) patchCaches(ctx.uid, ctx.folder, { keywords: ctx.previous })
+      toast.error(errorMessage(e))
+    },
+    onSettled: (_d, _e, { uid, folder: messageFolder }) => {
+      qc.invalidateQueries({ queryKey: ["message", mbx, messageFolder, uid] })
+      qc.invalidateQueries({ queryKey: ["messages", mbx] })
+    },
+  })
+
+  async function open(summary: MessageSummary) {
+    const messageFolder = located(summary)
+    if (folders?.data?.find((f) => f.name === messageFolder)?.specialUse === "drafts" && from?.mailbox.id === mbx) return openDraft(summary.uid, messageFolder)
+    setSelected({ uid: summary.uid, folder: messageFolder })
+    if (!summary.seen && !readOnly) for (const uid of summary.threadUids ?? [summary.uid]) setFlags.mutate({ uid, folder: messageFolder, flags: { seen: true } })
+  }
+
 
   function step(delta: number) {
     if (!summaries.length) return
-    const index = summaries.findIndex((m) => m.uid === selectedUid)
+    const index = summaries.findIndex((m) => m.uid === selected?.uid && located(m) === selected?.folder)
     const target = summaries[index === -1 ? 0 : Math.min(Math.max(index + delta, 0), summaries.length - 1)]
     if (target) open(target)
   }
@@ -294,7 +434,7 @@ export function MailView() {
     if (!mailbox || !from) return
     if (mode !== "new" && !message.data) return
     const initial = composeIdentity(mode, message.data, identities, from)
-    const draft = buildDraft(mode, message.data, [mailbox.address, initial.from.address], folder)
+    const draft = buildDraft(mode, message.data, [mailbox.address, initial.from.address], selected?.folder ?? folder)
     if (initial.mailbox.id !== mbx && draft.forwardFrom) {
       toast.info(`Forwarded attachments can't be sent from ${initial.from.address}, so they were left out.`)
       delete draft.forwardFrom
@@ -303,22 +443,37 @@ export function MailView() {
   }
 
   function selectFolder(id: string, name: string) {
+    rememberSearch()
+    setBrowse(null)
     setMailboxId(id)
     setFolderName(name)
     setScheduledView(false)
     setQuarantineView(false)
     setQuarantineId(null)
-    setSelectedUid(null)
+    setSelected(null)
     setShowFolders(false)
   }
 
   function selectMailbox(id: string) {
+    rememberSearch()
+    setBrowse(null)
     setMailboxId(id)
     setScheduledView(false)
     setQuarantineView(false)
     setQuarantineId(null)
     setFolderName(null)
-    setSelectedUid(null)
+    setSelected(null)
+  }
+
+  function selectLabel(id: string, mailbox: string) {
+    rememberSearch()
+    setMailboxId(mailbox)
+    setBrowse({ kind: "label", id })
+    setScheduledView(false)
+    setQuarantineView(false)
+    setQuarantineId(null)
+    setSelected(null)
+    setShowFolders(false)
   }
 
   const shortcuts = useRef<(e: KeyboardEvent) => void>(() => {})
@@ -329,7 +484,8 @@ export function MailView() {
         if (e.key === "Escape") setQuarantineId(null)
         return
       }
-      const uid = selectedUid
+      const uid = selected?.uid ?? null
+      const source = selected?.folder ?? ""
       const actions: Record<string, () => void> = {
         c: () => startCompose("new"),
         j: () => step(1),
@@ -337,11 +493,11 @@ export function MailView() {
         r: () => startCompose("reply"),
         a: () => startCompose("replyAll"),
         f: () => startCompose("forward"),
-        e: () => uid !== null && remove.mutate({ uid }),
-        "#": () => uid !== null && remove.mutate({ uid }),
+        e: () => uid !== null && remove.mutate({ uid, source }),
+        "#": () => uid !== null && remove.mutate({ uid, source }),
         "/": () => searchRef.current?.focus(),
         "?": () => setHelpOpen(true),
-        Escape: () => setSelectedUid(null),
+        Escape: () => setSelected(null),
       }
       const action = actions[e.key]
       if (!action || (readOnly && "#e".includes(e.key)) || (!from && "craf".includes(e.key))) return
@@ -375,7 +531,16 @@ export function MailView() {
     )
   }
 
-  const reading = selectedUid !== null
+  const reading = selected !== null
+  const listFolder = folders?.data?.find((f) => f.name === scopeFolder) ?? { name: scopeFolder, specialUse: "" as const }
+  const saveSearch = readOnly
+    ? undefined
+    : browse?.kind === "search" && activeSearch && searchDirty
+      ? { label: "Update search", onClick: () => updateSearch.mutate() }
+      : browse?.kind !== "search" && (search.trim() || view.filters.length > 0 || view.labelId || browse?.kind === "label")
+        ? { label: "Save search", onClick: () => { setSearchError(""); setSavingSearch(true) } }
+        : undefined
+  const searchLabel = browse?.kind === "label" ? activeLabel?.name : labels.data?.find((item) => item.id === view.labelId)?.name
   const inspecting = quarantineView && quarantineId !== null
 
   function afterQuarantine(id: string) {
@@ -401,22 +566,29 @@ export function MailView() {
           scheduled={scheduled.data?.length}
           scheduledActive={showScheduled}
           onScheduled={() => {
+            rememberSearch()
+            setBrowse(null)
             setScheduledView(true)
             setQuarantineView(false)
             setQuarantineId(null)
-            setSelectedUid(null)
+            setSelected(null)
             setShowFolders(false)
           }}
           quarantine={quarantine.data?.pages[0]?.total}
           quarantineActive={quarantineView}
           onQuarantine={() => {
+            rememberSearch()
+            setBrowse(null)
             setQuarantineView(true)
             setScheduledView(false)
-            setSelectedUid(null)
+            setSelected(null)
             setShowFolders(false)
           }}
           onCompose={from ? () => startCompose("new") : undefined}
-          onDropMessage={readOnly ? undefined : (uid, to, target) => remove.mutate({ uid, to, target: target === mbx ? undefined : mailboxes.data.find((m) => m.id === target) })}
+          browse={mailbox.id === mbx ? browse : null}
+          onBrowseLabel={(id, labelId) => selectLabel(labelId, id)}
+          onBrowseSearch={(id, searchId) => selectSearch(searchId, id)}
+          onDropMessage={readOnly ? undefined : (uid, to, target, sourceFolder) => remove.mutate({ uid, source: sourceFolder || scopeFolder, to, target: target === mbx ? undefined : mailboxes.data.find((m) => m.id === target) })}
         />
         {quarantineView ? (
           <QuarantineList
@@ -440,24 +612,34 @@ export function MailView() {
         ) : (
           <MessageList
             className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders || reading ? "hidden" : "flex")}
-            folder={currentFolder}
-            notice={retentionNotice(retention.data, currentFolder)}
+            folder={listFolder}
+            notice={spanning ? undefined : retentionNotice(retention.data, listFolder)}
             search={search}
             onSearchChange={setSearch}
             searchRef={searchRef}
             q={q}
             query={messages}
-            summaries={summaries}
-            selectedUid={selectedUid}
+            summaries={browse?.kind === "search" && searches.isSuccess && !activeSearch ? [] : summaries}
+            selected={selected}
             onOpen={open}
             onShowFolders={() => setShowFolders(true)}
             onCompose={from ? () => startCompose("new") : undefined}
             onHelp={() => setHelpOpen(true)}
-            wakeTimes={folder === snoozedFolder ? wakeTimes : undefined}
+            wakeTimes={!spanning && scopeFolder === snoozedFolder ? wakeTimes : undefined}
             view={view}
-            onViewChange={setView}
+            onViewChange={(next) => (browse?.kind === "search" ? setSearchView(next) : browse?.kind === "label" ? setLabelView(next) : setFolderView(next))}
             draggable={!readOnly}
             live={live}
+            labels={labels.data}
+            labelFilter={browse?.kind !== "label"}
+            heading={activeLabel?.name ?? activeSearch?.name}
+            swatch={activeLabel?.color}
+            searchPlaceholder={spanning ? "Search every folder" : "Search this folder"}
+            showFolder={spanning}
+            folderTitle={(name) => folderLabel(folders?.data?.find((f) => f.name === name) ?? { name, specialUse: "" })}
+            saveSearch={saveSearch}
+            emptyTitle={activeLabel ? `No messages labeled ${activeLabel.name}` : activeSearch ? `${activeSearch.name} is empty` : browse?.kind === "search" ? "That saved search is no longer available" : undefined}
+            emptyDescription={activeLabel && !q && view.filters.length === 0 ? "Messages with this label appear here, from every folder." : activeSearch && !q && !searchDirty ? "Nothing matches this search right now." : undefined}
           />
         )}
         {quarantineView ? (
@@ -473,27 +655,29 @@ export function MailView() {
           <ReadingPane
             className={cn("min-w-0 flex-1 md:flex", reading ? "flex" : "hidden")}
             mailboxId={mbx}
-            folder={folder}
+            folder={selected?.folder ?? scopeFolder}
             mailboxes={mailboxes.data.filter((m) => m.id !== mbx && m.access !== "read")}
             query={message}
-            selected={selectedUid !== null}
-            earlier={summaries.find((m) => m.uid === selectedUid)?.threadUids?.slice(1) ?? []}
-            onBack={() => setSelectedUid(null)}
+            selected={selected !== null}
+            earlier={summaries.find((m) => m.uid === selected?.uid && located(m) === selected?.folder)?.threadUids?.slice(1) ?? []}
+            onBack={() => setSelected(null)}
             onReply={from ? startCompose : undefined}
-            onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}
-            onMove={(to, target) => selectedUid !== null && remove.mutate({ uid: selectedUid, to, target })}
-            onCopy={(to, target) => selectedUid !== null && copy.mutate({ uid: selectedUid, to, target })}
-            onDelete={() => selectedUid !== null && remove.mutate({ uid: selectedUid })}
+            onFlags={(flags) => selected && setFlags.mutate({ uid: selected.uid, folder: selected.folder, flags })}
+            onMove={(to, target) => selected && remove.mutate({ uid: selected.uid, source: selected.folder, to, target })}
+            onCopy={(to, target) => selected && copy.mutate({ uid: selected.uid, source: selected.folder, to, target })}
+            onDelete={() => selected && remove.mutate({ uid: selected.uid, source: selected.folder })}
             onSpam={
               spamTarget
-                ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, to: spamTarget, notice: isJunk ? "Marked as not spam and moved to Inbox" : "Reported as spam and moved to Junk" })
+                ? () => selected && remove.mutate({ uid: selected.uid, source: selected.folder, to: spamTarget, notice: isJunk ? "Marked as not spam and moved to Inbox" : "Reported as spam and moved to Junk" })
                 : undefined
             }
             junk={isJunk}
-            onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
-            onUnsnooze={folder === snoozedFolder ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
+            onSnooze={(until) => selected && remove.mutate({ uid: selected.uid, source: selected.folder, until })}
+            onUnsnooze={selected?.folder === snoozedFolder ? () => selected && remove.mutate({ uid: selected.uid, source: selected.folder, unsnooze: true }) : undefined}
             deleting={remove.isPending}
             readOnly={readOnly}
+            onLabels={readOnly ? undefined : (label, on) => selected && setLabels.mutate({ uid: selected.uid, folder: selected.folder, label, on })}
+            placedIn={spanning && selected ? folderLabel(folders?.data?.find((f) => f.name === selected.folder) ?? { name: selected.folder, specialUse: "" }) : undefined}
           />
         )}
         {compose && from && (
@@ -506,6 +690,18 @@ export function MailView() {
           />
         )}
         <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
+        {savingSearch && (
+          <SearchDialog
+            open
+            onOpenChange={setSavingSearch}
+            title="Save search"
+            description={describeSearch({ query: search.trim(), filters: view.filters, label: searchLabel, folder: folderLabel(listFolder), allFolders: spanning })}
+            submitLabel="Save search"
+            pending={createSearch.isPending}
+            error={searchError}
+            onSubmit={(name) => createSearch.mutate(name)}
+          />
+        )}
       </div>
     </div>
   )

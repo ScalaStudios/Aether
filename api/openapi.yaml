@@ -2589,6 +2589,141 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "507": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/labels:
+    get:
+      tags: [mail]
+      summary: List labels
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+      responses:
+        "200":
+          description: Labels in display order
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Label" } }
+    post:
+      tags: [mail]
+      summary: Create a label
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, color]
+              properties:
+                name: { type: string, maxLength: 40 }
+                color: { type: string, enum: [red, orange, yellow, green, blue, purple, gray, pink] }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Label" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/labels/{labelId}:
+    patch:
+      tags: [mail]
+      summary: Rename a label or change its color
+      description: The keyword stays the same, so messages that already have the label keep it. A new color is written onto those messages for Apple Mail, and onto rules that add the label.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: labelId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, color]
+              properties:
+                name: { type: string, maxLength: 40 }
+                color: { type: string, enum: [red, orange, yellow, green, blue, purple, gray, pink] }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Label" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [mail]
+      summary: Delete a label
+      description: Removes the label from messages and from mail rules. A rule whose only action is this label is left unchanged and the label is kept.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: labelId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/saved-searches:
+    get:
+      tags: [mail]
+      summary: List saved searches
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+      responses:
+        "200":
+          description: Saved searches in display order
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SavedSearch" } }
+    post:
+      tags: [mail]
+      summary: Save a search
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SavedSearchInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedSearch" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/saved-searches/{searchId}:
+    patch:
+      tags: [mail]
+      summary: Replace a saved search
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: searchId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SavedSearchInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedSearch" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [mail]
+      summary: Delete a saved search
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: searchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages:
     get:
       tags: [mail]
@@ -2606,11 +2741,14 @@ paths:
         - { name: to, in: query, description: Text in the To header, schema: { type: string } }
         - { name: since, in: query, description: Arrived on or after this date, schema: { type: string, format: date } }
         - { name: until, in: query, description: Arrived on or before this date, schema: { type: string, format: date } }
+        - { name: label, in: query, description: Only messages with this label. Ignored when saved is set., schema: { type: string, format: uuid } }
+        - { name: saved, in: query, description: A saved search. It replaces q, unread, flagged, hasAttachments, from, to, since, until, label, folder and folders., schema: { type: string, format: uuid } }
+        - { name: folders, in: query, description: Search every folder with all. Otherwise the folder parameter selects one folder., schema: { type: string, enum: ["", all] } }
         - { name: cursor, in: query, description: nextCursor of the previous page, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
       responses:
         "200":
-          description: In the requested order. Filters combine with q.
+          description: In the requested order. Filters combine with q. A search of every folder does not group conversations, and its cursor belongs to that search only.
           content:
             application/json:
               schema:
@@ -2649,8 +2787,11 @@ paths:
               properties:
                 seen: { type: boolean }
                 flagged: { type: boolean }
+                addLabels: { type: array, maxItems: 50, items: { type: string, format: uuid }, description: Labels to add. A label in both lists is rejected. }
+                removeLabels: { type: array, maxItems: 50, items: { type: string, format: uuid } }
       responses:
         "204": { description: Updated }
+        "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [mail]
       summary: Move to Trash, or delete permanently when already in Trash
@@ -4213,11 +4354,55 @@ components:
       properties:
         name: { type: string }
         address: { type: string }
+    Label:
+      type: object
+      required: [id, name, color, keyword, position]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: string, enum: [red, orange, yellow, green, blue, purple, gray, pink] }
+        keyword: { type: string, description: The IMAP keyword. It does not change when the label is renamed. }
+        position: { type: integer }
+    SavedSearch:
+      type: object
+      required: [id, name, query, unread, flagged, hasAttachments, folder, allFolders, position]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        query: { type: string }
+        unread: { type: boolean }
+        flagged: { type: boolean }
+        hasAttachments: { type: boolean }
+        from: { type: string }
+        to: { type: string }
+        since: { type: string, format: date }
+        until: { type: string, format: date }
+        labelId: { type: string, format: uuid }
+        folder: { type: string, description: Empty when allFolders is true }
+        allFolders: { type: boolean }
+        position: { type: integer }
+    SavedSearchInput:
+      type: object
+      required: [name, query, unread, flagged, hasAttachments, allFolders]
+      properties:
+        name: { type: string, maxLength: 80 }
+        query: { type: string, maxLength: 500 }
+        unread: { type: boolean }
+        flagged: { type: boolean }
+        hasAttachments: { type: boolean }
+        from: { type: string, maxLength: 200 }
+        to: { type: string, maxLength: 200 }
+        since: { type: string, format: date }
+        until: { type: string, format: date }
+        labelId: { type: string, format: uuid, description: Empty when the search does not filter by a label }
+        folder: { type: string, description: Required unless allFolders is true }
+        allFolders: { type: boolean }
     MessageSummary:
       type: object
       required: [uid, subject, from, to, date, seen, flagged, answered, hasAttachments, size]
       properties:
         uid: { type: integer }
+        folder: { type: string, description: The folder this row came from. Present when a search covers more than one folder. }
         subject: { type: string }
         from: { type: array, items: { $ref: "#/components/schemas/Address" } }
         to: { type: array, items: { $ref: "#/components/schemas/Address" } }
@@ -4228,6 +4413,8 @@ components:
         hasAttachments: { type: boolean }
         size: { type: integer }
         threadUids: { type: array, items: { type: integer }, description: Present when threads=true and the conversation has more than one message }
+        keywords: { type: array, items: { type: string }, description: IMAP keywords on the message, including labels and tags set by other mail apps }
+        flagColor: { type: string, enum: [red, orange, yellow, green, blue, purple, gray], description: The color encoded by Apple Mail flag bits, when the message has one }
     RecoverableMessage:
       allOf:
         - { $ref: "#/components/schemas/MessageSummary" }
@@ -4470,12 +4657,13 @@ components:
               sizeKb: { type: integer, minimum: 1, description: Size in KB for sizeOver and sizeUnder }
         actions:
           type: object
-          description: At least one of moveTo, delete, markRead, flag, or forwardTo.
+          description: At least one of moveTo, delete, markRead, flag, labels, or forwardTo.
           properties:
             moveTo: { type: string, description: Existing folder name }
             delete: { type: boolean, description: Discard the message. Cannot be combined with moveTo or keepCopy. }
             markRead: { type: boolean }
             flag: { type: boolean }
+            labels: { type: array, maxItems: 20, items: { type: string }, description: Label keywords to add as the message arrives }
             forwardTo: { type: array, maxItems: 5, items: { type: string, format: email }, description: Forwarded with this mailbox as the envelope sender }
             keepCopy: { type: boolean, description: Also keep the message in this mailbox when forwarding }
             stop: { type: boolean, description: Skip later rules for matching messages }

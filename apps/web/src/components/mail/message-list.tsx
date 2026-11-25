@@ -1,7 +1,7 @@
 "use client"
 
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
-import { AlarmClock, ArrowDownUp, Flag, FolderOpen, FunnelX, Info, Keyboard, Paperclip, PenSquare, SearchX } from "lucide-react"
+import { AlarmClock, ArrowDownUp, Bookmark, Flag, FolderOpen, FunnelX, Info, Keyboard, Paperclip, PenSquare, SearchX, Tag } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { cn } from "cn"
 
@@ -20,9 +20,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { LabelChips, LabelDot } from "@/components/mail/label-controls"
 import { formatBytes, formatListDate, formatWhen } from "@/lib/format"
-import { dragTypes, folderIcons, folderLabel, senderLabel, type ListView, type MessageSort, type QuickFilter } from "@/lib/mail"
-import type { Folder, MessagePage, MessageSummary } from "@/lib/types"
+import { beginMessageDrag, dragTypes, endMessageDrag, folderIcons, folderLabel, senderLabel, type ListView, type MessageSort, type QuickFilter } from "@/lib/mail"
+import type { Folder, Label, MessagePage, MessageSummary } from "@/lib/types"
 
 const quickFilters: { value: QuickFilter; label: string }[] = [
   { value: "unread", label: "Unread" },
@@ -93,9 +94,9 @@ function SortMenu({ view, onViewChange, outgoing }: { view: ListView; onViewChan
   )
 }
 
-function filteredDescription(folder: string, filters: QuickFilter[]) {
+function filteredDescription(folder: string, filters: QuickFilter[], label?: string) {
   const adjectives = filters.filter((f) => f !== "hasAttachments").join(", ")
-  return `${folder} has no ${adjectives ? `${adjectives} ` : ""}messages${filters.includes("hasAttachments") ? " with attachments" : ""}.`
+  return `${folder} has no ${adjectives ? `${adjectives} ` : ""}messages${filters.includes("hasAttachments") ? " with attachments" : ""}${label ? ` labeled ${label}` : ""}.`
 }
 
 export function MessageList({
@@ -108,7 +109,7 @@ export function MessageList({
   q,
   query,
   summaries,
-  selectedUid,
+  selected,
   onOpen,
   onShowFolders,
   onCompose,
@@ -118,6 +119,16 @@ export function MessageList({
   onViewChange,
   draggable,
   live,
+  labels,
+  labelFilter,
+  heading,
+  swatch,
+  searchPlaceholder = "Search this folder",
+  showFolder,
+  folderTitle,
+  saveSearch,
+  emptyTitle,
+  emptyDescription,
 }: {
   className?: string
   folder: Pick<Folder, "name" | "specialUse">
@@ -128,7 +139,7 @@ export function MessageList({
   q: string
   query: UseInfiniteQueryResult<InfiniteData<MessagePage>>
   summaries: MessageSummary[]
-  selectedUid: number | null
+  selected: { uid: number; folder: string } | null
   onOpen: (summary: MessageSummary) => void
   onShowFolders: () => void
   onCompose?: () => void
@@ -138,6 +149,16 @@ export function MessageList({
   onViewChange: (view: ListView) => void
   draggable?: boolean
   live?: boolean
+  labels?: Label[]
+  labelFilter?: boolean
+  heading?: string
+  swatch?: string
+  searchPlaceholder?: string
+  showFolder?: boolean
+  folderTitle?: (name: string) => string
+  saveSearch?: { label: string; onClick: () => void }
+  emptyTitle?: string
+  emptyDescription?: string
 }) {
   const sentinel = useRef<HTMLDivElement>(null)
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
@@ -156,12 +177,15 @@ export function MessageList({
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   useEffect(() => {
-    if (selectedUid !== null) document.getElementById(`message-${selectedUid}`)?.scrollIntoView({ block: "nearest" })
-  }, [selectedUid])
+    if (selected) document.getElementById(`message-${selected.folder}-${selected.uid}`)?.scrollIntoView({ block: "nearest" })
+  }, [selected])
 
   const FolderIcon = folderIcons[folder.specialUse]
   const total = query.data?.pages[0]?.total
   const outgoing = folder.specialUse === "sent" || folder.specialUse === "drafts"
+  const title = heading ?? folderLabel(folder)
+  const activeLabel = labels?.find((label) => label.id === view.labelId)
+  const narrowed = view.filters.length > 0 || !!view.labelId
 
   return (
     <section aria-label="Messages" className={cn("min-h-0 flex-col border-r border-border", className)}>
@@ -170,7 +194,8 @@ export function MessageList({
           <IconButton label="Show folders" size="icon-sm" className="lg:hidden" onClick={onShowFolders}>
             <FolderOpen />
           </IconButton>
-          <h1 className="flex-1 truncate text-h3">{folderLabel(folder)}</h1>
+          {swatch && <LabelDot color={swatch} />}
+          <h1 className="flex-1 truncate text-h3">{title}</h1>
           {total !== undefined && (
             <span className="text-xs text-fg-tertiary tabular-nums">{total} {total === 1 ? "message" : "messages"}</span>
           )}
@@ -183,12 +208,38 @@ export function MessageList({
               <PenSquare />
             </IconButton>
           )}
+          {labelFilter && !!labels?.length && (
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="quiet" size="icon-sm" aria-label={activeLabel ? `Label: ${activeLabel.name}` : "Filter by label"} className={cn(activeLabel && "text-ember")}>
+                      {activeLabel ? <LabelDot color={activeLabel.color} /> : <Tag />}
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{activeLabel ? activeLabel.name : "Label"}</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Label</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={view.labelId ?? "any"} onValueChange={(value) => onViewChange({ ...view, labelId: value === "any" ? undefined : value })}>
+                  <DropdownMenuRadioItem value="any">Any label</DropdownMenuRadioItem>
+                  {labels.map((label) => (
+                    <DropdownMenuRadioItem key={label.id} value={label.id}>
+                      <LabelDot color={label.color} />
+                      <span className="truncate">{label.name}</span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <SortMenu view={view} onViewChange={onViewChange} outgoing={outgoing} />
           <IconButton label="Keyboard shortcuts" size="icon-sm" className="max-md:hidden" onClick={onHelp}>
             <Keyboard />
           </IconButton>
         </div>
-        <SearchInput ref={searchRef} aria-label="Search mail" placeholder="Search this folder" value={search} onChange={(e) => onSearchChange(e.target.value)} />
+        <SearchInput ref={searchRef} aria-label="Search mail" placeholder={searchPlaceholder} value={search} onChange={(e) => onSearchChange(e.target.value)} />
         <div className="flex">
           <SegmentedControl
             label="Show only"
@@ -203,6 +254,12 @@ export function MessageList({
             {notice}
           </p>
         )}
+        {saveSearch && (
+          <Button type="button" variant="secondary" size="sm" className="self-start" onClick={saveSearch.onClick}>
+            <Bookmark aria-hidden />
+            {saveSearch.label}
+          </Button>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {query.isPending ? (
@@ -211,35 +268,43 @@ export function MessageList({
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
         ) : summaries.length === 0 ? (
           q ? (
-            <EmptyState icon={SearchX} title="No matches" description={`No messages in ${folderLabel(folder)} match “${q}”.`} />
-          ) : view.filters.length > 0 ? (
+            <EmptyState icon={SearchX} title="No matches" description={emptyDescription ?? `No messages in ${title} match “${q}”.`} />
+          ) : narrowed ? (
             <EmptyState
               icon={FunnelX}
               title="No matching messages"
-              description={filteredDescription(folderLabel(folder), view.filters)}
+              description={filteredDescription(title, view.filters, activeLabel?.name)}
               action={
-                <Button variant="secondary" onClick={() => onViewChange({ ...view, filters: [] })}>
+                <Button variant="secondary" onClick={() => onViewChange({ ...view, filters: [], labelId: undefined })}>
                   Clear filters
                 </Button>
               }
             />
           ) : (
-            <EmptyState icon={FolderIcon} title={`${folderLabel(folder)} is empty`} description="New messages appear here automatically." />
+            <EmptyState icon={swatch ? Tag : FolderIcon} title={emptyTitle ?? `${title} is empty`} description={emptyDescription ?? "New messages appear here automatically."} />
           )
         ) : (
           <ul className="animate-content">
-            {summaries.map((m) => (
-              <li key={m.uid}>
+            {summaries.map((m) => {
+              const messageFolder = m.folder || folder.name
+              const current = selected?.uid === m.uid && selected.folder === messageFolder
+              return (
+              <li key={`${messageFolder}-${m.uid}`}>
                 <button
-                  id={`message-${m.uid}`}
+                  id={`message-${messageFolder}-${m.uid}`}
                   type="button"
-                  aria-current={m.uid === selectedUid ? "true" : undefined}
+                  aria-current={current ? "true" : undefined}
                   draggable={draggable}
-                  onDragStart={(e) => e.dataTransfer.setData(dragTypes.message, String(m.uid))}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(dragTypes.message, String(m.uid))
+                    e.dataTransfer.setData(dragTypes.messageFolder, messageFolder)
+                    beginMessageDrag(m.uid, messageFolder)
+                  }}
+                  onDragEnd={() => endMessageDrag()}
                   onClick={() => onOpen(m)}
                   className={cn(
                     "relative flex w-full cursor-pointer flex-col gap-1 border-b border-border px-4 py-3 text-left transition-colors duration-160 hover:bg-muted/60",
-                    m.uid === selectedUid && "bg-muted before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-ember"
+                    current && "bg-muted before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-ember"
                   )}
                 >
                   <span className="flex items-center gap-2">
@@ -268,6 +333,12 @@ export function MessageList({
                     {m.hasAttachments && <Paperclip aria-label="Has attachments" className="size-3.5 shrink-0 text-fg-tertiary" />}
                     {m.flagged && <Flag aria-label="Flagged" className="size-3.5 shrink-0 fill-current text-ember" />}
                   </span>
+                  {(showFolder || !!m.keywords?.length || !!m.flagColor) && (
+                    <span className="flex items-center gap-2">
+                      {showFolder && <span className="shrink-0 text-xs text-fg-tertiary">{folderTitle?.(messageFolder) ?? messageFolder}</span>}
+                      <LabelChips labels={labels ?? []} keywords={m.keywords} flagColor={m.flagColor} />
+                    </span>
+                  )}
                   {wakeTimes?.has(m.uid) && (
                     <span className="flex items-center gap-1 text-xs text-fg-tertiary">
                       <AlarmClock aria-hidden className="size-3.5" />
@@ -276,7 +347,8 @@ export function MessageList({
                   )}
                 </button>
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
         <div ref={sentinel} />

@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 
 import { api } from "@/lib/api"
-import type { Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Mailbox, Member, Organization, PersonalAliasPolicy, SignatureSettings } from "@/lib/types"
+import type { Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Label, Mailbox, Member, Organization, PersonalAliasPolicy, SavedSearch, SignatureSettings } from "@/lib/types"
 
 export const myMailboxesQuery = queryOptions({
   queryKey: ["my-mailboxes"],
@@ -35,6 +35,18 @@ export const foldersQuery = (mailboxId: string) =>
   queryOptions({
     queryKey: ["folders", mailboxId],
     queryFn: () => api<Folder[]>(`/mailboxes/${mailboxId}/folders`),
+  })
+
+export const labelsQuery = (mailboxId: string) =>
+  queryOptions({
+    queryKey: ["labels", mailboxId],
+    queryFn: () => api<Label[]>(`/mailboxes/${mailboxId}/labels`),
+  })
+
+export const savedSearchesQuery = (mailboxId: string) =>
+  queryOptions({
+    queryKey: ["saved-searches", mailboxId],
+    queryFn: () => api<SavedSearch[]>(`/mailboxes/${mailboxId}/saved-searches`),
   })
 
 export const signaturesQuery = (mailboxId: string, fromAddress?: string) =>

@@ -10,6 +10,7 @@ import { Avatar } from "@/components/avatar"
 import { IconButton } from "@/components/icon-button"
 import { InvitationCard } from "@/components/mail/invitation-card"
 import { SecureMessage } from "@/components/mail/secure-message"
+import { LabelChips, LabelDialog, LabelMenu } from "@/components/mail/label-controls"
 import { LaterMenu } from "@/components/mail/later-menu"
 import { senderListQuery } from "@/components/settings/sender-lists"
 import { SenderNotice, SenderVerification } from "@/components/mail/sender-notice"
@@ -33,8 +34,8 @@ import { Button } from "@/components/ui/button"
 import { api, apiUrl } from "@/lib/api"
 import { formatAddress, formatBytes, formatDateTime } from "@/lib/format"
 import { folderIcons, folderLabel, messageDocument, type ComposeMode } from "@/lib/mail"
-import { foldersQuery } from "@/lib/queries"
-import type { Address, Folder, Mailbox, Message, SenderEntry } from "@/lib/types"
+import { foldersQuery, labelsQuery } from "@/lib/queries"
+import type { Address, Folder, Label, Mailbox, Message, SenderEntry } from "@/lib/types"
 
 export function AddressLine({ label, addresses }: { label: string; addresses: Address[] }) {
   if (!addresses.length) return null
@@ -282,6 +283,8 @@ export function ReadingPane({
   onUnsnooze,
   deleting,
   readOnly,
+  onLabels,
+  placedIn,
 }: {
   className?: string
   mailboxId: string
@@ -302,7 +305,11 @@ export function ReadingPane({
   onUnsnooze?: () => void
   deleting: boolean
   readOnly?: boolean
+  onLabels?: (label: Label, on: boolean) => void
+  placedIn?: string
 }) {
+  const labels = useQuery({ ...labelsQuery(mailboxId), enabled: selected })
+  const [creatingLabel, setCreatingLabel] = useState(false)
   if (!selected) {
     return (
       <section aria-label="Reading pane" className={cn("items-center justify-center", className)}>
@@ -341,6 +348,9 @@ export function ReadingPane({
             <IconButton label={m?.flagged ? "Remove flag" : "Flag"} aria-pressed={m?.flagged ?? false} disabled={!m} onClick={() => m && onFlags({ flagged: !m.flagged })}>
               <Flag className={cn(m?.flagged && "fill-current text-ember")} />
             </IconButton>
+            {onLabels && (
+              <LabelMenu labels={labels.data ?? []} keywords={m?.keywords} disabled={!m} onToggle={onLabels} onCreate={() => setCreatingLabel(true)} />
+            )}
             <FolderPicker label="Move to folder" title="Move to" mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onMove}>
               <FolderInput />
             </FolderPicker>
@@ -384,6 +394,12 @@ export function ReadingPane({
           <article key={m.uid} className="animate-content flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
             <header className="flex flex-col gap-3">
               <h2 className="text-h3 break-words">{m.subject || "(no subject)"}</h2>
+              {(placedIn || !!m.keywords?.length || !!m.flagColor) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {placedIn && <p className="text-sm text-fg-tertiary">In {placedIn}</p>}
+                  <LabelChips labels={labels.data ?? []} keywords={m.keywords} flagColor={m.flagColor} />
+                </div>
+              )}
               <div className="flex items-center gap-3">
                 {m.from[0] && <Avatar address={m.from[0].address} name={m.from[0].name} className="size-10 text-sm" />}
                 <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -413,6 +429,7 @@ export function ReadingPane({
           </article>
         )
       )}
+      {creatingLabel && <LabelDialog mailboxId={mailboxId} open onOpenChange={setCreatingLabel} />}
     </section>
   )
 }

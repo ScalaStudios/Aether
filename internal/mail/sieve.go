@@ -30,6 +30,7 @@ type RuleActions struct {
 	ForwardTo []string `json:"forwardTo,omitempty"`
 	KeepCopy  bool     `json:"keepCopy,omitempty"`
 	Stop      bool     `json:"stop,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
 }
 
 type ForwardPolicy struct {
@@ -145,6 +146,17 @@ func sieveString(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
+func sieveFlagList(flags []string) string {
+	if len(flags) == 1 {
+		return sieveString(flags[0])
+	}
+	parts := make([]string, len(flags))
+	for i, flag := range flags {
+		parts[i] = sieveString(flag)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 func (r Rule) Validate() error {
 	switch {
 	case strings.TrimSpace(r.Name) == "" || len(r.Name) > 100:
@@ -153,8 +165,10 @@ func (r Rule) Validate() error {
 		return errors.New("Match must be all or any.")
 	case len(r.Conditions) == 0 || len(r.Conditions) > 20:
 		return errors.New("Each rule needs between 1 and 20 conditions.")
-	case r.Actions.MoveTo == "" && !r.Actions.Delete && !r.Actions.MarkRead && !r.Actions.Flag && len(r.Actions.ForwardTo) == 0:
+	case r.Actions.MoveTo == "" && !r.Actions.Delete && !r.Actions.MarkRead && !r.Actions.Flag && len(r.Actions.ForwardTo) == 0 && len(r.Actions.Labels) == 0:
 		return errors.New("Each rule needs at least one action.")
+	case len(r.Actions.Labels) > 20:
+		return errors.New("Add up to 20 labels.")
 	case r.Actions.Delete && (r.Actions.MoveTo != "" || r.Actions.KeepCopy):
 		return errors.New("A rule that deletes a message cannot also move it or keep a copy.")
 	case len(r.Actions.ForwardTo) > 5:
@@ -166,6 +180,13 @@ func (r Rule) Validate() error {
 		if a, err := mail.ParseAddress(addr); err != nil || a.Address != addr {
 			return errors.New(addr + " is not a valid forwarding address.")
 		}
+	}
+	seenLabel := map[string]bool{}
+	for _, keyword := range r.Actions.Labels {
+		if !ValidKeyword(keyword) || seenLabel[keyword] {
+			return errors.New("Choose a label from this mailbox.")
+		}
+		seenLabel[keyword] = true
 	}
 	for _, c := range r.Conditions {
 		if err := c.validate(); err != nil {
@@ -215,6 +236,9 @@ func CompileSieve(rules []Rule, reply AutoReply, address string, forward Forward
 		}
 		if r.Actions.Flag {
 			b.WriteString("  addflag \"\\\\Flagged\";\n")
+		}
+		if len(r.Actions.Labels) > 0 {
+			fmt.Fprintf(&b, "  addflag %s;\n", sieveFlagList(r.Actions.Labels))
 		}
 		for _, addr := range r.Actions.ForwardTo {
 			if !forward.Allows(addr) {

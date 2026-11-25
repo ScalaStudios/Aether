@@ -7,10 +7,12 @@ import { useState } from "react"
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
+import { cn } from "cn"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
+import { LabelDot } from "@/components/mail/label-controls"
 import { IconButton } from "@/components/icon-button"
 import { RecipientInput } from "@/components/recipient-input"
 import { SectionHeader } from "@/components/page-header"
@@ -23,7 +25,7 @@ import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
 import { folderLabel } from "@/lib/mail"
-import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
+import { foldersQuery, labelsQuery, myMailboxesQuery } from "@/lib/queries"
 import type { AutoReply, Mailbox, MailRule, RuleCondition, RuleField, TaggedMail, TaggedMailMode } from "@/lib/types"
 
 const fields: Record<RuleField, string> = {
@@ -65,8 +67,9 @@ const schema = z
     forwardTo: z.array(z.object({ name: z.string().optional(), address: z.email() })).max(5, "Forward to 5 addresses or fewer."),
     keepCopy: z.boolean(),
     stop: z.boolean(),
+    labels: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,62}$/)).max(20, "Add up to 20 labels."),
   })
-  .refine((v) => v.delete || v.moveTo !== keepInPlace || v.markRead || v.flag || v.forwardTo.length > 0, { message: "Choose at least one action.", path: ["moveTo"] })
+  .refine((v) => v.delete || v.moveTo !== keepInPlace || v.markRead || v.flag || v.forwardTo.length > 0 || v.labels.length > 0, { message: "Choose at least one action.", path: ["moveTo"] })
 
 type Values = z.infer<typeof schema>
 
@@ -84,6 +87,7 @@ function toValues(rule?: MailRule): Values {
     forwardTo: (rule?.actions.forwardTo ?? []).map((address) => ({ address })),
     keepCopy: rule?.actions.keepCopy ?? true,
     stop: rule?.actions.stop ?? true,
+    labels: rule?.actions.labels ?? [],
   }
 }
 
@@ -107,6 +111,7 @@ function toRule(v: Values, enabled: boolean): MailRule {
       forwardTo: v.forwardTo.length ? v.forwardTo.map((a) => a.address) : undefined,
       keepCopy: v.forwardTo.length && !v.delete ? v.keepCopy : undefined,
       stop: v.stop,
+      labels: v.labels.length ? v.labels : undefined,
     },
   }
 }
@@ -118,10 +123,11 @@ function describe(c: RuleCondition) {
   return `${subject} ${c.negate ? "doesn’t contain" : "contains"} “${c.contains}”`
 }
 
-function summary(rule: MailRule) {
+function summary(rule: MailRule, labels: { keyword: string; name: string }[] = []) {
   const when = rule.conditions.map(describe).join(rule.match === "all" ? " and " : " or ")
   const forward = rule.actions.forwardTo?.length && `forward to ${rule.actions.forwardTo.join(", ")}${rule.actions.keepCopy || rule.actions.moveTo || rule.actions.delete ? "" : " without keeping a copy"}`
-  const then = [rule.actions.moveTo && `move to ${rule.actions.moveTo}`, rule.actions.markRead && "mark as read", rule.actions.flag && "flag", forward, rule.actions.delete && "delete permanently"].filter(Boolean).join(", ")
+  const names = (rule.actions.labels ?? []).map((keyword) => labels.find((label) => label.keyword === keyword)?.name ?? keyword)
+  const then = [rule.actions.moveTo && `move to ${rule.actions.moveTo}`, rule.actions.markRead && "mark as read", rule.actions.flag && "flag", names.length ? `add ${names.join(", ")}` : "", forward, rule.actions.delete && "delete permanently"].filter(Boolean).join(", ")
   return { when, then }
 }
 
@@ -179,12 +185,14 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
   const key = ["rules", mailboxId]
   const rules = useQuery({ queryKey: key, queryFn: () => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`) })
   const folders = useQuery(foldersQuery(mailboxId))
+  const labels = useQuery(labelsQuery(mailboxId))
   const [editing, setEditing] = useState<number | "new" | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues() })
   const conditions = useFieldArray({ control: form.control, name: "conditions" })
-  const [forwardTo, discard, rows] = useWatch({ control: form.control, name: ["forwardTo", "delete", "conditions"] })
+  const [forwardTo, discard, rows, chosenLabels] = useWatch({ control: form.control, name: ["forwardTo", "delete", "conditions", "labels"] })
   const forwarding = forwardTo.length > 0
+  const chosen = chosenLabels ?? []
   const errors = form.formState.errors
 
   const save = useMutation({
@@ -226,7 +234,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
           New rule
         </Button>
       </div>
-      <QueryView query={rules} empty={<EmptyState icon={ListFilter} title="No rules yet" description="Create a rule to file, flag, or mark incoming mail automatically." />}>
+      <QueryView query={rules} empty={<EmptyState icon={ListFilter} title="No rules yet" description="Create a rule to file, flag, label, or mark incoming mail automatically." />}>
         {(items) => (
           <Table>
             <TableHeader>
@@ -240,7 +248,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
             </TableHeader>
             <TableBody>
               {items.map((rule, i) => {
-                const { when, then } = summary(rule)
+                const { when, then } = summary(rule, labels.data)
                 return (
                   <TableRow key={`${rule.name}-${i}`}>
                     <TableCell>
@@ -448,6 +456,47 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
         {forwarding && !discard && <SwitchField control={form.control} name="keepCopy" id="rule-keep" label="Keep a copy in this mailbox" />}
         <SwitchField control={form.control} name="markRead" id="rule-read" label="Mark as read" />
         <SwitchField control={form.control} name="flag" id="rule-flag" label="Flag" />
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium text-foreground">Add labels</legend>
+          <p className="text-sm text-fg-tertiary">Applied as messages arrive, including in other mail apps.</p>
+          {labels.data?.length || (labels.isSuccess && chosen.some((keyword) => !labels.data?.some((label) => label.keyword === keyword))) ? (
+            <div className="flex flex-wrap gap-2">
+              {labels.data?.map((label) => {
+                const on = chosen.includes(label.keyword)
+                return (
+                  <button
+                    key={label.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => form.setValue("labels", on ? chosen.filter((keyword) => keyword !== label.keyword) : [...chosen, label.keyword], { shouldValidate: true })}
+                    className={cn("inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1 text-sm", on ? "border-ember bg-ember/10 text-foreground" : "border-border text-fg-secondary")}
+                  >
+                    <LabelDot color={label.color} />
+                    <span className="truncate">{label.name}</span>
+                  </button>
+                )
+              })}
+              {labels.isSuccess &&
+                chosen
+                  .filter((keyword) => !labels.data?.some((label) => label.keyword === keyword))
+                  .map((keyword) => (
+                    <button
+                      key={keyword}
+                      type="button"
+                      aria-pressed
+                      onClick={() => form.setValue("labels", chosen.filter((item) => item !== keyword), { shouldValidate: true })}
+                      className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-sm text-fg-secondary"
+                    >
+                      <LabelDot color="gray" />
+                      {keyword}
+                    </button>
+                  ))}
+            </div>
+          ) : (
+            <p className="text-sm text-fg-tertiary">Create labels in Aether Mail, then they can be applied here.</p>
+          )}
+          {errors.labels?.message && <p role="alert" className="text-sm text-danger">{errors.labels.message}</p>}
+        </fieldset>
         <SwitchField control={form.control} name="stop" id="rule-stop" label="Stop processing more rules" hint="Later rules are skipped for messages this rule matches." />
       </FormDialog>
 

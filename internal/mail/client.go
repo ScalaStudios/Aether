@@ -261,6 +261,7 @@ type Address struct {
 
 type Summary struct {
 	UID            uint32    `json:"uid"`
+	Folder         string    `json:"folder,omitempty"`
 	Subject        string    `json:"subject"`
 	From           []Address `json:"from"`
 	To             []Address `json:"to"`
@@ -271,6 +272,8 @@ type Summary struct {
 	HasAttachments bool      `json:"hasAttachments"`
 	Size           int64     `json:"size"`
 	ThreadUIDs     []uint32  `json:"threadUids,omitempty"`
+	Keywords       []string  `json:"keywords,omitempty"`
+	FlagColor      string    `json:"flagColor,omitempty"`
 }
 
 type Page struct {
@@ -296,6 +299,7 @@ type ListOptions struct {
 	HasAttachments bool
 	From, To       string
 	Since, Until   time.Time
+	Keywords       []string
 	Cursor         string
 	Limit          int
 }
@@ -307,6 +311,11 @@ func (o ListOptions) criteria() *imap.SearchCriteria {
 	}
 	if o.Flagged {
 		c.Flag = append(c.Flag, imap.FlagFlagged)
+	}
+	for _, keyword := range o.Keywords {
+		if keyword != "" {
+			c.Flag = append(c.Flag, imap.Flag(keyword))
+		}
 	}
 	if o.From != "" {
 		c.Header = append(c.Header, imap.SearchCriteriaHeaderField{Key: "From", Value: o.From})
@@ -344,6 +353,8 @@ func summarize(m *imapclient.FetchMessageBuffer) Summary {
 	s.Flagged = slices.Contains(m.Flags, imap.FlagFlagged)
 	s.Answered = slices.Contains(m.Flags, imap.FlagAnswered)
 	s.HasAttachments = hasAttachments(m.BodyStructure)
+	s.Keywords = messageKeywords(m.Flags)
+	s.FlagColor = FlagColor(flagStrings(m.Flags))
 	return s
 }
 
@@ -534,6 +545,7 @@ func (c *Client) List(address, folder string, o ListOptions) (*Page, error) {
 					}
 				}
 			}
+			latest.Folder = folder
 			page.Messages = append(page.Messages, latest)
 		}
 		return nil

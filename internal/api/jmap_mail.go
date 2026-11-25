@@ -1986,7 +1986,7 @@ func (s *Server) jmapVacationSet(r *http.Request, user *jmapPrincipal, accounts 
 			return itemError("invalidProperties", err.Error())
 		}
 		box := &ownedMailbox{ID: account.ID, Address: account.Address, OrgID: account.OrgID}
-		if err := s.writeSieve(r.Context(), box, rules, reply); err != nil {
+		if err := s.persistSieve(r.Context(), box, rules, reply); err != nil {
 			mailBackendErrs.Inc()
 			s.log.Error("jmap vacation failed", "account", account.ID, "err", err)
 			return itemError("serverFail", "The automatic reply could not be installed.")

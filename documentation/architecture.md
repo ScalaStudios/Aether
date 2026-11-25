@@ -77,7 +77,17 @@ We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because 
 
 Mail rules and automatic replies are stored per mailbox in PostgreSQL. Whenever either changes, the API compiles both into one Sieve script and installs it over ManageSieve, on Dovecot's internal port 4190, using the same master-user login as webmail. Dovecot runs the script at delivery, after the mailbox's blocked and trusted senders script and the global spam-to-Junk script.
 
-A rule has up to 20 conditions, matched with all or any, and at least one action. A condition tests From, To, Cc, Subject, the body, a named header, the size in kilobytes (over or under), or whether the mailbox's address is absent from To and Cc. The text conditions can be negated. The actions move the message to a folder, mark it read, flag it, forward it to up to five addresses, keep a copy when forwarding, delete it (Sieve `discard`), and stop later rules. A rule that deletes cannot also move the message or keep a copy.
+A rule has up to 20 conditions, matched with all or any, and at least one action. A condition tests From, To, Cc, Subject, the body, a named header, the size in kilobytes (over or under), or whether the mailbox's address is absent from To and Cc. The text conditions can be negated. The actions move the message to a folder, mark it read, flag it, add up to 20 labels, forward it to up to five addresses, keep a copy when forwarding, delete it (Sieve `discard`), and stop later rules. A rule that deletes cannot also move the message or keep a copy. Deleting a label that is a rule's only action is refused, so the rule is not left with nothing to do.
+
+## Labels and saved searches
+
+Labels live in `mailbox_labels`, up to 50 per mailbox. Each has a name, one of eight colors, and an IMAP keyword derived from the name the way Thunderbird derives a tag: lower case, with other characters folded to `_`. The keyword does not change when the label is renamed, so mail already tagged keeps the label. Applying a label stores that keyword on the message. Several labels can sit on one message, which stays in its folder.
+
+Apple Mail reads a color from `$MailFlagBit0`, `$MailFlagBit1` and `$MailFlagBit2` rather than from the keyword. Aether sets those bits from the first label on the message, in label order, and leaves them alone on a message that has no Aether label. Pink has no Apple Mail color. Keywords set by other clients, including Thunderbird's `$label1` through `$label5`, are kept and shown, and Aether does not write those five itself.
+
+A saved search lives in `saved_searches`, up to 50 per mailbox. It stores the search text, the unread, flagged and attachment filters, optional sender, recipient and dates, an optional label, and either one folder or every folder. Opening it runs that search. Sort order stays with the request. A search of one folder still groups conversations; a search of every folder does not, because a conversation can span folders and its cursor would not match a single-folder page. Renaming a folder rewrites saved searches that point at it, and deleting a folder removes the searches that point at that folder exactly.
+
+Changing a label's color recompiles the mailbox Sieve script, so rules that add the label also set the new Apple Mail color, and rewrites the color bits on messages that already have the keyword. Deleting a label takes it off those messages, drops it from rules, and leaves saved searches in place with the label filter cleared.
 
 Forwarding (`redirect`) and automatic replies (`vacation`) need Dovecot to send mail:
 
@@ -128,7 +138,7 @@ The data model is defined in `migrations/0001_init.sql`:
 - `organizations`, `organization_members` with roles owner, admin, and member
 - `users`, `user_identities`, linking an OIDC issuer and subject to a user
 - `domains`, with a verification token, and `dkim_keys`, with encrypted private keys and selector lifecycle state
-- `mailboxes`, each with an owner, or with `kind` `shared` and no owner, plus the pending flag, generation, lease, attempt count and next-attempt time that drive the Dovecot rights reconciliation; its foreign keys restrict the deletion of its domain and organization; `mailbox_delegates` holds delegates and members with their access level, `send_as` and `send_on_behalf`
+- `mailboxes`, each with an owner, or with `kind` `shared` and no owner, plus the pending flag, generation, lease, attempt count and next-attempt time that drive the Dovecot rights reconciliation; its foreign keys restrict the deletion of its domain and organization; `mailbox_delegates` holds delegates and members with their access level, `send_as` and `send_on_behalf`; `mailbox_labels` and `saved_searches` hold the labels and saved searches for Aether Mail
 - `aliases`, where an empty local part is the catch-all, and `kind` is `alias` or `list`; `alias_owners` holds the owners of lists, `alias_groups` the groups whose members a list includes, and `member_domains` the domains whose mailboxes it includes
 - `directory_groups` and `directory_group_members`, groups pushed by an identity provider over SCIM and the accounts in them
 - `app_passwords`

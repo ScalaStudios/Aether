@@ -3,13 +3,10 @@ package api
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5"
 
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
@@ -141,6 +138,9 @@ func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	s.recordAccess(r, p, m, "folder.delete", folder, nil, map[string]any{"moveTo": moveTo})
+	if _, err := s.db.Exec(r.Context(), `DELETE FROM saved_searches WHERE mailbox_id = $1 AND NOT all_folders AND folder = $2`, m.ID, folder); err != nil {
+		s.log.Error("removing saved searches for a deleted folder failed", "mailbox", m.ID, "err", err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -183,21 +183,14 @@ func (s *Server) renameRuleFolders(ctx context.Context, m *ownedMailbox, from, t
 			changed = true
 		}
 	}
-	if !changed {
-		return nil
-	}
-	raw, err := json.Marshal(rules)
-	if err != nil {
-		return err
-	}
-	forward, err := s.forwardPolicy(ctx, m.OrgID)
-	if err != nil {
-		return err
-	}
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE mailbox_rules SET rules = $2, updated_at = now() WHERE mailbox_id = $1`, m.ID, raw); err != nil {
+	if changed {
+		if err := s.persistSieve(ctx, m, rules, reply); err != nil {
 			return err
 		}
-		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address, forward))
-	})
+	}
+	_, err = s.db.Exec(ctx, `
+		UPDATE saved_searches
+		SET folder = $3 || substring(folder from char_length($2) + 1)
+		WHERE mailbox_id = $1 AND NOT all_folders AND (folder = $2 OR left(folder, char_length($2) + 1) = $2 || '/')`, m.ID, from, to)
+	return err
 }

@@ -9,6 +9,7 @@ import { cn } from "cn"
 
 import { FolderDialog, folderLeaf, type FolderAction } from "@/components/mail/folder-dialog"
 import { RecoverDialog } from "@/components/mail/recover-dialog"
+import { MailOrganize } from "@/components/mail/organize"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -17,7 +18,7 @@ import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
-import { dragTypes, folderIcons, folderLabel, folderParent, folderTree, snoozedFolder, storageTier } from "@/lib/mail"
+import { dragTypes, folderIcons, folderLabel, folderParent, folderTree, messageDragFolder, snoozedFolder, storageTier } from "@/lib/mail"
 import type { Folder, Mailbox } from "@/lib/types"
 
 type FolderRequest = { method: "POST" | "PATCH" | "DELETE"; path?: string; folder?: string; moveTo?: string; body?: object; done: string }
@@ -155,18 +156,26 @@ function MailboxFolders({
   quarantine = 0,
   quarantineActive = false,
   onQuarantine,
+  folderActive = true,
+  browse = null,
+  onBrowseLabel,
+  onBrowseSearch,
 }: {
   mailbox: Mailbox
   folders: UseQueryResult<Folder[]>
   folder: string | null
   onFolderChange: (name: string) => void
-  onDropMessage?: (uid: number, folder: Folder) => void
+  onDropMessage?: (uid: number, folder: Folder, sourceFolder: string) => void
   scheduled?: number
   scheduledActive?: boolean
   onScheduled?: () => void
   quarantine?: number
   quarantineActive?: boolean
   onQuarantine?: () => void
+  folderActive?: boolean
+  browse?: { kind: "label" | "search"; id: string } | null
+  onBrowseLabel?: (id: string) => void
+  onBrowseSearch?: (id: string) => void
 }) {
   const qc = useQueryClient()
   const editable = mailbox.access !== "read"
@@ -187,6 +196,7 @@ function MailboxFolders({
       setAction(null)
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
+      qc.invalidateQueries({ queryKey: ["saved-searches", mailbox.id] })
       if (folder === null || !r.folder || (folder !== r.folder && !folder.startsWith(`${r.folder}/`))) return
       if (r.method === "PATCH" && data) onFolderChange(data.name + folder.slice(r.folder.length))
       if (r.method === "DELETE") onFolderChange(folders.data?.find((f) => f.specialUse === "inbox")?.name ?? "INBOX")
@@ -215,7 +225,7 @@ function MailboxFolders({
   }
 
   function canDrop(e: React.DragEvent, target: Folder) {
-    if (e.dataTransfer.types.includes(dragTypes.message)) return !!onDropMessage && editable && target.name !== folder
+    if (e.dataTransfer.types.includes(dragTypes.message)) return !!onDropMessage && editable && messageDragFolder() !== target.name
     return !!dragging && e.dataTransfer.types.includes(dragTypes.folder) && !`${target.name}/`.startsWith(`${dragging}/`) && folderParent(dragging) !== target.name
   }
 
@@ -224,7 +234,7 @@ function MailboxFolders({
     setDropOn(null)
     const uid = Number(e.dataTransfer.getData(dragTypes.message))
     const source = folders.data?.find((f) => f.name === e.dataTransfer.getData(dragTypes.folder))
-    if (uid) onDropMessage?.(uid, target)
+    if (uid) onDropMessage?.(uid, target, e.dataTransfer.getData(dragTypes.messageFolder))
     else if (source) move(source, target.name)
   }
 
@@ -255,7 +265,7 @@ function MailboxFolders({
             label={label}
             count={f.unread}
             countLabel="unread"
-            active={!scheduledActive && !quarantineActive && f.name === folder}
+            active={folderActive && !scheduledActive && !quarantineActive && f.name === folder}
             depth={depth}
             className={cn(editable && "max-md:pr-14")}
             draggable={editable && f.specialUse === "" && f.name !== snoozedFolder}
@@ -286,6 +296,7 @@ function MailboxFolders({
       {editable && (
         <FolderButton icon={FolderPlus} label="New folder" count={0} countLabel="" active={false} className="text-fg-tertiary" onClick={() => start({ kind: "create" })} />
       )}
+      <MailOrganize mailbox={mailbox} active={browse} onLabel={(id) => onBrowseLabel?.(id)} onSearch={(id) => onBrowseSearch?.(id)} />
       {action && (
         <FolderDialog
           key={`${action.kind}:${action.folder?.name}`}
@@ -318,6 +329,9 @@ export function FolderPane({
   onQuarantine,
   onCompose,
   onDropMessage,
+  browse = null,
+  onBrowseLabel,
+  onBrowseSearch,
 }: {
   className?: string
   own: Mailbox[]
@@ -333,7 +347,10 @@ export function FolderPane({
   quarantineActive?: boolean
   onQuarantine?: () => void
   onCompose?: () => void
-  onDropMessage?: (uid: number, folder: Folder, mailboxId: string) => void
+  onDropMessage?: (uid: number, folder: Folder, mailboxId: string, sourceFolder: string) => void
+  browse?: { kind: "label" | "search"; id: string } | null
+  onBrowseLabel?: (mailboxId: string, id: string) => void
+  onBrowseSearch?: (mailboxId: string, id: string) => void
 }) {
   const userId = useSession().data?.user.id
   const readOnly = (shared.find((t) => t.mailbox.id === active.mailboxId) ?? primary)?.mailbox.access === "read"
@@ -346,13 +363,17 @@ export function FolderPane({
         folders={folders}
         folder={current ? active.folder : null}
         onFolderChange={(name) => onFolderChange(mailbox.id, name)}
-        onDropMessage={onDropMessage && ((uid, f) => onDropMessage(uid, f, mailbox.id))}
+        onDropMessage={onDropMessage && ((uid, f, sourceFolder) => onDropMessage(uid, f, mailbox.id, sourceFolder))}
         scheduled={current ? scheduled : 0}
         scheduledActive={current && scheduledActive}
         onScheduled={onScheduled}
         quarantine={current ? quarantine : 0}
         quarantineActive={current && quarantineActive}
         onQuarantine={current ? onQuarantine : undefined}
+        folderActive={current && !browse}
+        browse={current ? browse : null}
+        onBrowseLabel={(id) => onBrowseLabel?.(mailbox.id, id)}
+        onBrowseSearch={(id) => onBrowseSearch?.(mailbox.id, id)}
       />
     )
   }

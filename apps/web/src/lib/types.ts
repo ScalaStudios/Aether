@@ -442,8 +442,36 @@ export interface Address {
   address: string
 }
 
+export type LabelColor = "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "gray" | "pink"
+
+export interface Label {
+  id: string
+  name: string
+  color: LabelColor
+  keyword: string
+  position: number
+}
+
+export interface SavedSearch {
+  id: string
+  name: string
+  query: string
+  unread: boolean
+  flagged: boolean
+  hasAttachments: boolean
+  from?: string
+  to?: string
+  since?: string
+  until?: string
+  labelId?: string
+  folder: string
+  allFolders: boolean
+  position: number
+}
+
 export interface MessageSummary {
   uid: number
+  folder?: string
   subject: string
   from: Address[]
   to: Address[]
@@ -454,6 +482,8 @@ export interface MessageSummary {
   hasAttachments: boolean
   size: number
   threadUids?: number[]
+  keywords?: string[]
+  flagColor?: LabelColor
 }
 
 export interface RecoverableItem extends MessageSummary {
@@ -679,7 +709,7 @@ export interface MailRule {
   enabled: boolean
   match: "all" | "any"
   conditions: RuleCondition[]
-  actions: { moveTo?: string; delete?: boolean; markRead?: boolean; flag?: boolean; forwardTo?: string[]; keepCopy?: boolean; stop?: boolean }
+  actions: { moveTo?: string; delete?: boolean; markRead?: boolean; flag?: boolean; forwardTo?: string[]; keepCopy?: boolean; stop?: boolean; labels?: string[] }
 }
 
 export type FlowField = "sender" | "recipient" | "subject" | "body" | "header" | "attachmentName" | "attachmentType" | "sizeOver" | "spamScoreOver" | "direction"

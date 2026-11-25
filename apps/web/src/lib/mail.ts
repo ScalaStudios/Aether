@@ -1,7 +1,7 @@
 import { Archive, File, Folder as FolderIcon, Inbox, OctagonAlert, Send, Trash2, type LucideIcon } from "lucide-react"
 
 import { formatAddress, formatDateTime, plural } from "@/lib/format"
-import type { Address, Attachment, Folder, Mailbox, MailboxRetention, Message, SpecialUse } from "@/lib/types"
+import type { Address, Attachment, Folder, Label, LabelColor, Mailbox, MailboxRetention, Message, SpecialUse } from "@/lib/types"
 
 export const folderIcons: Record<SpecialUse, LucideIcon> = {
   inbox: Inbox,
@@ -65,11 +65,111 @@ export interface ListView {
   sort: MessageSort
   order: "asc" | "desc"
   filters: QuickFilter[]
+  labelId?: string
+}
+
+export const labelPalette: Record<LabelColor, { name: string; hex: string }> = {
+  red: { name: "Red", hex: "#e5484d" },
+  orange: { name: "Orange", hex: "#f76b15" },
+  yellow: { name: "Yellow", hex: "#ffc53d" },
+  green: { name: "Green", hex: "#30a46c" },
+  blue: { name: "Blue", hex: "#3b82f6" },
+  purple: { name: "Purple", hex: "#8e4ec6" },
+  gray: { name: "Gray", hex: "#8b8d98" },
+  pink: { name: "Pink", hex: "#d6409f" },
+}
+
+export const labelColorOrder = ["red", "orange", "yellow", "green", "blue", "purple", "gray", "pink"] as const satisfies readonly LabelColor[]
+
+const builtinKeywords: Record<string, { name: string; color: LabelColor }> = {
+  $label1: { name: "Important", color: "red" },
+  $label2: { name: "Work", color: "orange" },
+  $label3: { name: "Personal", color: "green" },
+  $label4: { name: "To Do", color: "blue" },
+  $label5: { name: "Later", color: "purple" },
+}
+
+export interface AppliedLabel {
+  keyword: string
+  name: string
+  color: LabelColor
+  id?: string
+}
+
+export function appliedLabels(keywords: string[] | undefined, labels: Pick<Label, "id" | "keyword" | "name" | "color">[]): AppliedLabel[] {
+  return (keywords ?? []).map((keyword) => {
+    const label = labels.find((item) => item.keyword === keyword)
+    if (label) return { keyword, name: label.name, color: label.color, id: label.id }
+    const builtin = builtinKeywords[keyword]
+    if (builtin) return { keyword, name: builtin.name, color: builtin.color }
+    return { keyword, name: keyword, color: "gray" }
+  })
+}
+
+export function showFlagColor(flagColor: string | undefined, applied: AppliedLabel[]) {
+  return !!flagColor && flagColor in labelPalette && !applied.some((label) => label.id && label.color === flagColor)
+}
+
+export function filtersFromFlags(flags: { unread?: boolean; flagged?: boolean; hasAttachments?: boolean }): QuickFilter[] {
+  return [flags.unread ? "unread" : "", flags.flagged ? "flagged" : "", flags.hasAttachments ? "hasAttachments" : ""].filter((item): item is QuickFilter => item !== "")
+}
+
+export function savedSearchBody(search: {
+  name: string
+  query: string
+  unread: boolean
+  flagged: boolean
+  hasAttachments: boolean
+  from?: string
+  to?: string
+  since?: string
+  until?: string
+  labelId?: string
+  folder: string
+  allFolders: boolean
+}) {
+  return {
+    name: search.name,
+    query: search.query,
+    unread: search.unread,
+    flagged: search.flagged,
+    hasAttachments: search.hasAttachments,
+    from: search.from ?? "",
+    to: search.to ?? "",
+    since: search.since ?? "",
+    until: search.until ?? "",
+    labelId: search.labelId ?? "",
+    folder: search.allFolders ? "" : search.folder,
+    allFolders: search.allFolders,
+  }
+}
+
+let messageDrag: { uid: number; folder: string } | null = null
+
+export function beginMessageDrag(uid: number, folder: string) {
+  messageDrag = { uid, folder }
+}
+
+export function endMessageDrag() {
+  messageDrag = null
+}
+
+export function messageDragFolder() {
+  return messageDrag?.folder ?? ""
+}
+
+export function describeSearch(input: { query: string; filters: QuickFilter[]; label?: string; folder: string; allFolders: boolean }) {
+  const parts = input.filters.map((filter) => (filter === "hasAttachments" ? "with attachments" : filter))
+  let text = parts.length ? `${parts.join(", ")} messages` : "Messages"
+  if (input.label) text += ` labeled ${input.label}`
+  if (input.query) text += ` matching “${input.query}”`
+  text += input.allFolders ? " in every folder" : ` in ${input.folder === "INBOX" ? "Inbox" : input.folder}`
+  return `${text[0].toUpperCase()}${text.slice(1)}.`
 }
 
 export const defaultListView: ListView = { sort: "date", order: "desc", filters: [] }
 
-export const dragTypes = { message: "application/x-aether-message", folder: "application/x-aether-folder" }
+export const dragTypes = { message: "application/x-aether-message", messageFolder: "application/x-aether-message-folder", folder: "application/x-aether-folder" }
 
 export function senderLabel(addresses: Address[], empty = "Unknown sender") {
   const first = addresses[0]
