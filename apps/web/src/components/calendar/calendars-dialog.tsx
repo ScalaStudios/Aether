@@ -29,6 +29,7 @@ import { Switch } from "@/components/ui/switch";
 import { useSession } from "@/hooks/use-session";
 import { api, errorMessage } from "@/lib/api";
 import { formatDateTime, plural } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
 import { calendarsQuery } from "@/lib/queries";
 import type { CalendarInfo, CalendarSubscription } from "@/lib/types";
 
@@ -49,7 +50,6 @@ const refreshes = [
   { value: "10080", label: "Weekly" },
 ];
 
-const accessLabels = { owner: "Yours", write: "Can edit", read: "View only" };
 
 function Swatch({ color }: { color: string }) {
   return (
@@ -72,6 +72,7 @@ export function CalendarsDialog({
   hidden: string[];
   onToggle: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const calendars = useQuery({ ...calendarsQuery, enabled: open });
   const [name, setName] = useState("");
@@ -140,7 +141,7 @@ export function CalendarsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>Calendars</DialogTitle>
+          <DialogTitle>{t("calendar.calendars.title")}</DialogTitle>
           <DialogDescription>
             Choose which calendars to show, share yours, or subscribe to a calendar link.
           </DialogDescription>
@@ -155,7 +156,7 @@ export function CalendarsDialog({
                       <Switch
                         checked={!hidden.includes(c.id)}
                         onCheckedChange={() => onToggle(c.id)}
-                        aria-label={`Show ${c.name}`}
+                        aria-label={t("calendar.calendars.showCalendar", { name: c.name })}
                       />
                       <Swatch color={c.color} />
                       <div className="flex min-w-0 flex-1 flex-col">
@@ -168,10 +169,10 @@ export function CalendarsDialog({
                                 ? `Subscribed · updated ${formatDateTime(c.subscription.lastFetchedAt)}`
                                 : "Subscribed from a link"
                               : c.owner
-                                ? `${c.owner.name || c.owner.email} · ${accessLabels[c.access]}`
+                                ? `${c.owner.name || c.owner.email} · ${t(`calendar.calendars.access.${c.access}`)}`
                                 : c.shares?.length
-                                  ? `Shared with ${c.shares.length}`
-                                  : "Only you"}
+                                  ? t("calendar.calendars.sharedWith", { count: c.shares.length })
+                                  : t("calendar.calendars.onlyYou")}
                         </span>
                       </div>
                     </div>
@@ -223,6 +224,7 @@ export function CalendarsDialog({
                         </IconButton>
                       )}
                     </div>
+
                   </div>
                   {editingFeed === c.id && c.subscription && (
                     <SubscriptionPanel
@@ -250,14 +252,14 @@ export function CalendarsDialog({
           }}
         >
           <label htmlFor="new-calendar" className="text-label">
-            New calendar
+            {t("calendar.calendars.newCalendar")}
           </label>
           <div className="flex gap-2">
             <Input
               id="new-calendar"
               value={name}
               maxLength={100}
-              placeholder="Team, Holidays, On call…"
+              placeholder={t("calendar.calendars.newCalendarPlaceholder")}
               onChange={(e) => setName(e.target.value)}
             />
             <Button
@@ -266,10 +268,10 @@ export function CalendarsDialog({
               loading={create.isPending}
               disabled={!name.trim()}
             >
-              Create
+              {t("calendar.calendars.create")}
             </Button>
           </div>
-          <div role="radiogroup" aria-label="Color" className="flex gap-2">
+          <div role="radiogroup" aria-label={t("calendar.calendars.color")} className="flex gap-2">
             {palette.map((p) => (
               <button
                 key={p}
@@ -358,13 +360,13 @@ export function CalendarsDialog({
         <ConfirmDialog
           open={!!deleting}
           onOpenChange={(o) => !o && setDeleting(null)}
-          title={`Delete “${deleting?.name ?? ""}”?`}
+          title={t("calendar.calendars.deleteTitle", { name: deleting?.name ?? "" })}
           description={
             deleting?.subscribed
               ? "This stops the subscription and removes the events it added. This cannot be undone."
               : "Every event in this calendar is deleted, and people it was shared with lose access. This cannot be undone."
           }
-          confirmLabel="Delete calendar"
+          confirmLabel={t("calendar.calendars.deleteConfirm")}
           pending={remove.isPending}
           onConfirm={() => deleting && remove.mutate(deleting.id)}
         />
@@ -441,6 +443,7 @@ function SharePanel({
   calendar: CalendarInfo;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const session = useSession();
   const adminOrgs =
     session.data?.memberships.filter((m) => m.role === "owner" || m.role === "admin") ?? [];
@@ -477,14 +480,14 @@ function SharePanel({
           {calendar.shares.map((s) => (
             <li key={s.id} className="flex items-center justify-between gap-3">
               <span className="truncate">
-                {s.orgName ? `Everyone in ${s.orgName}` : s.name || s.email}
+                {s.orgName ? t("calendar.calendars.everyoneIn", { org: s.orgName }) : s.name || s.email}
               </span>
               <span className="flex items-center gap-2">
                 <span className="text-fg-tertiary">
-                  {accessLabels[s.access]}
+                  {t(`calendar.calendars.access.${s.access}`)}
                 </span>
                 <IconButton
-                  label="Stop sharing"
+                  label={t("calendar.calendars.stopSharing")}
                   size="icon-sm"
                   onClick={() => unshare.mutate(s.id)}
                   disabled={unshare.isPending}
@@ -511,15 +514,17 @@ function SharePanel({
             onClick={() => setTarget("")}
           >
             <span className="truncate">
-              Everyone in {adminOrgs.find((o) => o.orgId === orgId)?.orgName}
+              {t("calendar.calendars.everyoneIn", {
+                org: adminOrgs.find((o) => o.orgId === orgId)?.orgName ?? "",
+              })}
             </span>
             <X aria-hidden />
           </Button>
         ) : (
           <Input
-            aria-label="Email address"
+            aria-label={t("calendar.calendars.emailAddress")}
             type="email"
-            placeholder="name@company.com"
+            placeholder={t("calendar.calendars.emailPlaceholder")}
             className="min-w-0 flex-1"
             value={target}
             onChange={(e) => setTarget(e.target.value)}
@@ -530,12 +535,12 @@ function SharePanel({
             value={access}
             onValueChange={(v) => setAccess(v as "read" | "write")}
           >
-            <SelectTrigger aria-label="Access" className="w-36">
+            <SelectTrigger aria-label={t("calendar.calendars.accessLabel")} className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="read">View only</SelectItem>
-              <SelectItem value="write">Can edit</SelectItem>
+              <SelectItem value="read">{t("calendar.calendars.access.read")}</SelectItem>
+              <SelectItem value="write">{t("calendar.calendars.access.write")}</SelectItem>
             </SelectContent>
           </Select>
         )}
@@ -544,7 +549,7 @@ function SharePanel({
           loading={share.isPending}
           disabled={!target.trim()}
         >
-          Share
+          {t("calendar.calendars.share")}
         </Button>
       </form>
       {!orgId && adminOrgs.length > 0 && (
@@ -557,7 +562,7 @@ function SharePanel({
               variant="quiet"
               onClick={() => setTarget(`org:${o.orgId}`)}
             >
-              Share with everyone in {o.orgName}
+              {t("calendar.calendars.shareWithOrg", { org: o.orgName })}
             </Button>
           ))}
         </div>

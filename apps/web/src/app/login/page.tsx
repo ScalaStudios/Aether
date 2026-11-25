@@ -1,9 +1,8 @@
 import type { Metadata } from "next"
-import Image from "next/image"
 import { Suspense } from "react"
 
 import { BrandHeading } from "@/components/branding"
-import { LoginForm } from "@/components/login-form"
+import { LoginFooter, LoginForm } from "@/components/login-form"
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -19,11 +18,7 @@ export default function LoginPage() {
           <LoginForm />
         </Suspense>
       </div>
-      <p className="flex items-center gap-2 text-sm text-fg-tertiary">
-        <Image src="/brand/scala-symbol-gradient.svg" alt="" width={24} height={31} className="h-[31px] w-6 light:hidden" />
-        <Image src="/brand/scala-symbol-ink.svg" alt="" width={24} height={31} className="hidden h-[31px] w-6 light:block" />
-        A Scala Studios project
-      </p>
+      <LoginFooter />
     </main>
   )
 }

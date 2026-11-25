@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Ban, KeyRound, MonitorSmartphone, Pencil, Plus, RefreshCw, RotateCcw, ShieldOff, UserMinus, Users } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSepa
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import { plural } from "@/lib/format"
 import {
   BUILT_IN_ROLES,
@@ -83,6 +84,7 @@ function parseChoice(choice: string): { role: Role; customRoleId?: string } {
 }
 
 export function MembersTab({ orgId }: { orgId: string }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const session = useSession().data
   const platformAdmin = session?.user.isPlatformAdmin ?? false
@@ -122,13 +124,22 @@ export function MembersTab({ orgId }: { orgId: string }) {
     return r !== "owner" && r !== "admin"
   })
 
+  const schema = useMemo(
+    () =>
+      z.object({
+        email: z.email(t("admin.members.emailInvalid")),
+        role: z.enum(["owner", "admin", "member"]),
+      }),
+    [t]
+  )
+
   const setStatus = useMutation({
     mutationFn: ({ member, status }: { member: Member; status: "active" | "suspended" }) =>
       platformAdmin
         ? api(`/admin/users/${member.userId}`, { method: "PATCH", body: { status } })
         : api(`/organizations/${orgId}/members/${member.userId}/status`, { method: "PATCH", body: { status } }),
     onSuccess: (_d, { member, status }) => {
-      toast.success(status === "suspended" ? `Suspended ${member.email}` : `Restored ${member.email}`)
+      toast.success(status === "suspended" ? t("admin.members.suspendedToast", { email: member.email }) : t("admin.members.restoredToast", { email: member.email }))
       qc.invalidateQueries({ queryKey: ["members", orgId] })
       setSuspending(null)
     },
@@ -157,7 +168,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
     mutationFn: (member: Member) => api(`/organizations/${orgId}/members/${member.userId}`, { method: "DELETE" }),
     meta: { silent: true },
     onSuccess: (_d, member) => {
-      toast.success(`Removed ${member.email}`)
+      toast.success(t("admin.members.removedToast", { email: member.email }))
       qc.invalidateQueries({ queryKey: ["members", orgId] })
       qc.invalidateQueries({ queryKey: ["roles", orgId] })
       setRemoving(null)
@@ -191,7 +202,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === "unknown_user") {
-        form.setError("email", { message: "No Aether account uses this email. Create a mailbox for it, or ask the person to sign in once with single sign-on." })
+        form.setError("email", { message: t("admin.members.unknownUser") })
       } else if (error instanceof ApiError && error.code === "invalid_domains") {
         form.setError("domainIds", { message: error.message })
       } else {
@@ -237,7 +248,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title="Members"
+        title={t("admin.members.title")}
         description={
           canWrite
             ? "People with access to this organization, their administrative roles and optional domain scopes."
@@ -249,24 +260,24 @@ export function MembersTab({ orgId }: { orgId: string }) {
           canWrite && (
             <Button onClick={() => open("new")}>
               <Plus aria-hidden />
-              Add member
+              {t("admin.members.addMember")}
             </Button>
           )
         }
       />
-      <QueryView query={members} empty={<EmptyState icon={Users} title="No members" description="Add someone who already has an Aether account." />}>
+      <QueryView query={members} empty={<EmptyState icon={Users} title={t("admin.members.emptyTitle")} description={t("admin.members.emptyDescription")} />}>
         {(items) => (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>{t("common.name")}</TableHead>
+                <TableHead>{t("common.email")}</TableHead>
+                <TableHead>{t("admin.members.role")}</TableHead>
+                <TableHead>{t("common.status")}</TableHead>
                 <TableHead>Two-factor</TableHead>
                 {hasAnyRowAction && (
                   <TableHead className="w-36">
-                    <span className="sr-only">Actions</span>
+                    <span className="sr-only">{t("common.actions")}</span>
                   </TableHead>
                 )}
               </TableRow>
@@ -297,7 +308,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
+                      <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{t(`common.userStatus.${m.status}`)}</StatusBadge>
                     </TableCell>
                     <TableCell>
                       {m.twoFactor ? (
@@ -349,7 +360,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
                             </IconButton>
                           )}
                           {canEdit && m.userId !== session?.user.id && (
-                            <IconButton label={`Remove ${m.email}`} size="icon-sm" onClick={() => setRemoving(m)}>
+                            <IconButton label={t("admin.members.removeAria", { email: m.email })} size="icon-sm" onClick={() => setRemoving(m)}>
                               <UserMinus />
                             </IconButton>
                           )}
@@ -367,13 +378,13 @@ export function MembersTab({ orgId }: { orgId: string }) {
       <FormDialog
         open={editing !== null}
         onOpenChange={(next) => !next && close()}
-        title={editing === "new" ? "Add member" : "Change role"}
-        description={editing === "new" ? "The person needs an existing Aether account." : undefined}
-        submitLabel={editing === "new" ? "Add member" : "Save role"}
+        title={editing === "new" ? t("admin.members.addMember") : t("admin.members.changeRoleTitle")}
+        description={editing === "new" ? t("admin.members.addDescription") : undefined}
+        submitLabel={editing === "new" ? t("admin.members.addMember") : t("admin.members.saveRole")}
         pending={save.isPending}
         onSubmit={form.handleSubmit((v) => save.mutate(v))}
       >
-        <Field id="member-email" label="Email" error={form.formState.errors.email?.message}>
+        <Field id="member-email" label={t("common.email")} error={form.formState.errors.email?.message}>
           <Input
             id="member-email"
             type="email"
@@ -519,9 +530,9 @@ export function MembersTab({ orgId }: { orgId: string }) {
       <ConfirmDialog
         open={!!suspending}
         onOpenChange={(o) => !o && setSuspending(null)}
-        title={`Suspend ${suspending?.email}?`}
+        title={t("admin.members.suspendTitle", { email: suspending?.email ?? "" })}
         description="They are signed out everywhere, cannot sign in, and their app passwords stop working for IMAP and SMTP. Mail keeps arriving in their mailboxes."
-        confirmLabel="Suspend account"
+        confirmLabel={t("admin.members.suspendConfirm")}
         pending={setStatus.isPending}
         onConfirm={() => suspending && setStatus.mutate({ member: suspending, status: "suspended" })}
       />
@@ -533,9 +544,9 @@ export function MembersTab({ orgId }: { orgId: string }) {
           setRemoving(null)
           remove.reset()
         }}
-        title={`Remove ${removing?.email}?`}
-        description="They lose their role here, their delegated access to this organization’s mailboxes, and ownership of its distribution lists. Their account and the mailboxes they own aren’t deleted."
-        confirmLabel="Remove member"
+        title={t("admin.members.removeTitle", { email: removing?.email ?? "" })}
+        description={t("admin.members.removeDescription")}
+        confirmLabel={t("admin.members.removeConfirm")}
         pending={remove.isPending}
         onConfirm={() => removing && remove.mutate(removing)}
       >

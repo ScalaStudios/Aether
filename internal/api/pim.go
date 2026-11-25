@@ -832,18 +832,18 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		s.davError(w, r, err)
 		return
 	}
-	verb := "Invitation"
+	kind := "request"
 	if prev != nil {
-		verb = "Updated invitation"
+		kind = "update"
 	}
 	if len(removed) > 0 {
 		cancel := cancelledCopy(event.Component, removed, sequence)
 		cancel.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
-		_, err = s.sendITIP(ctx, organizer, nil, removed, "Cancelled: "+in.Title, "CANCEL", cancel)
+		_, err = s.sendITIP(ctx, organizer, nil, removed, "cancel", in.Title, "CANCEL", cancel)
 	}
 	var bookings []bookingOutcome
 	if err == nil {
-		bookings, err = s.sendITIP(ctx, organizer, nil, attendees, verb+": "+in.Title, "REQUEST", event.Component)
+		bookings, err = s.sendITIP(ctx, organizer, nil, attendees, kind, in.Title, "REQUEST", event.Component)
 	}
 	if err != nil {
 		s.log.Warn("invitation rejected", "user", p.User.ID, "err", err)

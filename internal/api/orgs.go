@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/scalastudios/aether/internal/auth"
+
+	"github.com/scalastudios/aether/internal/i18n"
 )
 
 type organization struct {
@@ -22,9 +24,10 @@ type organization struct {
 
 	DeletedItemRetentionDays int      `json:"deletedItemRetentionDays"`
 	MailboxProtocols         []string `json:"mailboxProtocols"`
+	DefaultLocale            string   `json:"defaultLocale"`
 }
 
-const organizationColumns = `id, name, slug, created_at, spam_learning, deleted_item_retention_days, mailbox_protocols`
+const organizationColumns = `id, name, slug, created_at, spam_learning, deleted_item_retention_days, mailbox_protocols, default_locale`
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request, p *principal) {
 	rows, err := s.db.Query(r.Context(), `
@@ -48,8 +51,9 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, p *p
 		return
 	}
 	var in struct {
-		Name string `json:"name"`
-		Slug string `json:"slug"`
+		Name          string `json:"name"`
+		Slug          string `json:"slug"`
+		DefaultLocale string `json:"defaultLocale"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
@@ -59,9 +63,14 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, p *p
 		writeError(w, http.StatusUnprocessableEntity, "invalid_organization", "Enter a name and a slug made of lowercase letters, digits, and hyphens.")
 		return
 	}
+	defaultLocale, ok := i18n.Normalize(in.DefaultLocale)
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_locale", "Choose one of the supported languages, or leave empty for the browser default.")
+		return
+	}
 	var org organization
-	err := s.db.QueryRow(r.Context(), `INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING `+organizationColumns, in.Name, in.Slug).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols)
+	err := s.db.QueryRow(r.Context(), `INSERT INTO organizations (name, slug, default_locale) VALUES ($1, $2, $3) RETURNING `+organizationColumns, in.Name, in.Slug, defaultLocale).
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		writeError(w, http.StatusConflict, "slug_taken", "Another organization already uses this slug.")
@@ -71,7 +80,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, p *p
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &org.ID, "organization.create", "organization", org.ID, map[string]any{"slug": org.Slug})
+	s.audit(r.Context(), r, p, &org.ID, "organization.create", "organization", org.ID, map[string]any{"slug": org.Slug, "defaultLocale": org.DefaultLocale})
 	writeJSON(w, http.StatusCreated, org)
 }
 
@@ -97,7 +106,7 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request, p *prin
 		return
 	}
 	var org organization
-	err := s.db.QueryRow(r.Context(), `SELECT `+organizationColumns+` FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols)
+	err := s.db.QueryRow(r.Context(), `SELECT `+organizationColumns+` FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -118,11 +127,12 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 		SpamLearning             *bool     `json:"spamLearning"`
 		DeletedItemRetentionDays *int      `json:"deletedItemRetentionDays"`
 		MailboxProtocols         *[]string `json:"mailboxProtocols"`
+		DefaultLocale            *string   `json:"defaultLocale"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	if in.SpamLearning == nil && in.DeletedItemRetentionDays == nil && in.MailboxProtocols == nil {
+	if in.SpamLearning == nil && in.DeletedItemRetentionDays == nil && in.MailboxProtocols == nil && in.DefaultLocale == nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_organization", "Choose whether the spam filter learns from Junk moves.")
 		return
 	}
@@ -134,12 +144,21 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 		writeError(w, http.StatusUnprocessableEntity, "invalid_protocols", "Protocols must be a list of imap, smtp, sieve, dav and webmail.")
 		return
 	}
+	var locale *string
+	if in.DefaultLocale != nil {
+		norm, valid := i18n.Normalize(*in.DefaultLocale)
+		if !valid {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_locale", "Choose one of the supported languages, or leave empty for the browser default.")
+			return
+		}
+		locale = &norm
+	}
 	var org organization
 	err := s.db.QueryRow(r.Context(), `
 		UPDATE organizations SET spam_learning = coalesce($2, spam_learning), deleted_item_retention_days = coalesce($3, deleted_item_retention_days),
-			mailbox_protocols = coalesce($4, mailbox_protocols)
-		WHERE id = $1 RETURNING `+organizationColumns, orgID, in.SpamLearning, in.DeletedItemRetentionDays, in.MailboxProtocols).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols)
+			mailbox_protocols = coalesce($4, mailbox_protocols), default_locale = coalesce($5, default_locale)
+		WHERE id = $1 RETURNING `+organizationColumns, orgID, in.SpamLearning, in.DeletedItemRetentionDays, in.MailboxProtocols, locale).
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -153,6 +172,9 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 	}
 	if in.MailboxProtocols != nil {
 		changes["mailboxProtocols"] = org.MailboxProtocols
+	}
+	if in.DefaultLocale != nil {
+		changes["defaultLocale"] = org.DefaultLocale
 	}
 	s.audit(r.Context(), r, p, &org.ID, "organization.update", "organization", org.ID, changes)
 	writeJSON(w, http.StatusOK, org)

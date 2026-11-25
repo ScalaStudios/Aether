@@ -7,7 +7,8 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { folderLabel, folderParent } from "@/lib/mail"
+import { useI18n } from "@/lib/i18n"
+import { folderLabel, folderParent, snoozedFolder } from "@/lib/mail"
 import type { Folder } from "@/lib/types"
 
 export type FolderAction = { kind: "create" | "rename" | "move" | "delete" | "empty"; folder?: Folder }
@@ -15,11 +16,8 @@ export type FolderAction = { kind: "create" | "rename" | "move" | "delete" | "em
 const topLevel = "/"
 
 export function folderLeaf(folder: Folder) {
-  return folder.specialUse === "inbox" ? "Inbox" : folder.name.slice(folder.name.lastIndexOf("/") + 1)
-}
-
-function messages(count: number) {
-  return count === 1 ? "1 message" : `${count.toLocaleString()} messages`
+  if (folder.specialUse || folder.name === snoozedFolder) return folderLabel(folder)
+  return folder.name.slice(folder.name.lastIndexOf("/") + 1)
 }
 
 function FolderSelect({ id, value, onChange, folders, topLevelLabel }: { id: string; value: string; onChange: (value: string) => void; folders: Folder[]; topLevelLabel?: string }) {
@@ -55,6 +53,8 @@ export function FolderDialog({
   onClose: () => void
   onSubmit: (values: { name?: string; parent?: string; moveTo?: string }) => void
 }) {
+  const { t, tp, locale } = useI18n()
+  const messages = (count: number) => tp("mail.messageCount", count, { count: count.toLocaleString(locale) })
   const folder = action.folder
   const inside = (f: Folder) => !!folder && (f.name === folder.name || f.name.startsWith(`${folder.name}/`))
   const current = folder ? folderParent(folder.name) : ""
@@ -74,15 +74,21 @@ export function FolderDialog({
       <FormDialog
         open
         onOpenChange={openChange}
-        title={action.kind === "rename" && folder ? `Rename ${folderLeaf(folder)}` : folder ? `New folder in ${folderLeaf(folder)}` : "New folder"}
-        submitLabel={action.kind === "rename" ? "Rename" : "Create folder"}
+        title={
+          action.kind === "rename" && folder
+            ? t("mail.folders.dialog.renameTitle", { name: folderLeaf(folder) })
+            : folder
+              ? t("mail.folders.dialog.newInTitle", { name: folderLeaf(folder) })
+              : t("mail.folders.dialog.newTitle")
+        }
+        submitLabel={action.kind === "rename" ? t("mail.folders.dialog.renameSubmit") : t("mail.folders.dialog.createSubmit")}
         pending={pending}
         onSubmit={(e) => {
           e.preventDefault()
           onSubmit({ name })
         }}
       >
-        <Field id="folder-name" label="Name" error={error}>
+        <Field id="folder-name" label={t("common.name")} error={error}>
           <Input id="folder-name" value={name} autoComplete="off" maxLength={100} aria-invalid={!!error} onChange={(e) => setName(e.target.value)} />
         </Field>
       </FormDialog>
@@ -96,17 +102,17 @@ export function FolderDialog({
       <FormDialog
         open
         onOpenChange={openChange}
-        title={`Move ${folderLeaf(folder)}`}
-        description="Folders inside it move too."
-        submitLabel="Move"
+        title={t("mail.folders.dialog.moveTitle", { name: folderLeaf(folder) })}
+        description={t("mail.folders.dialog.moveDescription")}
+        submitLabel={t("mail.folders.dialog.moveSubmit")}
         pending={pending}
         onSubmit={(e) => {
           e.preventDefault()
           onSubmit({ parent: parent === topLevel ? "" : parent })
         }}
       >
-        <Field id="folder-parent" label="Move into" error={error}>
-          <FolderSelect id="folder-parent" value={parent} onChange={setParent} folders={targets} topLevelLabel={current ? "Top level" : undefined} />
+        <Field id="folder-parent" label={t("mail.folders.dialog.moveInto")} error={error}>
+          <FolderSelect id="folder-parent" value={parent} onChange={setParent} folders={targets} topLevelLabel={current ? t("mail.folders.dialog.topLevel") : undefined} />
         </Field>
       </FormDialog>
     )
@@ -117,18 +123,18 @@ export function FolderDialog({
       <ConfirmDialog
         open
         onOpenChange={openChange}
-        title={`Delete ${folderLeaf(folder)}?`}
+        title={t("mail.folders.dialog.deleteTitle", { name: folderLeaf(folder) })}
         description={
           folder.total > 0
-            ? `Its ${messages(folder.total)} will move to the folder you choose, then ${folderLeaf(folder)} is deleted.`
-            : `${folderLeaf(folder)} is removed from Aether Mail and from every app connected to this mailbox.`
+            ? t("mail.folders.dialog.deleteWithMessages", { messages: messages(folder.total), name: folderLeaf(folder) })
+            : t("mail.folders.dialog.deleteEmpty", { name: folderLeaf(folder) })
         }
-        confirmLabel={folder.total > 0 ? "Move and delete" : "Delete folder"}
+        confirmLabel={folder.total > 0 ? t("mail.folders.dialog.moveAndDelete") : t("mail.folders.dialog.deleteFolder")}
         pending={pending}
         onConfirm={() => onSubmit({ moveTo: folder.total > 0 ? moveTo : undefined })}
       >
         {folder.total > 0 && (
-          <Field id="folder-move-to" label="Move messages to">
+          <Field id="folder-move-to" label={t("mail.folders.dialog.moveMessagesTo")}>
             <FolderSelect id="folder-move-to" value={moveTo} onChange={setMoveTo} folders={folders.filter((f) => !inside(f))} />
           </Field>
         )}
@@ -142,13 +148,13 @@ export function FolderDialog({
     <ConfirmDialog
       open
       onOpenChange={openChange}
-      title={`Empty ${folderLabel(folder)}?`}
+      title={t("mail.folders.dialog.emptyTitle", { name: folderLabel(folder) })}
       description={
         permanent
-          ? `${messages(folder.total)} in ${folderLabel(folder)} will be deleted permanently. This cannot be undone.`
-          : `${messages(folder.total)} in ${folderLabel(folder)} will move to Trash.`
+          ? t("mail.folders.dialog.emptyPermanent", { messages: messages(folder.total), name: folderLabel(folder) })
+          : t("mail.folders.dialog.emptyToTrash", { messages: messages(folder.total), name: folderLabel(folder) })
       }
-      confirmLabel={permanent ? `Empty ${folderLabel(folder)}` : "Move to Trash"}
+      confirmLabel={permanent ? t("mail.folders.dialog.emptyConfirm", { name: folderLabel(folder) }) : t("mail.folders.dialog.moveToTrash")}
       pending={pending}
       onConfirm={() => onSubmit({})}
     >

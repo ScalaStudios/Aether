@@ -7,8 +7,10 @@ import { toast } from "sonner"
 import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"
 import { Input } from "@/components/ui/input"
+import { useI18n } from "@/lib/i18n"
 
-export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+export function CopyButton({ value, label }: { value: string; label?: string }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
 
   async function copy() {
@@ -17,12 +19,12 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
       setCopied(true)
       setTimeout(() => setCopied(false), 1600)
     } catch {
-      toast.error("Copying failed. Select the text and copy it manually.")
+      toast.error(t("common.copyFailed"))
     }
   }
 
   return (
-    <IconButton label={copied ? "Copied" : label} onClick={copy} size="icon-sm">
+    <IconButton label={copied ? t("common.copied") : (label ?? t("common.copy"))} onClick={copy} size="icon-sm">
       {copied ? <Check className="text-success" /> : <Copy />}
     </IconButton>
   )

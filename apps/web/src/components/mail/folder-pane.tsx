@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import { formatBytes } from "@/lib/format"
 import { dragTypes, folderIcons, folderLabel, folderParent, folderTree, messageDragFolder, snoozedFolder, storageTier } from "@/lib/mail"
 import type { Folder, Mailbox } from "@/lib/types"
@@ -67,6 +68,7 @@ function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead, o
   onMarkRead: () => void
   onRecover: () => void
 }) {
+  const { t } = useI18n()
   const fixed = folder.specialUse !== "" || folder.name === snoozedFolder
   const permanent = folder.specialUse === "trash" || folder.specialUse === "junk"
   return (
@@ -75,7 +77,7 @@ function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead, o
         <Button
           variant="quiet"
           size="icon-sm"
-          aria-label={`More actions for ${label}`}
+          aria-label={t("mail.folders.moreActionsFor", { label })}
           className="absolute top-1/2 right-1 -translate-y-1/2 md:bg-muted md:opacity-0 md:group-hover/folder:opacity-100 md:group-has-[:focus-visible]/folder:opacity-100 md:aria-expanded:opacity-100"
         >
           <Ellipsis />
@@ -84,28 +86,28 @@ function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead, o
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuItem onSelect={() => onAction("create")}>
           <FolderPlus aria-hidden />
-          New subfolder…
+          {t("mail.folders.newSubfolder")}
         </DropdownMenuItem>
         {!fixed && (
           <>
             <DropdownMenuItem onSelect={() => onAction("rename")}>
               <FolderPen aria-hidden />
-              Rename…
+              {t("mail.folders.renameEllipsis")}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onAction("move")}>
               <FolderInput aria-hidden />
-              Move…
+              {t("mail.folders.moveEllipsis")}
             </DropdownMenuItem>
           </>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={folder.unread === 0} onSelect={onMarkRead}>
           <MailOpen aria-hidden />
-          Mark all as read
+          {t("mail.folders.markAllRead")}
         </DropdownMenuItem>
         <DropdownMenuItem disabled={folder.total === 0} onSelect={() => onAction("empty")}>
           <Trash2 aria-hidden />
-          {permanent ? `Empty ${folderLabel(folder)}…` : "Empty folder…"}
+          {permanent ? t("mail.folders.emptyNamed", { name: folderLabel(folder) }) : t("mail.folders.emptyFolder")}
         </DropdownMenuItem>
         {folder.specialUse === "trash" && (
           <DropdownMenuItem onSelect={onRecover}>
@@ -118,7 +120,7 @@ function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead, o
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={() => onAction("delete")}>
               <FolderX aria-hidden />
-              Delete…
+              {t("mail.folders.deleteEllipsis")}
             </DropdownMenuItem>
           </>
         )}
@@ -178,6 +180,7 @@ function MailboxFolders({
   onBrowseLabel?: (id: string) => void
   onBrowseSearch?: (id: string) => void
 }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const editable = mailbox.access !== "read"
   const [action, setAction] = useState<FolderAction | null>(null)
@@ -206,18 +209,25 @@ function MailboxFolders({
   })
 
   function move(f: Folder, parent: string) {
-    manage.mutate({ method: "PATCH", folder: f.name, body: { parent }, done: parent ? `Moved ${folderLeaf(f)} into ${labelOf(parent)}` : `Moved ${folderLeaf(f)} to the top level` })
+    manage.mutate({
+      method: "PATCH",
+      folder: f.name,
+      body: { parent },
+      done: parent
+        ? t("mail.folders.toasts.movedInto", { name: folderLeaf(f), parent: labelOf(parent) })
+        : t("mail.folders.toasts.movedTopLevel", { name: folderLeaf(f) }),
+    })
   }
 
   function submit(a: FolderAction, v: { name?: string; parent?: string; moveTo?: string }) {
     setError("")
     const f = a.folder
     const name = f?.name ?? ""
-    if (a.kind === "create") manage.mutate({ method: "POST", body: { name: v.name, parent: f?.name }, done: `Created ${v.name?.trim()}` })
-    if (a.kind === "rename") manage.mutate({ method: "PATCH", folder: name, body: { name: v.name }, done: `Renamed to ${v.name?.trim()}` })
+    if (a.kind === "create") manage.mutate({ method: "POST", body: { name: v.name, parent: f?.name }, done: t("mail.folders.toasts.created", { name: v.name?.trim() ?? "" }) })
+    if (a.kind === "rename") manage.mutate({ method: "PATCH", folder: name, body: { name: v.name }, done: t("mail.folders.toasts.renamed", { name: v.name?.trim() ?? "" }) })
     if (a.kind === "move" && f) move(f, v.parent ?? "")
-    if (a.kind === "delete" && f) manage.mutate({ method: "DELETE", folder: name, moveTo: v.moveTo, done: `Deleted ${folderLeaf(f)}` })
-    if (a.kind === "empty" && f) manage.mutate({ method: "POST", path: "/empty", folder: name, done: `Emptied ${folderLabel(f)}` })
+    if (a.kind === "delete" && f) manage.mutate({ method: "DELETE", folder: name, moveTo: v.moveTo, done: t("mail.folders.toasts.deleted", { name: folderLeaf(f) }) })
+    if (a.kind === "empty" && f) manage.mutate({ method: "POST", path: "/empty", folder: name, done: t("mail.folders.toasts.emptied", { name: folderLabel(f) }) })
   }
 
   function start(next: FolderAction) {
@@ -265,7 +275,7 @@ function MailboxFolders({
             icon={folderIcons[f.specialUse]}
             label={label}
             count={f.unread}
-            countLabel="unread"
+            countLabel={t("mail.folders.unread")}
             active={folderActive && !scheduledActive && !quarantineActive && f.name === folder}
             depth={depth}
             className={cn(editable && "max-md:pr-14")}
@@ -284,18 +294,18 @@ function MailboxFolders({
               open={menuFor === f.name}
               onOpenChange={(next) => setMenuFor(next ? f.name : null)}
               onAction={(kind) => start({ kind, folder: f })}
-              onMarkRead={() => manage.mutate({ method: "POST", path: "/mark-read", folder: f.name, done: `Marked everything in ${label} as read` })}
+              onMarkRead={() => manage.mutate({ method: "POST", path: "/mark-read", folder: f.name, done: t("mail.folders.toasts.markedAllRead", { name: label }) })}
               onRecover={() => setRecovering(true)}
             />
           )}
         </div>
       ))}
       {scheduled > 0 && onScheduled && (
-        <FolderButton icon={CalendarClock} label="Scheduled" count={scheduled} countLabel="scheduled" active={scheduledActive} onClick={onScheduled} />
+        <FolderButton icon={CalendarClock} label={t("mail.folders.scheduled")} count={scheduled} countLabel={t("mail.folders.scheduledCount")} active={scheduledActive} onClick={onScheduled} />
       )}
       {onQuarantine && <FolderButton icon={ShieldAlert} label="Quarantine" count={quarantine} countLabel="held" active={quarantineActive} onClick={onQuarantine} />}
       {editable && (
-        <FolderButton icon={FolderPlus} label="New folder" count={0} countLabel="" active={false} className="text-fg-tertiary" onClick={() => start({ kind: "create" })} />
+        <FolderButton icon={FolderPlus} label={t("mail.folders.newFolder")} count={0} countLabel="" active={false} className="text-fg-tertiary" onClick={() => start({ kind: "create" })} />
       )}
       <MailOrganize mailbox={mailbox} active={browse} onLabel={(id) => onBrowseLabel?.(id)} onSearch={(id) => onBrowseSearch?.(id)} />
       {action && (
@@ -353,6 +363,7 @@ export function FolderPane({
   onBrowseLabel?: (mailboxId: string, id: string) => void
   onBrowseSearch?: (mailboxId: string, id: string) => void
 }) {
+  const { t } = useI18n()
   const userId = useSession().data?.user.id
   const readOnly = (shared.find((t) => t.mailbox.id === active.mailboxId) ?? primary)?.mailbox.access === "read"
   const [newslettersOpen, setNewslettersOpen] = useState(false)
@@ -381,18 +392,18 @@ export function FolderPane({
   }
 
   return (
-    <aside aria-label="Folders" className={cn("min-h-0 flex-col gap-6 border-r border-border bg-card p-4", className)}>
+    <aside aria-label={t("mail.folders.sidebarLabel")} className={cn("min-h-0 flex-col gap-6 border-r border-border bg-card p-4", className)}>
       {primary &&
         (own.length > 1 ? (
           <Select value={primary.mailbox.id} onValueChange={onPrimaryChange}>
-            <SelectTrigger aria-label="Mailbox" className="w-full">
+            <SelectTrigger aria-label={t("mail.folders.mailbox")} className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {own.map((m) => (
                 <SelectItem key={m.id} value={m.id}>
                   <span className="truncate">{m.address}</span>
-                  {userId && m.ownerUserId !== userId && <span className="text-xs text-fg-tertiary">Delegated</span>}
+                  {userId && m.ownerUserId !== userId && <span className="text-xs text-fg-tertiary">{t("mail.folders.delegated")}</span>}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -403,10 +414,10 @@ export function FolderPane({
       {onCompose ? (
         <Button onClick={onCompose} className="w-full">
           <PenSquare aria-hidden />
-          New message
+          {t("mail.folders.newMessage")}
         </Button>
       ) : (
-        readOnly && <p className="rounded-lg bg-muted px-3 py-2 text-sm text-fg-secondary">Read only. You can read this mailbox but not send, move, or delete.</p>
+        readOnly && <p className="rounded-lg bg-muted px-3 py-2 text-sm text-fg-secondary">{t("mail.folders.readOnlyNotice")}</p>
       )}
       {active.mailboxId && (
         <Button variant="quiet" className="w-full" onClick={() => setNewslettersOpen(true)}>
@@ -415,25 +426,25 @@ export function FolderPane({
         </Button>
       )}
       <NewslettersDialog open={newslettersOpen} onOpenChange={setNewslettersOpen} mailboxId={active.mailboxId} readOnly={readOnly} />
-      <nav aria-label="Mail folders" className="-mx-2 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2">
+      <nav aria-label={t("mail.folders.navLabel")} className="-mx-2 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2">
         {primary && tree(primary)}
-        {shared.map((t) => {
-          const unread = t.folders.data?.reduce((n, f) => n + f.unread, 0) ?? 0
+        {shared.map((item) => {
+          const unread = item.folders.data?.reduce((n, f) => n + f.unread, 0) ?? 0
           return (
-            <section key={t.mailbox.id} aria-labelledby={`mailbox-${t.mailbox.id}`} className="flex flex-col gap-2">
+            <section key={item.mailbox.id} aria-labelledby={`mailbox-${item.mailbox.id}`} className="flex flex-col gap-2">
               <div className="flex items-start gap-3 px-3">
-                <h2 id={`mailbox-${t.mailbox.id}`} className="flex min-w-0 flex-1 flex-col text-label text-fg-tertiary">
-                  <span className="truncate">{t.mailbox.displayName || t.mailbox.address}</span>
-                  {t.mailbox.displayName && <span className="truncate font-normal">{t.mailbox.address}</span>}
+                <h2 id={`mailbox-${item.mailbox.id}`} className="flex min-w-0 flex-1 flex-col text-label text-fg-tertiary">
+                  <span className="truncate">{item.mailbox.displayName || item.mailbox.address}</span>
+                  {item.mailbox.displayName && <span className="truncate font-normal">{item.mailbox.address}</span>}
                 </h2>
                 {unread > 0 && (
                   <span className="text-xs font-semibold tabular-nums text-foreground">
                     {unread}
-                    <span className="sr-only"> unread</span>
+                    <span className="sr-only"> {t("mail.folders.unread")}</span>
                   </span>
                 )}
               </div>
-              {tree(t)}
+              {tree(item)}
             </section>
           )
         })}

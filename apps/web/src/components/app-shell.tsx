@@ -1,12 +1,13 @@
 "use client"
 
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { BookUser, CalendarDays, Gavel, LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
 import { cn } from "cn"
+import { toast } from "sonner"
 
 import { Avatar } from "@/components/avatar"
 import { BrandMark } from "@/components/branding"
@@ -27,21 +28,23 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { canAdminister, canInvestigate, useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { lockKeys, rememberUser } from "@/lib/crypto/session"
-import type { User } from "@/lib/types"
+import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
+import type { Session, User } from "@/lib/types"
 
-const nav: { href: string; label: string; icon: LucideIcon; admin?: boolean; compliance?: boolean }[] = [
-  { href: "/mail", label: "Mail", icon: Mail },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/contacts", label: "Contacts", icon: BookUser },
-  { href: "/settings", label: "Settings", icon: Settings },
-  { href: "/admin", label: "Administration", icon: ShieldCheck, admin: true },
-  { href: "/compliance", label: "Compliance", icon: Gavel, compliance: true },
+const nav: { href: string; labelKey: string; icon: LucideIcon; admin?: boolean; compliance?: boolean }[] = [
+  { href: "/mail", labelKey: "nav.mail", icon: Mail },
+  { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays },
+  { href: "/contacts", labelKey: "nav.contacts", icon: BookUser },
+  { href: "/settings", labelKey: "nav.settings", icon: Settings },
+  { href: "/admin", labelKey: "nav.administration", icon: ShieldCheck, admin: true },
+  { href: "/compliance", labelKey: "nav.compliance", icon: Gavel, compliance: true },
 ]
 
 const railClass =
   "order-last flex h-16 shrink-0 items-stretch justify-around border-t border-border bg-card pb-[env(safe-area-inset-bottom)] md:order-first md:h-full md:w-24 md:flex-col md:justify-start md:gap-1 md:border-t-0 md:border-r md:py-4"
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n()
   const session = useSession()
   const pathname = usePathname()
   useEffect(() => {
@@ -66,9 +69,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         href="#main"
         className="sr-only z-50 rounded-lg bg-ember px-4 py-2 font-semibold text-ink focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
       >
-        Skip to content
+        {t("nav.skipToContent")}
       </a>
-      <nav aria-label="Primary" className={railClass}>
+      <nav aria-label={t("nav.primary")} className={railClass}>
         <BrandMark />
         {session.isPending
           ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="m-2 h-12 md:mx-4" />)
@@ -86,7 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   )}
                 >
                   <item.icon aria-hidden className={cn("size-5", active && "text-ember")} />
-                  <span className="max-w-full truncate">{item.label}</span>
+                  <span className="max-w-full truncate">{t(item.labelKey)}</span>
                 </Link>
               )
             })}
@@ -118,7 +121,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function UserMenu({ user }: { user: User }) {
+  const { t, userLocale, automaticLocale } = useI18n()
   const { theme, setTheme } = useTheme()
+  const client = useQueryClient()
+  const updateLocale = useMutation({
+    mutationFn: (locale: string) => api<User>("/me/profile", { method: "PUT", body: { locale } }),
+    onSuccess: (updated) => {
+      client.setQueryData<Session>(["session"], (prev) => (prev ? { ...prev, user: updated } : prev))
+      toast.success(t("nav.languageSaved"))
+    },
+  })
   const logout = useMutation({
     mutationFn: () => api<{ redirect?: string }>("/auth/logout", { method: "POST" }),
     onSuccess: (data) => {
@@ -130,7 +142,7 @@ function UserMenu({ user }: { user: User }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="Account menu"
+        aria-label={t("nav.accountMenu")}
         className="flex size-11 cursor-pointer items-center justify-center rounded-full"
       >
         <Avatar address={user.email} name={user.displayName} />
@@ -141,10 +153,25 @@ function UserMenu({ user }: { user: User }) {
           <span className="truncate text-sm font-normal text-fg-tertiary">{user.email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Theme</DropdownMenuLabel>
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">{t("nav.theme")}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
-          <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">{t("nav.dark")}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="light">{t("nav.light")}</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">{t("nav.language")}</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={userLocale || "auto"}
+          onValueChange={(value) => updateLocale.mutate(value === "auto" ? "" : value)}
+        >
+          <DropdownMenuRadioItem value="auto">
+            {t("common.automaticWithLocale", { language: LOCALE_LABELS[automaticLocale] })}
+          </DropdownMenuRadioItem>
+          {SUPPORTED_LOCALES.map((code) => (
+            <DropdownMenuRadioItem key={code} value={code}>
+              {LOCALE_LABELS[code]}
+            </DropdownMenuRadioItem>
+          ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
@@ -155,7 +182,7 @@ function UserMenu({ user }: { user: User }) {
           }}
         >
           <LogOut aria-hidden />
-          {logout.isPending ? "Signing out…" : "Sign out"}
+          {logout.isPending ? t("nav.signingOut") : t("nav.signOut")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

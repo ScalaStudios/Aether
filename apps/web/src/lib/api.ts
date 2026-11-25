@@ -1,3 +1,5 @@
+import { getActiveLocale, tActive } from "@/lib/i18n"
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -30,7 +32,7 @@ export async function api<T = void>(
   { method = "GET", body, query, blob }: { method?: string; body?: unknown; query?: Query; blob?: boolean } = {}
 ): Promise<T> {
   const raw = body instanceof Blob
-  const headers: Record<string, string> = { Accept: "application/json" }
+  const headers: Record<string, string> = { Accept: "application/json", "Accept-Language": getActiveLocale() }
   if (body !== undefined) headers["Content-Type"] = raw ? body.type || "application/octet-stream" : "application/json"
   if (method !== "GET") headers["X-CSRF-Token"] = csrfToken
 
@@ -43,7 +45,7 @@ export async function api<T = void>(
       credentials: "same-origin",
     })
   } catch {
-    throw new ApiError(0, "network", "Aether could not reach the server. Check your connection and try again.")
+    throw new ApiError(0, "network", tActive("common.networkError"))
   }
 
   if (res.status === 401 && path !== "/auth/login" && window.location.pathname !== "/login") {
@@ -56,7 +58,7 @@ export async function api<T = void>(
     throw new ApiError(
       res.status,
       data?.error?.code ?? `http_${res.status}`,
-      data?.error?.message ?? `The server responded with status ${res.status}. Try again in a moment.`
+      data?.error?.message ?? tActive("common.httpError", { status: res.status })
     )
   }
 
@@ -66,5 +68,5 @@ export async function api<T = void>(
 }
 
 export function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong. Try again."
+  return error instanceof Error ? error.message : tActive("common.genericError")
 }

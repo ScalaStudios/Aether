@@ -14,6 +14,7 @@ import (
 	"github.com/emersion/go-webdav"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/scalastudios/aether/internal/i18n"
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 	"github.com/scalastudios/aether/internal/secrets"
 )
@@ -22,7 +23,7 @@ const maxAttendees = 100
 
 var partStats = map[string]string{"accepted": "ACCEPTED", "tentative": "TENTATIVE", "declined": "DECLINED"}
 
-var replyVerbs = map[string]string{"ACCEPTED": "Accepted", "TENTATIVE": "Tentatively accepted", "DECLINED": "Declined"}
+var replyKinds = map[string]string{"ACCEPTED": "accepted", "TENTATIVE": "tentative", "DECLINED": "declined"}
 
 type eventAttendee struct {
 	Name    string `json:"name,omitempty"`
@@ -132,18 +133,18 @@ func (s *Server) organizerMailbox(ctx context.Context, user User) (*ownedMailbox
 	return m, err
 }
 
-func describeEvent(comp *ical.Component) string {
+func describeEvent(comp *ical.Component, locale string) string {
 	ev, _, _ := eventFromComponent("", comp)
-	when := ev.Start.Format("Monday, 2 January 2006 15:04") + " – " + ev.End.Format("15:04 MST")
+	when := i18n.FormatDateTimeRange(locale, ev.Start, ev.End)
 	if ev.AllDay {
-		when = ev.Start.Format("Monday, 2 January 2006")
+		when = i18n.FormatDate(locale, ev.Start)
 	}
-	lines := []string{ev.Title, "", "When: " + when}
+	lines := []string{ev.Title, "", i18n.T(locale, "email.invitation.when", map[string]string{"when": when})}
 	if ev.Location != "" {
-		lines = append(lines, "Where: "+ev.Location)
+		lines = append(lines, i18n.T(locale, "email.invitation.where", map[string]string{"where": ev.Location}))
 	}
 	if org := eventOrganizer(comp); org.Address != "" {
-		lines = append(lines, "Organizer: "+firstNonEmpty(org.Name, org.Address))
+		lines = append(lines, i18n.T(locale, "email.invitation.organizer", map[string]string{"organizer": firstNonEmpty(org.Name, org.Address)}))
 	}
 	if ev.Description != "" {
 		lines = append(lines, "", ev.Description)
@@ -154,7 +155,7 @@ func describeEvent(comp *ical.Component) string {
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
-func (s *Server) sendITIP(ctx context.Context, from *ownedMailbox, sender *mailpkg.Address, to []mailpkg.Address, subject, method string, comps ...*ical.Component) ([]bookingOutcome, error) {
+func (s *Server) sendITIP(ctx context.Context, from *ownedMailbox, sender *mailpkg.Address, to []mailpkg.Address, kind, title, method string, comps ...*ical.Component) ([]bookingOutcome, error) {
 	to, outcomes, err := s.deliverToResources(ctx, method, to, comps)
 	if err != nil || len(to) == 0 {
 		return outcomes, err
@@ -166,19 +167,34 @@ func (s *Server) sendITIP(ctx context.Context, from *ownedMailbox, sender *mailp
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
 		return outcomes, err
 	}
-	out := &mailpkg.Outgoing{
-		From:     mailpkg.Address{Name: from.DisplayName, Address: from.Address},
-		Sender:   sender,
-		To:       to,
-		Subject:  subject,
-		Text:     describeEvent(comps[0]),
-		Calendar: &mailpkg.CalendarPart{Method: method, Data: buf.String()},
+	calData := buf.String()
+	var localeOrder []string
+	grouped := map[string][]mailpkg.Address{}
+	for _, rcpt := range to {
+		loc := s.recipientLocale(ctx, rcpt.Address, from.OrgID)
+		if _, seen := grouped[loc]; !seen {
+			localeOrder = append(localeOrder, loc)
+		}
+		grouped[loc] = append(grouped[loc], rcpt)
 	}
-	raw, _, err := out.Build(s.cfg.MailHostname)
-	if err != nil {
-		return outcomes, err
+	for _, loc := range localeOrder {
+		out := &mailpkg.Outgoing{
+			From:     mailpkg.Address{Name: from.DisplayName, Address: from.Address},
+			Sender:   sender,
+			To:       grouped[loc],
+			Subject:  i18n.T(loc, "email.invitation.subject."+kind, map[string]string{"title": title}),
+			Text:     describeEvent(comps[0], loc),
+			Calendar: &mailpkg.CalendarPart{Method: method, Data: calData},
+		}
+		raw, _, err := out.Build(s.cfg.MailHostname)
+		if err != nil {
+			return outcomes, err
+		}
+		if err := s.mail.Send(from.Address, from.Address, out.Recipients(), raw); err != nil {
+			return outcomes, err
+		}
 	}
-	return outcomes, s.mail.Send(from.Address, from.Address, out.Recipients(), raw)
+	return outcomes, nil
 }
 
 func cancelledCopy(comp *ical.Component, attendees []mailpkg.Address, sequence int) *ical.Component {
@@ -431,12 +447,12 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 		if !m.SendAs {
 			onBehalf = &mailpkg.Address{Name: p.User.DisplayName, Address: p.User.Email}
 		}
-		if _, err := s.sendITIP(ctx, m, onBehalf, []mailpkg.Address{organizer}, replyVerbs[partStat]+": "+title, "REPLY", replyCopy(comp, me, partStat)); err != nil {
+		if _, err := s.sendITIP(ctx, m, onBehalf, []mailpkg.Address{organizer}, replyKinds[partStat], title, "REPLY", replyCopy(comp, me, partStat)); err != nil {
 			s.log.Warn("invitation reply rejected", "mailbox", m.ID, "err", err)
 			writeError(w, http.StatusBadGateway, "send_failed", "Your calendar was updated, but the reply to the organizer could not be sent: "+err.Error())
 			return
 		}
-		s.recordAccess(r, p, m, sendAction(m), "", []accessItem{{Subject: replyVerbs[partStat] + ": " + title}}, map[string]any{"invitationReply": true})
+		s.recordAccess(r, p, m, sendAction(m), "", []accessItem{{Subject: i18n.T("en", "email.invitation.subject."+replyKinds[partStat], map[string]string{"title": title})}}, map[string]any{"invitationReply": true})
 	case method == "REPLY" && in.Response == "apply":
 		if stored == nil {
 			writeError(w, http.StatusNotFound, "not_found", "The event this reply is about is no longer in your calendar.")
@@ -503,7 +519,7 @@ func (s *Server) notifyDeletedEvent(ctx context.Context, user User, data string)
 		if status := attendeeStatus(comp, me); status == "" || status == "declined" {
 			return nil
 		}
-		_, err := s.sendITIP(ctx, m, nil, []mailpkg.Address{organizer}, "Declined: "+title, "REPLY", replyCopy(comp, mailpkg.Address{Name: m.DisplayName, Address: me}, "DECLINED"))
+		_, err := s.sendITIP(ctx, m, nil, []mailpkg.Address{organizer}, "declined", title, "REPLY", replyCopy(comp, mailpkg.Address{Name: m.DisplayName, Address: me}, "DECLINED"))
 		return err
 	}
 	var attendees []mailpkg.Address
@@ -512,6 +528,6 @@ func (s *Server) notifyDeletedEvent(ctx context.Context, user User, data string)
 			attendees = append(attendees, mailpkg.Address{Name: a.Name, Address: a.Address})
 		}
 	}
-	_, err = s.sendITIP(ctx, m, nil, attendees, "Cancelled: "+title, "CANCEL", cancelledCopy(comp, attendees, eventSequence(comp)+1))
+	_, err = s.sendITIP(ctx, m, nil, attendees, "cancel", title, "CANCEL", cancelledCopy(comp, attendees, eventSequence(comp)+1))
 	return err
 }

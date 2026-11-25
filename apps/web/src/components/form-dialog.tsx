@@ -4,6 +4,7 @@ import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useI18n } from "@/lib/i18n"
 
 export function FormDialog({
   open,
@@ -11,7 +12,7 @@ export function FormDialog({
   title,
   description,
   submitLabel,
-  cancelLabel = "Cancel",
+  cancelLabel,
   pending,
   onSubmit,
   wide,
@@ -32,6 +33,8 @@ export function FormDialog({
   leading?: React.ReactNode
   children: React.ReactNode
 }) {
+  const { t } = useI18n()
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={cn(wide && "sm:max-w-[800px]")}>
@@ -47,7 +50,7 @@ export function FormDialog({
               <>
                 <DialogClose asChild>
                   <Button type="button" variant="secondary">
-                    {cancelLabel}
+                    {cancelLabel ?? t("common.cancel")}
                   </Button>
                 </DialogClose>
                 <Button type="submit" loading={pending}>

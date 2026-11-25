@@ -34,6 +34,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Button } from "@/components/ui/button"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatAddress, formatBytes, formatDateTime, formatListDate } from "@/lib/format"
+import { useI18n } from "@/lib/i18n"
 import { folderIcons, folderLabel, messageDocument, openUnsubscribeLink, type ComposeMode } from "@/lib/mail"
 import { foldersQuery, labelsQuery } from "@/lib/queries"
 import type { Address, Folder, Label, Mailbox, Message, SenderEntry, UnsubscribeResult } from "@/lib/types"
@@ -87,6 +88,7 @@ export function AddressLine({ label, addresses }: { label: string; addresses: Ad
 function MessageBody({ message: m, mailboxId, folder }: { message: Message; mailboxId: string; folder: string }) {
   const secure = !!(m.protection?.encrypted || m.protection?.signed)
   const attachments = m.attachments.filter((a) => !/pkcs7-signature|pgp-signature/i.test(a.contentType))
+  const { t } = useI18n()
   return (
     <>
             {folder === "Drafts" && m.fileLinks && m.fileLinks.length > 0 && (
@@ -102,7 +104,7 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
         </ul>
       )}
             {!m.protection?.encrypted && attachments.length > 0 && (
-        <ul aria-label="Attachments" className="flex flex-wrap gap-2">
+        <ul aria-label={t("mail.reading.attachments")} className="flex flex-wrap gap-2">
           {attachments.map((a) => (
             <li key={a.part}>
               <a
@@ -111,7 +113,7 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
                 className="flex min-h-10 max-w-[280px] items-center gap-2 rounded-lg border border-strong px-3 py-2 text-sm transition-colors duration-160 hover:bg-muted"
               >
                 <Download aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
-                <span className="truncate">{a.filename || "Attachment"}</span>
+                <span className="truncate">{a.filename || t("mail.reading.attachmentFallback")}</span>
                 <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(a.size)}</span>
               </a>
             </li>
@@ -123,7 +125,7 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
         <SecureMessage message={m} mailboxId={mailboxId} folder={folder} />
       ) : m.html ? (
         <iframe
-          title="Message body"
+          title={t("mail.reading.messageBody")}
           sandbox="allow-popups allow-popups-to-escape-sandbox"
           srcDoc={messageDocument(m.html, m.remoteImages?.status === "proxied")}
           className="min-h-[400px] w-full flex-1 rounded-xl border border-border bg-white"
@@ -143,14 +145,15 @@ function messageQuery(mailboxId: string, folder: string, uid: number) {
 }
 
 function Conversation({ message, earlier, mailboxId, folder, readOnly }: { message: Message; earlier: number[]; mailboxId: string; folder: string; readOnly?: boolean }) {
+  const { t } = useI18n()
   const items = [...earlier.map((uid) => ({ folder, uid })), ...(message.related ?? [])]
   const queries = useQueries({ queries: items.map((i) => messageQuery(mailboxId, i.folder, i.uid)) })
   if (items.length === 0) return null
   const order = items.map((item, i) => ({ item, query: queries[i] }))
   order.sort((a, b) => (b.query.data ? Date.parse(b.query.data.date) : 0) - (a.query.data ? Date.parse(a.query.data.date) : 0))
   return (
-    <section aria-label="More in this conversation" className="flex flex-col gap-2 border-t border-border pt-4">
-      <h3 className="text-label text-fg-tertiary">More in this conversation</h3>
+    <section aria-label={t("mail.reading.moreInConversation")} className="flex flex-col gap-2 border-t border-border pt-4">
+      <h3 className="text-label text-fg-tertiary">{t("mail.reading.moreInConversation")}</h3>
       {order.map(({ item, query }) => (
         <EarlierMessage key={`${item.folder}-${item.uid}`} query={query} mailboxId={mailboxId} folder={item.folder} showFolder={item.folder !== folder} readOnly={readOnly} />
       ))}
@@ -159,6 +162,7 @@ function Conversation({ message, earlier, mailboxId, folder, readOnly }: { messa
 }
 
 function EarlierMessage({ query, mailboxId, folder, showFolder, readOnly }: { query: UseQueryResult<Message>; mailboxId: string; folder: string; showFolder: boolean; readOnly?: boolean }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const m = query.data
   return (
@@ -173,15 +177,15 @@ function EarlierMessage({ query, mailboxId, folder, showFolder, readOnly }: { qu
         {m ? (
           <>
             {m.from[0] && <Avatar address={m.from[0].address} name={m.from[0].name} />}
-            <span className="min-w-0 flex-1 truncate font-semibold">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</span>
-            {showFolder && <span className="shrink-0 text-sm text-fg-tertiary">{folder === "INBOX" ? "Inbox" : folder}</span>}
+            <span className="min-w-0 flex-1 truncate font-semibold">{m.from.map(formatAddress).join(", ") || t("mail.unknownSender")}</span>
+            {showFolder && <span className="shrink-0 text-sm text-fg-tertiary">{folder === "INBOX" ? t("mail.folders.inbox") : folder}</span>}
             <time dateTime={m.date} className="shrink-0 text-sm text-fg-tertiary">
               {formatDateTime(m.date)}
             </time>
             <ChevronDown aria-hidden className={cn("size-4 shrink-0 text-fg-tertiary transition-transform duration-160", open && "rotate-180")} />
           </>
         ) : query.isError ? (
-          <span className="text-sm text-fg-tertiary">This message could not be loaded.</span>
+          <span className="text-sm text-fg-tertiary">{t("mail.reading.earlierLoadError")}</span>
         ) : (
           <Skeleton className="h-4 w-1/2" />
         )}
@@ -197,16 +201,17 @@ function EarlierMessage({ query, mailboxId, folder, showFolder, readOnly }: { qu
 }
 
 function MailboxFolders({ mailboxId, exclude, onPick }: { mailboxId: string; exclude?: string; onPick: (folder: Folder) => void }) {
+  const { t } = useI18n()
   const folders = useQuery(foldersQuery(mailboxId))
   if (folders.isPending) {
     return (
       <DropdownMenuItem disabled>
         <Spinner />
-        Loading folders…
+        {t("mail.folders.loadingFolders")}
       </DropdownMenuItem>
     )
   }
-  if (folders.isError) return <DropdownMenuItem disabled>The folders could not be loaded.</DropdownMenuItem>
+  if (folders.isError) return <DropdownMenuItem disabled>{t("mail.folders.foldersLoadError")}</DropdownMenuItem>
   return folders.data
     .filter((f) => f.name !== exclude)
     .map((f) => {
@@ -239,6 +244,7 @@ function FolderPicker({
   disabled: boolean
   onPick: (folder: Folder, mailbox?: Mailbox) => void
 }) {
+  const { t } = useI18n()
   return (
     <DropdownMenu>
       <Tooltip>
@@ -257,7 +263,7 @@ function FolderPicker({
         {mailboxes.length > 0 && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Other mailboxes</DropdownMenuLabel>
+            <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">{t("mail.folders.otherMailboxes")}</DropdownMenuLabel>
             {mailboxes.map((m) => (
               <DropdownMenuSub key={m.id}>
                 <DropdownMenuSubTrigger>
@@ -361,10 +367,12 @@ export function ReadingPane({
 }) {
   const labels = useQuery({ ...labelsQuery(mailboxId), enabled: selected })
   const [creatingLabel, setCreatingLabel] = useState(false)
+  const { t } = useI18n()
+
   if (!selected) {
     return (
-      <section aria-label="Reading pane" className={cn("items-center justify-center", className)}>
-        <EmptyState icon={Mail} title="No message selected" description="Choose a message from the list to read it here. Press ? to see keyboard shortcuts." />
+      <section aria-label={t("mail.reading.sectionLabel")} className={cn("items-center justify-center", className)}>
+        <EmptyState icon={Mail} title={t("mail.reading.noneSelectedTitle")} description={t("mail.reading.noneSelectedDescription")} />
       </section>
     )
   }
@@ -372,20 +380,20 @@ export function ReadingPane({
   const m = query.data
 
   return (
-    <section aria-label="Reading pane" className={cn("min-h-0 flex-col", className)}>
+    <section aria-label={t("mail.reading.sectionLabel")} className={cn("min-h-0 flex-col", className)}>
       <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-4 py-2">
-        <IconButton label="Back to messages" className="md:hidden" onClick={onBack}>
+        <IconButton label={t("mail.reading.backToMessages")} className="md:hidden" onClick={onBack}>
           <ArrowLeft />
         </IconButton>
         {onReply && (
           <>
-            <IconButton label="Reply" disabled={!m} onClick={() => onReply("reply")}>
+            <IconButton label={t("mail.reading.reply")} disabled={!m} onClick={() => onReply("reply")}>
               <Reply />
             </IconButton>
-            <IconButton label="Reply all" disabled={!m} onClick={() => onReply("replyAll")}>
+            <IconButton label={t("mail.reading.replyAll")} disabled={!m} onClick={() => onReply("replyAll")}>
               <ReplyAll />
             </IconButton>
-            <IconButton label="Forward" disabled={!m} onClick={() => onReply("forward")}>
+            <IconButton label={t("mail.reading.forward")} disabled={!m} onClick={() => onReply("forward")}>
               <Forward />
             </IconButton>
           </>
@@ -393,28 +401,28 @@ export function ReadingPane({
         {!readOnly && (
           <>
             {onReply && <span className="mx-1 h-6 w-px bg-border" />}
-            <IconButton label={m?.seen ? "Mark as unread" : "Mark as read"} disabled={!m} onClick={() => m && onFlags({ seen: !m.seen })}>
+            <IconButton label={m?.seen ? t("mail.reading.markUnread") : t("mail.reading.markRead")} disabled={!m} onClick={() => m && onFlags({ seen: !m.seen })}>
               {m?.seen ? <Mail /> : <MailOpen />}
             </IconButton>
-            <IconButton label={m?.flagged ? "Remove flag" : "Flag"} aria-pressed={m?.flagged ?? false} disabled={!m} onClick={() => m && onFlags({ flagged: !m.flagged })}>
+            <IconButton label={m?.flagged ? t("mail.reading.removeFlag") : t("mail.reading.flag")} aria-pressed={m?.flagged ?? false} disabled={!m} onClick={() => m && onFlags({ flagged: !m.flagged })}>
               <Flag className={cn(m?.flagged && "fill-current text-ember")} />
             </IconButton>
             {onLabels && (
               <LabelMenu labels={labels.data ?? []} keywords={m?.keywords} disabled={!m} onToggle={onLabels} onCreate={() => setCreatingLabel(true)} />
             )}
-            <FolderPicker label="Move to folder" title="Move to" mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onMove}>
+            <FolderPicker label={t("mail.reading.moveToFolder")} title={t("mail.reading.moveToTitle")} mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onMove}>
               <FolderInput />
             </FolderPicker>
-            <FolderPicker label="Copy to folder" title="Copy to" mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onCopy}>
+            <FolderPicker label={t("mail.reading.copyToFolder")} title={t("mail.reading.copyToTitle")} mailboxId={mailboxId} folder={folder} mailboxes={mailboxes} disabled={!m} onPick={onCopy}>
               <Copy />
             </FolderPicker>
             {onUnsnooze ? (
-              <IconButton label="Unsnooze" disabled={!m || deleting} onClick={onUnsnooze}>
+              <IconButton label={t("mail.reading.unsnooze")} disabled={!m || deleting} onClick={onUnsnooze}>
                 <AlarmClockOff />
               </IconButton>
             ) : (
-              <LaterMenu label="Snooze" submitLabel="Snooze" laterToday disabled={!m || deleting} onPick={onSnooze}>
-                <Button variant="quiet" size="icon" aria-label="Snooze">
+              <LaterMenu label={t("mail.reading.snooze")} submitLabel={t("mail.reading.snooze")} laterToday disabled={!m || deleting} onPick={onSnooze}>
+                <Button variant="quiet" size="icon" aria-label={t("mail.reading.snooze")}>
                   <AlarmClock />
                 </Button>
               </LaterMenu>
@@ -425,14 +433,14 @@ export function ReadingPane({
                 {junk ? <ShieldCheck /> : <OctagonAlert />}
               </IconButton>
             )}
-            <IconButton label="Delete" disabled={!m || deleting} onClick={onDelete}>
+            <IconButton label={t("mail.reading.delete")} disabled={!m || deleting} onClick={onDelete}>
               <Trash2 />
             </IconButton>
           </>
         )}
       </div>
       {query.isPending ? (
-        <div aria-busy aria-label="Loading message" className="flex flex-col gap-4 p-6">
+        <div aria-busy aria-label={t("mail.reading.loadingMessage")} className="flex flex-col gap-4 p-6">
           <Skeleton className="h-7 w-2/3" />
           <Skeleton className="h-4 w-1/2" />
           <Skeleton className="h-4 w-1/3" />
@@ -444,7 +452,7 @@ export function ReadingPane({
         m && (
           <article key={m.uid} className="animate-content flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
             <header className="flex flex-col gap-3">
-              <h2 className="text-h3 break-words">{m.subject || "(no subject)"}</h2>
+              <h2 className="text-h3 break-words">{m.subject || t("mail.noSubject")}</h2>
               {(placedIn || !!m.keywords?.length || !!m.flagColor) && (
                 <div className="flex flex-wrap items-center gap-2">
                   {placedIn && <p className="text-sm text-fg-tertiary">In {placedIn}</p>}
@@ -455,7 +463,7 @@ export function ReadingPane({
                 {m.from[0] && <Avatar address={m.from[0].address} name={m.from[0].name} className="size-10 text-sm" />}
                 <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <p className="font-semibold break-all">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</p>
+                    <p className="font-semibold break-all">{m.from.map(formatAddress).join(", ") || t("mail.unknownSender")}</p>
                     {m.sender?.external && (
                       <StatusBadge tone="neutral" icon={Globe}>
                         External
@@ -468,8 +476,8 @@ export function ReadingPane({
                 </div>
               </div>
               <dl className="flex flex-col gap-1">
-                <AddressLine label="To" addresses={m.to} />
-                <AddressLine label="Cc" addresses={m.cc} />
+                <AddressLine label={t("mail.reading.to")} addresses={m.to} />
+                <AddressLine label={t("mail.reading.cc")} addresses={m.cc} />
               </dl>
               {m.sender && m.from[0] && <SenderVerification sender={m.sender} from={m.from[0]} />}
               <UnsubscribeBar key={`${folder}-${m.uid}`} message={m} mailboxId={mailboxId} folder={folder} readOnly={readOnly} />

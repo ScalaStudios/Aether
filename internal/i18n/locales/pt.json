@@ -1,0 +1,67 @@
+{
+  "dates": {
+    "dateFormat": "{weekday}, {day} de {month} de {year}",
+    "dateTimeRangeFormat": "{weekday}, {day} de {month} de {year}, {startTime} – {endTime} {zone}",
+    "weekdays": {
+      "0": "domingo",
+      "1": "segunda-feira",
+      "2": "terça-feira",
+      "3": "quarta-feira",
+      "4": "quinta-feira",
+      "5": "sexta-feira",
+      "6": "sábado"
+    },
+    "months": {
+      "1": "janeiro",
+      "2": "fevereiro",
+      "3": "março",
+      "4": "abril",
+      "5": "maio",
+      "6": "junho",
+      "7": "julho",
+      "8": "agosto",
+      "9": "setembro",
+      "10": "outubro",
+      "11": "novembro",
+      "12": "dezembro"
+    }
+  },
+  "email": {
+    "autoReply": {
+      "defaultSubject": "Resposta automática"
+    },
+    "invitation": {
+      "when": "Quando: {when}",
+      "where": "Onde: {where}",
+      "organizer": "Organizador: {organizer}",
+      "subject": {
+        "request": "Convite: {title}",
+        "update": "Convite atualizado: {title}",
+        "cancel": "Cancelado: {title}",
+        "accepted": "Aceito: {title}",
+        "tentative": "Aceito provisoriamente: {title}",
+        "declined": "Recusado: {title}"
+      }
+    },
+    "quotaWarning": {
+      "subject": "Armazenamento da caixa de correio quase cheio ({percent}%)",
+      "body": "Olá {name},\n\nA sua caixa de correio {address} está a usar {used} de {limit} ({percent}%).\n\nElimine mensagens desnecessárias ou esvazie o Lixo e o Spam para continuar a receber correio sem interrupções.\n\n— {organization}"
+    },
+    "digest": {
+      "subject": "Resumo de {organization} — {period}",
+      "body": "Olá {name},\n\nEis o seu resumo de {period}:\n\n{summary}\n\n— {organization}"
+    },
+    "notification": {
+      "subject": "{title}",
+      "body": "Olá {name},\n\n{message}\n\n— {organization}"
+    }
+  },
+  "appleProfile": {
+    "appPasswordName": "Perfil de dispositivo Apple",
+    "mail": "Correio",
+    "calendar": "Calendário",
+    "contacts": "Contactos",
+    "displayName": "Aether: {address}",
+    "description": "Correio, calendário e contactos para {address}. Remova este perfil para desligar o dispositivo; a palavra-passe de aplicação incluída também pode ser revogada no Aether."
+  }
+}

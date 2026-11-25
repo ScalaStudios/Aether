@@ -7,6 +7,7 @@ import { cn } from "cn"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { errorMessage } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 
 export function EmptyState({
   icon: Icon,
@@ -32,16 +33,17 @@ export function EmptyState({
 }
 
 export function ErrorState({ error, onRetry, className }: { error: unknown; onRetry?: () => void; className?: string }) {
+  const { t } = useI18n()
   return (
     <EmptyState
       icon={TriangleAlert}
-      title="This could not be loaded"
+      title={t("common.loadError")}
       description={errorMessage(error)}
       className={className}
       action={
         onRetry && (
           <Button variant="secondary" onClick={onRetry}>
-            Try again
+            {t("common.tryAgain")}
           </Button>
         )
       }
@@ -50,8 +52,9 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
 }
 
 export function RowsSkeleton({ rows = 3, className }: { rows?: number; className?: string }) {
+  const { t } = useI18n()
   return (
-    <div aria-busy aria-label="Loading" className={cn("flex flex-col gap-3", className)}>
+    <div aria-busy aria-label={t("common.loading")} className={cn("flex flex-col gap-3", className)}>
       {Array.from({ length: rows }, (_, i) => (
         <Skeleton key={i} className="h-12 w-full" />
       ))}

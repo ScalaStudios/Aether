@@ -1,3 +1,4 @@
+import { getActiveLocale, tActive } from "@/lib/i18n"
 import type { Address, AttendeeStatus } from "@/lib/types"
 
 export function formatAddress(a: Address) {
@@ -5,15 +6,19 @@ export function formatAddress(a: Address) {
 }
 
 export function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ["KB", "MB", "GB", "TB"]
+  if (bytes < 1024) return `${bytes} ${tActive("common.units.B")}`
+  const units = ["KB", "MB", "GB", "TB"] as const
   let value = bytes / 1024
   let unit = 0
   while (value >= 1024 && unit < units.length - 1) {
     value /= 1024
     unit++
   }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${tActive(`common.units.${units[unit]}`)}`
+}
+
+export function attendeeStatusLabel(status: AttendeeStatus) {
+  return tActive(`calendar.attendeeStatus.${status}`)
 }
 
 export const attendeeStatusLabels: Record<AttendeeStatus, string> = {
@@ -32,7 +37,7 @@ export function formatPercent(part: number, total: number) {
 }
 
 export function formatDateTime(iso: string) {
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso))
+  return new Intl.DateTimeFormat(getActiveLocale(), { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso))
 }
 
 const relativeUnits: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -49,16 +54,17 @@ export function formatRelative(iso: string) {
 }
 
 export function formatDate(iso: string) {
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" }).format(new Date(iso))
+  return new Intl.DateTimeFormat(getActiveLocale(), { day: "numeric", month: "long", year: "numeric" }).format(new Date(iso))
 }
 
 export function formatListDate(iso: string) {
   const date = new Date(iso)
   const now = new Date()
+  const locale = getActiveLocale()
   if (date.toDateString() === now.toDateString()) {
-    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date)
+    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date)
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     day: "numeric",
     month: "short",
     year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
@@ -70,13 +76,13 @@ export function formatPreciseDateTime(iso: string) {
 }
 
 export function formatShortDateTime(date: Date) {
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date)
+  return new Intl.DateTimeFormat(getActiveLocale(), { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date)
 }
 
 export function formatWhen(date: Date) {
-  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date)
+  const time = new Intl.DateTimeFormat(getActiveLocale(), { hour: "2-digit", minute: "2-digit" }).format(date)
   const days = Math.round((new Date(date).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000)
-  if (days === 0) return `Today, ${time}`
-  if (days === 1) return `Tomorrow, ${time}`
+  if (days === 0) return tActive("common.todayAt", { time })
+  if (days === 1) return tActive("common.tomorrowAt", { time })
   return formatShortDateTime(date)
 }

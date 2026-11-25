@@ -1,0 +1,67 @@
+{
+  "dates": {
+    "dateFormat": "{weekday}, {day} {month} {year}",
+    "dateTimeRangeFormat": "{weekday}, {day} {month} {year} {startTime} – {endTime} {zone}",
+    "weekdays": {
+      "0": "Sunday",
+      "1": "Monday",
+      "2": "Tuesday",
+      "3": "Wednesday",
+      "4": "Thursday",
+      "5": "Friday",
+      "6": "Saturday"
+    },
+    "months": {
+      "1": "January",
+      "2": "February",
+      "3": "March",
+      "4": "April",
+      "5": "May",
+      "6": "June",
+      "7": "July",
+      "8": "August",
+      "9": "September",
+      "10": "October",
+      "11": "November",
+      "12": "December"
+    }
+  },
+  "email": {
+    "autoReply": {
+      "defaultSubject": "Automatic reply"
+    },
+    "invitation": {
+      "when": "When: {when}",
+      "where": "Where: {where}",
+      "organizer": "Organizer: {organizer}",
+      "subject": {
+        "request": "Invitation: {title}",
+        "update": "Updated invitation: {title}",
+        "cancel": "Cancelled: {title}",
+        "accepted": "Accepted: {title}",
+        "tentative": "Tentatively accepted: {title}",
+        "declined": "Declined: {title}"
+      }
+    },
+    "quotaWarning": {
+      "subject": "Mailbox storage almost full ({percent}%)",
+      "body": "Hello {name},\n\nYour mailbox {address} is using {used} of {limit} ({percent}%).\n\nDelete unneeded messages or empty Trash and Junk to keep receiving mail without interruption.\n\n— {organization}"
+    },
+    "digest": {
+      "subject": "Your {organization} digest — {period}",
+      "body": "Hello {name},\n\nHere is your summary for {period}:\n\n{summary}\n\n— {organization}"
+    },
+    "notification": {
+      "subject": "{title}",
+      "body": "Hello {name},\n\n{message}\n\n— {organization}"
+    }
+  },
+  "appleProfile": {
+    "appPasswordName": "Apple device profile",
+    "mail": "Mail",
+    "calendar": "Calendar",
+    "contacts": "Contacts",
+    "displayName": "Aether: {address}",
+    "description": "Mail, calendar and contacts for {address}. Remove this profile to disconnect the device; the app password inside it can also be revoked in Aether."
+  }
+}

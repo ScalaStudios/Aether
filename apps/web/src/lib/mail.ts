@@ -1,6 +1,7 @@
 import { Archive, File, Folder as FolderIcon, Inbox, OctagonAlert, Send, Trash2, type LucideIcon } from "lucide-react"
 
 import { formatAddress, formatDateTime, plural } from "@/lib/format"
+import { tActive } from "@/lib/i18n"
 import type { Address, Attachment, FileLinkSummary, Folder, Label, LabelColor, Mailbox, MailboxRetention, Message, SpecialUse } from "@/lib/types"
 
 export const folderIcons: Record<SpecialUse, LucideIcon> = {
@@ -28,7 +29,9 @@ export function openUnsubscribeLink(url: string) {
 }
 
 export function folderLabel(folder: Pick<Folder, "name" | "specialUse">) {
-  return folder.specialUse === "inbox" ? "Inbox" : folder.name
+  if (folder.specialUse) return tActive(`mail.folders.${folder.specialUse}`)
+  if (folder.name === snoozedFolder) return tActive("mail.folders.snoozed")
+  return folder.name
 }
 
 export function retentionNotice(retention: MailboxRetention | undefined, folder: Pick<Folder, "name" | "specialUse">) {
@@ -183,9 +186,9 @@ export const defaultListView: ListView = { sort: "date", order: "desc", filters:
 
 export const dragTypes = { message: "application/x-aether-message", messageFolder: "application/x-aether-message-folder", folder: "application/x-aether-folder" }
 
-export function senderLabel(addresses: Address[], empty = "Unknown sender") {
+export function senderLabel(addresses: Address[], empty?: string) {
   const first = addresses[0]
-  if (!first) return empty
+  if (!first) return empty ?? tActive("mail.unknownSender")
   return first.name || first.address
 }
 
@@ -285,11 +288,11 @@ export function buildDraft(mode: ComposeMode, source: Message | undefined, self:
 
   if (mode === "forward") {
     const header = [
-      "---------- Forwarded message ----------",
-      `From: ${from}`,
-      `Date: ${formatDateTime(source.date)}`,
-      `Subject: ${source.subject}`,
-      `To: ${source.to.map(formatAddress).join(", ")}`,
+      tActive("mail.quote.forwardedHeader"),
+      tActive("mail.quote.from", { value: from }),
+      tActive("mail.quote.date", { value: formatDateTime(source.date) }),
+      tActive("mail.quote.subject", { value: source.subject }),
+      tActive("mail.quote.to", { value: source.to.map(formatAddress).join(", ") }),
     ]
     return {
       ...empty,
@@ -310,7 +313,7 @@ export function buildDraft(mode: ComposeMode, source: Message | undefined, self:
     cc,
     bcc: [],
     subject: prefixed("Re", source.subject),
-    html: `<p></p><p>On ${escapeHtml(formatDateTime(source.date))}, ${escapeHtml(from)} wrote:</p><blockquote>${textToHtml(bodyText(source))}</blockquote>`,
+    html: `<p></p><p>${escapeHtml(tActive("mail.quote.wrote", { date: formatDateTime(source.date), sender: from }))}</p><blockquote>${textToHtml(bodyText(source))}</blockquote>`,
     inReplyTo: source.messageId || undefined,
     references: [...source.references, source.messageId].filter(Boolean),
   }

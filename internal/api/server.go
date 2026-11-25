@@ -548,8 +548,8 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 			UPDATE sessions s SET last_seen_at = now()
 			FROM users u
 			WHERE s.id_hash = $1 AND s.expires_at > now() AND u.id = s.user_id AND u.status = 'active'
-			RETURNING u.id, u.email, u.display_name, u.is_platform_admin, u.status, s.csrf_token, s.provider_id, s.id_token, s.provider_id IS NULL AND `+twoFactorSetupPending, hash).
-			Scan(&p.User.ID, &p.User.Email, &p.User.DisplayName, &p.User.IsPlatformAdmin, &p.User.Status, &p.csrf, &p.providerID, &p.idToken, &p.twoFactorSetup)
+			RETURNING u.id, u.email, u.display_name, u.is_platform_admin, u.status, u.locale, s.csrf_token, s.provider_id, s.id_token, s.provider_id IS NULL AND `+twoFactorSetupPending, hash).
+			Scan(&p.User.ID, &p.User.Email, &p.User.DisplayName, &p.User.IsPlatformAdmin, &p.User.Status, &p.User.Locale, &p.csrf, &p.providerID, &p.idToken, &p.twoFactorSetup)
 		if errors.Is(err, pgx.ErrNoRows) {
 			clearCookie(w, sessionCookie, s.cfg.SecureCookies())
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "Your session has ended. Sign in again.")

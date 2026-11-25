@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/scalastudios/aether/internal/i18n"
 )
 
 func hostDomain(host string, prefixes ...string) (string, bool) {
@@ -186,7 +188,8 @@ func (s *Server) appleProfile(w http.ResponseWriter, r *http.Request, p *princip
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	created, ok := s.issueAppPassword(w, r, p, in.MailboxID, "Apple device profile", "all")
+	loc := s.requestLocale(r.Context(), r, p, "")
+	created, ok := s.issueAppPassword(w, r, p, in.MailboxID, i18n.T(loc, "appleProfile.appPasswordName"), "all")
 	if !ok {
 		return
 	}
@@ -203,7 +206,7 @@ func (s *Server) appleProfile(w http.ResponseWriter, r *http.Request, p *princip
 		return d
 	}
 
-	mailPayload := payload("com.apple.mail.managed", "mail", "Mail")
+	mailPayload := payload("com.apple.mail.managed", "mail", i18n.T(loc, "appleProfile.mail"))
 	mailPayload.key("EmailAccountDescription", address)
 	mailPayload.key("EmailAccountName", p.User.DisplayName)
 	mailPayload.key("EmailAccountType", "EmailTypeIMAP")
@@ -221,7 +224,7 @@ func (s *Server) appleProfile(w http.ResponseWriter, r *http.Request, p *princip
 	mailPayload.key("OutgoingMailServerUsername", address)
 	mailPayload.key("OutgoingPasswordSameAsIncomingPassword", true)
 
-	calendar := payload("com.apple.caldav.account", "caldav", "Calendar")
+	calendar := payload("com.apple.caldav.account", "caldav", i18n.T(loc, "appleProfile.calendar"))
 	calendar.key("CalDAVAccountDescription", address)
 	calendar.key("CalDAVHostName", webHost)
 	calendar.key("CalDAVPort", 443)
@@ -229,7 +232,7 @@ func (s *Server) appleProfile(w http.ResponseWriter, r *http.Request, p *princip
 	calendar.key("CalDAVUsername", address)
 	calendar.key("CalDAVPassword", created.Password)
 
-	contacts := payload("com.apple.carddav.account", "carddav", "Contacts")
+	contacts := payload("com.apple.carddav.account", "carddav", i18n.T(loc, "appleProfile.contacts"))
 	contacts.key("CardDAVAccountDescription", address)
 	contacts.key("CardDAVHostName", webHost)
 	contacts.key("CardDAVPort", 443)
@@ -239,8 +242,8 @@ func (s *Server) appleProfile(w http.ResponseWriter, r *http.Request, p *princip
 
 	var root plist
 	root.key("PayloadContent", []plist{mailPayload, calendar, contacts})
-	root.key("PayloadDisplayName", "Aether: "+address)
-	root.key("PayloadDescription", "Mail, calendar and contacts for "+address+". Remove this profile to disconnect the device; the app password inside it can also be revoked in Aether.")
+	root.key("PayloadDisplayName", i18n.T(loc, "appleProfile.displayName", map[string]string{"address": address}))
+	root.key("PayloadDescription", i18n.T(loc, "appleProfile.description", map[string]string{"address": address}))
 	root.key("PayloadIdentifier", identifier)
 	root.key("PayloadType", "Configuration")
 	root.key("PayloadUUID", strings.ToUpper(uuid.NewString()))

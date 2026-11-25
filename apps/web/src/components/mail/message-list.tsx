@@ -22,57 +22,54 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { LabelChips, LabelDot } from "@/components/mail/label-controls"
 import { formatBytes, formatListDate, formatWhen } from "@/lib/format"
+import { useI18n } from "@/lib/i18n"
 import { beginMessageDrag, dragTypes, endMessageDrag, folderIcons, folderLabel, senderLabel, type ListView, type MessageSort, type QuickFilter } from "@/lib/mail"
 import type { Folder, Label, MessagePage, MessageSummary } from "@/lib/types"
 
-const quickFilters: { value: QuickFilter; label: string }[] = [
-  { value: "unread", label: "Unread" },
-  { value: "flagged", label: "Flagged" },
-  { value: "hasAttachments", label: "Attachments" },
-]
-
 const alphabetical = [
-  { value: "asc", label: "A to Z" },
-  { value: "desc", label: "Z to A" },
+  { value: "asc", labelKey: "mail.list.sort.aToZ" },
+  { value: "desc", labelKey: "mail.list.sort.zToA" },
 ] as const
 
-const orders: Record<MessageSort, readonly { value: ListView["order"]; label: string }[]> = {
+const orders: Record<MessageSort, readonly { value: ListView["order"]; labelKey: string }[]> = {
   date: [
-    { value: "desc", label: "Newest first" },
-    { value: "asc", label: "Oldest first" },
+    { value: "desc", labelKey: "mail.list.sort.newestFirst" },
+    { value: "asc", labelKey: "mail.list.sort.oldestFirst" },
   ],
   from: alphabetical,
   to: alphabetical,
   subject: alphabetical,
   size: [
-    { value: "desc", label: "Largest first" },
-    { value: "asc", label: "Smallest first" },
+    { value: "desc", labelKey: "mail.list.sort.largestFirst" },
+    { value: "asc", labelKey: "mail.list.sort.smallestFirst" },
   ],
 }
 
 function SortMenu({ view, onViewChange, outgoing }: { view: ListView; onViewChange: (view: ListView) => void; outgoing: boolean }) {
+  const { t } = useI18n()
   const keys: { value: MessageSort; label: string }[] = [
-    { value: "date", label: "Date" },
-    outgoing ? { value: "to", label: "Recipient" } : { value: "from", label: "Sender" },
-    { value: "subject", label: "Subject" },
-    { value: "size", label: "Size" },
+    { value: "date", label: t("mail.list.sort.date") },
+    outgoing ? { value: "to", label: t("mail.list.sort.recipient") } : { value: "from", label: t("mail.list.sort.sender") },
+    { value: "subject", label: t("mail.list.sort.subject") },
+    { value: "size", label: t("mail.list.sort.size") },
   ]
-  const order = orders[view.sort].find((o) => o.value === view.order)?.label
-  const current = view.sort === "date" ? order : `${keys.find((k) => k.value === view.sort)?.label}, ${order?.toLowerCase()}`
+  const orderKey = orders[view.sort].find((o) => o.value === view.order)?.labelKey
+  const order = orderKey ? t(orderKey) : ""
+  const current = view.sort === "date" ? order : `${keys.find((k) => k.value === view.sort)?.label}, ${order.toLowerCase()}`
   return (
     <DropdownMenu>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button variant="quiet" size="icon-sm" aria-label={`Sort messages: ${current}`} className={cn((view.sort !== "date" || view.order !== "desc") && "text-ember")}>
+            <Button variant="quiet" size="icon-sm" aria-label={t("mail.list.sort.ariaLabel", { current })} className={cn((view.sort !== "date" || view.order !== "desc") && "text-ember")}>
               <ArrowDownUp />
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>Sort: {current}</TooltipContent>
+        <TooltipContent>{t("mail.list.sort.tooltip", { current })}</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Sort by</DropdownMenuLabel>
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">{t("mail.list.sort.sortBy")}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={view.sort} onValueChange={(v) => onViewChange({ ...view, sort: v as MessageSort, order: orders[v as MessageSort][0].value })}>
           {keys.map((k) => (
             <DropdownMenuRadioItem key={k.value} value={k.value}>
@@ -81,11 +78,11 @@ function SortMenu({ view, onViewChange, outgoing }: { view: ListView; onViewChan
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">Order</DropdownMenuLabel>
+        <DropdownMenuLabel className="px-3 py-2 text-xs font-semibold text-fg-tertiary">{t("mail.list.sort.order")}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={view.order} onValueChange={(v) => onViewChange({ ...view, order: v as ListView["order"] })}>
           {orders[view.sort].map((o) => (
             <DropdownMenuRadioItem key={o.value} value={o.value}>
-              {o.label}
+              {t(o.labelKey)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -160,6 +157,7 @@ export function MessageList({
   emptyTitle?: string
   emptyDescription?: string
 }) {
+  const { t, tp } = useI18n()
   const sentinel = useRef<HTMLDivElement>(null)
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
 
@@ -186,25 +184,30 @@ export function MessageList({
   const title = heading ?? folderLabel(folder)
   const activeLabel = labels?.find((label) => label.id === view.labelId)
   const narrowed = view.filters.length > 0 || !!view.labelId
+  const quickFilters: { value: QuickFilter; label: string }[] = [
+    { value: "unread", label: t("mail.list.filters.unread") },
+    { value: "flagged", label: t("mail.list.filters.flagged") },
+    { value: "hasAttachments", label: t("mail.list.filters.hasAttachments") },
+  ]
 
   return (
-    <section aria-label="Messages" className={cn("min-h-0 flex-col border-r border-border", className)}>
+    <section aria-label={t("mail.list.sectionLabel")} className={cn("min-h-0 flex-col border-r border-border", className)}>
       <div className="flex flex-col gap-3 border-b border-border p-4">
         <div className="flex items-center gap-2">
-          <IconButton label="Show folders" size="icon-sm" className="lg:hidden" onClick={onShowFolders}>
+          <IconButton label={t("mail.list.showFolders")} size="icon-sm" className="lg:hidden" onClick={onShowFolders}>
             <FolderOpen />
           </IconButton>
           {swatch && <LabelDot color={swatch} />}
           <h1 className="flex-1 truncate text-h3">{title}</h1>
           {total !== undefined && (
-            <span className="text-xs text-fg-tertiary tabular-nums">{total} {total === 1 ? "message" : "messages"}</span>
+            <span className="text-xs text-fg-tertiary tabular-nums">{tp("mail.messageCount", total)}</span>
           )}
           <span role="status" className="flex items-center gap-1.5 text-xs text-fg-tertiary">
             <span aria-hidden className={cn("size-1.5 rounded-full", live ? "bg-success" : "bg-fg-tertiary")} />
             <span className={cn(!live && "max-sm:sr-only")}>{live ? "Live" : "Every 30s"}</span>
           </span>
           {onCompose && (
-            <IconButton label="New message" size="icon-sm" className="lg:hidden" onClick={onCompose}>
+            <IconButton label={t("mail.folders.newMessage")} size="icon-sm" className="lg:hidden" onClick={onCompose}>
               <PenSquare />
             </IconButton>
           )}
@@ -235,14 +238,14 @@ export function MessageList({
             </DropdownMenu>
           )}
           <SortMenu view={view} onViewChange={onViewChange} outgoing={outgoing} />
-          <IconButton label="Keyboard shortcuts" size="icon-sm" className="max-md:hidden" onClick={onHelp}>
+          <IconButton label={t("mail.list.keyboardShortcuts")} size="icon-sm" className="max-md:hidden" onClick={onHelp}>
             <Keyboard />
           </IconButton>
         </div>
         <SearchInput ref={searchRef} aria-label="Search mail" placeholder={searchPlaceholder} value={search} onChange={(e) => onSearchChange(e.target.value)} />
         <div className="flex">
           <SegmentedControl
-            label="Show only"
+            label={t("mail.list.showOnly")}
             options={quickFilters}
             value={view.filters}
             onChange={(f) => onViewChange({ ...view, filters: view.filters.includes(f) ? view.filters.filter((x) => x !== f) : [...view.filters, f] })}
@@ -272,11 +275,11 @@ export function MessageList({
           ) : narrowed ? (
             <EmptyState
               icon={FunnelX}
-              title="No matching messages"
+              title={t("mail.list.noFilteredTitle")}
               description={filteredDescription(title, view.filters, activeLabel?.name)}
               action={
                 <Button variant="secondary" onClick={() => onViewChange({ ...view, filters: [], labelId: undefined })}>
-                  Clear filters
+                  {t("mail.list.clearFilters")}
                 </Button>
               }
             />
@@ -310,8 +313,8 @@ export function MessageList({
                   <span className="flex items-center gap-2">
                     {!m.seen && <span aria-hidden className="size-2 shrink-0 rounded-full bg-ember" />}
                     <span className={cn("flex-1 truncate", m.seen ? "text-fg-secondary" : "font-semibold text-foreground")}>
-                      {!m.seen && <span className="sr-only">Unread, </span>}
-                      {outgoing ? senderLabel(m.to, "No recipients") : senderLabel(m.from)}
+                      {!m.seen && <span className="sr-only">{t("mail.list.unreadPrefix")}</span>}
+                      {outgoing ? senderLabel(m.to, t("mail.noRecipients")) : senderLabel(m.from)}
                     </span>
                     {view.sort === "size" ? (
                       <span className="shrink-0 text-xs text-fg-tertiary tabular-nums">{formatBytes(m.size)}</span>
@@ -323,15 +326,15 @@ export function MessageList({
                   </span>
                   <span className="flex items-center gap-2">
                     <span className={cn("flex-1 truncate text-sm", m.seen ? "text-fg-tertiary" : "font-semibold text-fg-secondary")}>
-                      {m.subject || "(no subject)"}
+                      {m.subject || t("mail.noSubject")}
                     </span>
                     {(m.threadUids?.length ?? 0) > 1 && (
-                      <span aria-label={`${m.threadUids?.length} messages in this conversation`} className="shrink-0 rounded-full bg-muted px-2 text-xs text-fg-secondary">
+                      <span aria-label={t("mail.conversationCount", { count: m.threadUids?.length ?? 0 })} className="shrink-0 rounded-full bg-muted px-2 text-xs text-fg-secondary">
                         {m.threadUids?.length}
                       </span>
                     )}
-                    {m.hasAttachments && <Paperclip aria-label="Has attachments" className="size-3.5 shrink-0 text-fg-tertiary" />}
-                    {m.flagged && <Flag aria-label="Flagged" className="size-3.5 shrink-0 fill-current text-ember" />}
+                    {m.hasAttachments && <Paperclip aria-label={t("mail.list.hasAttachments")} className="size-3.5 shrink-0 text-fg-tertiary" />}
+                    {m.flagged && <Flag aria-label={t("mail.list.flagged")} className="size-3.5 shrink-0 fill-current text-ember" />}
                   </span>
                   {(showFolder || !!m.keywords?.length || !!m.flagColor) && (
                     <span className="flex items-center gap-2">
@@ -342,7 +345,7 @@ export function MessageList({
                   {wakeTimes?.has(m.uid) && (
                     <span className="flex items-center gap-1 text-xs text-fg-tertiary">
                       <AlarmClock aria-hidden className="size-3.5" />
-                      Wakes {formatWhen(new Date(wakeTimes.get(m.uid) ?? ""))}
+                      {t("mail.list.wakes", { when: formatWhen(new Date(wakeTimes.get(m.uid) ?? "")) })}
                     </span>
                   )}
                 </button>

@@ -8,6 +8,7 @@ import { z } from "zod"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api"
 import { formatAddress, plural } from "@/lib/format"
+import { useI18n } from "@/lib/i18n"
 import { resourceTypes } from "@/lib/resources"
 import type { Address, Recipient } from "@/lib/types"
 
@@ -55,6 +56,7 @@ export function RecipientInput({
   suggest?: boolean
   allowDomains?: boolean
 }) {
+  const { t } = useI18n()
   const [draft, setDraft] = useState("")
   const [error, setError] = useState("")
   const [open, setOpen] = useState(false)
@@ -103,7 +105,11 @@ export function RecipientInput({
     const known = new Set(value.map((a) => a.address.toLowerCase()))
     onChange([...value, ...good.filter((a) => !known.has(a.address.toLowerCase()))])
     setDraft(bad.join(", "))
-    setError(bad.length ? `${bad.join(", ")} is not a valid email address${allowDomains ? " or @domain" : ""}.` : "")
+    setError(
+      bad.length
+        ? t(allowDomains ? "common.invalidAddressOrDomain" : "common.invalidAddress", { value: bad.join(", ") })
+        : ""
+    )
     return bad.length === 0
   }
 
@@ -118,7 +124,7 @@ export function RecipientInput({
             <span className="truncate">{formatAddress(a)}</span>
             <button
               type="button"
-              aria-label={`Remove ${a.address}`}
+              aria-label={t("common.removeItem", { item: a.address })}
               onClick={() => onChange(value.filter((v) => v !== a))}
               className="inline-flex size-5 cursor-pointer items-center justify-center rounded-xs text-fg-tertiary hover:text-foreground"
             >
@@ -182,7 +188,7 @@ export function RecipientInput({
         <ul
           id={listboxId}
           role="listbox"
-          aria-label="Suggested recipients"
+          aria-label={t("common.suggestedRecipients")}
           hidden={!expanded}
           className="absolute inset-x-0 top-full z-50 mt-1 flex max-h-72 flex-col overflow-y-auto rounded-lg border border-strong bg-popover p-1 shadow-popover"
         >

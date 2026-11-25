@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { EditorContent, useEditor } from "@tiptap/react"
 import { ChevronDown, Link2, Paperclip, Send, X } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -31,19 +31,18 @@ import { sealOutgoing } from "@/lib/crypto/seal"
 import { signaturesQuery } from "@/lib/queries"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
+import { useI18n } from "@/lib/i18n"
 import type { Draft, SenderIdentity } from "@/lib/mail"
 import type { Attachment, EncryptionKey, EncryptionPolicy, FileLinkSummary, OutgoingMessage, RecipientKey, SavedDraft, ScheduledMessage, TransferLimits } from "@/lib/types"
 
 const address = z.object({ name: z.string().optional(), address: z.email() })
 
-const schema = z.object({
-  to: z.array(address).min(1, "Add at least one recipient."),
-  cc: z.array(address),
-  bcc: z.array(address),
-  subject: z.string(),
-})
-
-type Values = z.infer<typeof schema>
+type Values = {
+  to: z.infer<typeof address>[]
+  cc: z.infer<typeof address>[]
+  bcc: z.infer<typeof address>[]
+  subject: string
+}
 
 const fallbackLimits: TransferLimits = {
   messageBytes: 50 * 1024 * 1024,
@@ -117,20 +116,19 @@ function linkRefs(items: ComposerLink[], includePassword: boolean): NonNullable<
 }
 
 function AttachmentChip({ name, size, onRemove, action }: { name: string; size: number; onRemove: () => void; action?: React.ReactNode }) {
+  const { t } = useI18n()
   return (
     <li className="flex min-h-10 max-w-full items-center gap-2 rounded-lg border border-strong py-1 pr-1 pl-3 text-sm sm:max-w-[360px]">
       <Paperclip aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
       <span className="truncate">{name}</span>
       <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(size)}</span>
       {action}
-      <IconButton type="button" label={`Remove ${name}`} size="icon-sm" onClick={onRemove}>
+      <IconButton type="button" label={t("common.removeItem", { item: name })} size="icon-sm" onClick={onRemove}>
         <X />
       </IconButton>
     </li>
   )
 }
-
-const titles: Record<Draft["mode"], string> = { new: "New message", reply: "Reply", replyAll: "Reply all", forward: "Forward", draft: "Draft" }
 
 function flyAway(icon: SVGElement | null) {
   if (!icon || matchMedia("(prefers-reduced-motion: reduce)").matches) return
@@ -165,6 +163,7 @@ export function Composer({
   onClose: () => void
   onHeld?: (mailboxId: string, message: ScheduledMessage) => void
 }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const undoSeconds = useSession().data?.user.undoSendSeconds ?? 0
   const [identity, setIdentity] = useState(initial)
@@ -194,6 +193,17 @@ export function Composer({
   const limitsQuery = useQuery({ queryKey: ["transfer-limits", mailbox.id], queryFn: () => api<TransferLimits>(`/mailboxes/${mailbox.id}/transfer-limits`) })
   const limits = limitsQuery.data ?? fallbackLimits
   const inlineBytes = files.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
+
+  const schema = useMemo(
+    () =>
+      z.object({
+        to: z.array(address).min(1, t("mail.composer.addRecipient")),
+        cc: z.array(address),
+        bcc: z.array(address),
+        subject: z.string(),
+      }),
+    [t]
+  )
 
   const touch = useCallback(() => {
     dirty.current = true
@@ -289,7 +299,7 @@ export function Composer({
         class: "prose-editor min-h-[240px] px-4 py-3 text-base outline-none",
         role: "textbox",
         "aria-multiline": "true",
-        "aria-label": "Message body",
+        "aria-label": t("mail.composer.messageBody"),
         "data-focus-ring": "off",
       },
     },
@@ -475,7 +485,7 @@ export function Composer({
       if (draftUid && !readOnly) await api(`/mailboxes/${mailbox.id}/drafts/${draftUid}`, { method: "DELETE" })
     },
     onSuccess: () => {
-      if (draftUid && !readOnly) toast.success("Draft discarded")
+      if (draftUid && !readOnly) toast.success(t("mail.composer.toasts.discarded"))
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
       onClose()
@@ -513,7 +523,7 @@ export function Composer({
     }
     dirty.current = dirty.current || files.length > 0 || links.some((link) => link.id)
     await save()
-    if (!readOnly && (draftUid || savedAt || saveDraft.data)) toast.success("Saved to Drafts")
+    if (!readOnly && (draftUid || savedAt || saveDraft.data)) toast.success(t("mail.composer.toasts.savedToDrafts"))
     onClose()
   }
 
@@ -555,7 +565,7 @@ export function Composer({
       name={name}
       render={({ field, fieldState }) => (
         <Field id={`compose-${name}`} label={label} error={fieldState.error?.message ?? fieldState.error?.root?.message}>
-          <RecipientInput id={`compose-${name}`} value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" suggest />
+          <RecipientInput id={`compose-${name}`} value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder={t("common.emailPlaceholder")} suggest />
         </Field>
       )}
     />
@@ -572,13 +582,13 @@ export function Composer({
         }}
       >
         <SheetHeader className="border-b border-border p-6">
-          <SheetTitle>{titles[draft.mode]}</SheetTitle>
+          <SheetTitle>{t(`mail.composer.titles.${draft.mode}`)}</SheetTitle>
           {identities.length > 1 ? (
             <SheetDescription asChild>
               <div className="flex items-center gap-2">
-                From
+                {t("mail.composer.from")}
                 <Select value={from.address} onValueChange={changeFrom} disabled={saveDraft.isPending || send.isPending}>
-                  <SelectTrigger aria-label="From" size="sm" className="min-w-0">
+                  <SelectTrigger aria-label={t("mail.composer.from")} size="sm" className="min-w-0">
                     <SelectValue>
                       <span className="min-w-0 truncate">{formatAddress(from)}</span>
                     </SelectValue>
@@ -618,18 +628,18 @@ export function Composer({
           className={`flex min-h-0 flex-1 flex-col transition-colors duration-160 ${dragging ? "bg-primary/5" : ""}`}
         >
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
-            {recipientField("to", "To")}
+            {recipientField("to", t("mail.composer.to"))}
             {guard !== "password" && (showCopies ? (
               <>
-                {recipientField("cc", "Cc")}
-                {recipientField("bcc", "Bcc")}
+                {recipientField("cc", t("mail.composer.cc"))}
+                {recipientField("bcc", t("mail.composer.bcc"))}
               </>
             ) : (
               <Button type="button" variant="link" className="self-start" onClick={() => setShowCopies(true)}>
-                Add Cc or Bcc
+                {t("mail.composer.addCcBcc")}
               </Button>
             ))}
-            <Field id="compose-subject" label="Subject">
+            <Field id="compose-subject" label={t("mail.composer.subject")}>
               <Input id="compose-subject" autoComplete="off" {...form.register("subject")} />
             </Field>
             <ProtectionControls
@@ -651,7 +661,7 @@ export function Composer({
               onAutocrypt={setAutocrypt}
             />
             {(files.length > 0 || forwarded.length > 0) && (
-              <ul aria-label="Attachments" className="flex flex-wrap gap-2">
+              <ul aria-label={t("mail.composer.attachments")} className="flex flex-wrap gap-2">
                 {forwarded.map((a) => (
                   <AttachmentChip key={a.part} name={a.filename} size={a.size} onRemove={() => {
                     setForwarded(forwarded.filter((x) => x.part !== a.part))
@@ -766,7 +776,7 @@ export function Composer({
               {guard !== "password" && (
                 <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()}>
                   <Paperclip aria-hidden />
-                  Attach
+                  {t("mail.composer.attach")}
                 </Button>
               )}
               {inlineBytes > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{formatBytes(inlineBytes)} of {formatBytes(limits.attachmentBytes)} attached</span>}
@@ -782,16 +792,16 @@ export function Composer({
               )}
             </div>
             <Button type="button" variant="secondary" loading={discard.isPending} onClick={() => discard.mutate()}>
-              Discard
+              {t("mail.composer.discard")}
             </Button>
             <div className="flex">
               <Button type="submit" loading={send.isPending} disabled={signatures.isPending} className={guard === "password" ? undefined : "rounded-r-none hover:shadow-none"} aria-describedby={undoSeconds > 0 ? "compose-undo-hint" : undefined}>
                 <Send ref={sendIcon} aria-hidden />
-                Send
+                {t("mail.composer.send")}
               </Button>
               {guard !== "password" && (
                 <LaterMenu label="Schedule send" submitLabel="Schedule" disabled={send.isPending || signatures.isPending} onPick={(at) => submit(at)()}>
-                  <Button type="button" size="icon" aria-label="Schedule send" className="h-auto self-stretch rounded-l-none border-l-ink/20 hover:shadow-none">
+                  <Button type="button" size="icon" aria-label={t("mail.composer.scheduleSend")} className="h-auto self-stretch rounded-l-none border-l-ink/20 hover:shadow-none">
                     <ChevronDown />
                   </Button>
                 </LaterMenu>

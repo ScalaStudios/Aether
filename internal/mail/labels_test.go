@@ -74,7 +74,7 @@ func TestCompileSieveAddsLabelKeywordsAndAppleColor(t *testing.T) {
 	script := CompileSieve(WithLabelColors([]Rule{rule}, []LabelRef{
 		{Keyword: "invoice", Color: "red", Position: 0},
 		{Keyword: "client_x", Color: "blue", Position: 1},
-	}), AutoReply{}, "me@example.test", ForwardPolicy{})
+	}), AutoReply{}, "me@example.test", ForwardPolicy{}, "")
 	want := `addflag ["invoice", "client_x", "$MailFlagBit0"];`
 	if !strings.Contains(script, want) {
 		t.Fatalf("script missing %s:\n%s", want, script)

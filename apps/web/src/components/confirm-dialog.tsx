@@ -6,6 +6,7 @@ import { Field } from "@/components/field"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { useI18n } from "@/lib/i18n"
 
 export function ConfirmDialog({
   open,
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   onConfirm: () => void
   children?: React.ReactNode
 }) {
+  const { t } = useI18n()
   const [typed, setTyped] = useState("")
   const blocked = typedConfirmation !== undefined && typed !== typedConfirmation
 
@@ -46,13 +48,13 @@ export function ConfirmDialog({
         </DialogHeader>
         {children}
         {typedConfirmation !== undefined && (
-          <Field id="confirm-typed" label={`Type ${typedConfirmation} to confirm`}>
+          <Field id="confirm-typed" label={t("common.typeToConfirm", { value: typedConfirmation })}>
             <Input id="confirm-typed" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
           </Field>
         )}
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="secondary">Cancel</Button>
+            <Button variant="secondary">{t("common.cancel")}</Button>
           </DialogClose>
           <Button variant="destructive" disabled={blocked} loading={pending} onClick={onConfirm}>
             {confirmLabel}

@@ -273,6 +273,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [Encryption](documentation/encryption.md): S/MIME, OpenPGP and password-protected messages, and where the keys stay.
 - [API keys, webhooks, and suppressions](documentation/integrations.md): automate Aether, react to audit and mail delivery events, and keep a suppression list.
+- [Translations](documentation/translations.md): built-in languages, per-person and organization defaults, server-generated emails, and contributing translations through Weblate or Crowdin.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.
 - [Third-party components](documentation/third-party.md): every bundled component and its license.
 - [API specification](api/openapi.yaml): the OpenAPI 3.1 document.

@@ -3,8 +3,8 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Building2, Plus } from "lucide-react"
-import { useState } from "react"
-import { useForm } from "react-hook-form"
+import { useMemo, useState } from "react"
+import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -17,6 +17,7 @@ import { ContactsTab } from "@/components/admin/contacts-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
 import { ForwardingTab } from "@/components/admin/forwarding-tab"
 import { EncryptionTab } from "@/components/admin/encryption-tab"
+import { GeneralTab } from "@/components/admin/general-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailQueueTab } from "@/components/admin/mail-queue-tab"
@@ -52,15 +53,17 @@ import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { plural } from "@/lib/format"
 import { hasPerm, isDomainScoped, orgMembership, roleBadgeTone, roleLabel } from "@/lib/permissions"
+import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
 import { organizationsQuery } from "@/lib/queries"
 import type { Organization, Session } from "@/lib/types"
 
-const orgSchema = z.object({
-  name: z.string().trim().min(1, "Enter the organization name."),
-  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "Use lowercase letters, digits and hyphens, starting with a letter or digit."),
-})
+const AUTO = "auto"
 
-type OrgValues = z.infer<typeof orgSchema>
+interface OrgValues {
+  name: string
+  slug: string
+  defaultLocale: string
+}
 
 interface OrgTabDef {
   value: string
@@ -109,18 +112,36 @@ const orgTabs: OrgTabDef[] = [
 ]
 
 export function AdminView() {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const session = useSession().data
   const orgs = useQuery(organizationsQuery)
   const [orgId, setOrgId] = useState<string | null>(null)
   const [tab, setTab] = useState("domains")
   const [creating, setCreating] = useState(false)
-  const form = useForm<OrgValues>({ resolver: zodResolver(orgSchema), defaultValues: { name: "", slug: "" } })
+  const orgSchema = useMemo(
+    () =>
+      z.object({
+        name: z.string().trim().min(1, t("admin.validation.orgNameRequired")),
+        slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, t("admin.validation.orgSlugInvalid")),
+        defaultLocale: z.string(),
+      }),
+    [t]
+  )
+  const form = useForm<OrgValues>({ resolver: zodResolver(orgSchema), defaultValues: { name: "", slug: "", defaultLocale: AUTO } })
 
   const create = useMutation({
-    mutationFn: (values: OrgValues) => api<Organization>("/organizations", { method: "POST", body: values }),
+    mutationFn: (values: OrgValues) =>
+      api<Organization>("/organizations", {
+        method: "POST",
+        body: {
+          name: values.name,
+          slug: values.slug,
+          defaultLocale: values.defaultLocale === AUTO ? "" : values.defaultLocale,
+        },
+      }),
     onSuccess: (org) => {
-      toast.success(`Created ${org.name}`)
+      toast.success(t("admin.createdOrgToast", { name: org.name }))
       qc.invalidateQueries({ queryKey: ["organizations"] })
       qc.invalidateQueries({ queryKey: ["session"] })
       setOrgId(org.id)
@@ -144,7 +165,7 @@ export function AdminView() {
   return (
     <PageContainer>
       <PageHeader
-        title="Administration"
+        title={t("admin.title")}
         description={
           showRoleBadge ? (
             <span className="inline-flex flex-wrap items-center gap-2">
@@ -166,7 +187,7 @@ export function AdminView() {
           <>
             {administered.length > 0 && org && (
               <Select value={org.id} onValueChange={setOrgId}>
-                <SelectTrigger aria-label="Organization" className="min-w-56">
+                <SelectTrigger aria-label={t("admin.organization")} className="min-w-56">
                   <Building2 aria-hidden className="text-fg-tertiary" />
                   <SelectValue />
                 </SelectTrigger>
@@ -182,7 +203,7 @@ export function AdminView() {
             {platformAdmin && (
               <Button variant="secondary" onClick={() => setCreating(true)}>
                 <Plus aria-hidden />
-                New organization
+                {t("admin.newOrganization")}
               </Button>
             )}
           </>
@@ -199,9 +220,9 @@ export function AdminView() {
           {!org && (
             <EmptyState
               icon={Building2}
-              title="No organizations yet"
-              description="Create an organization to add domains and mailboxes."
-              action={<Button onClick={() => setCreating(true)}>Create organization</Button>}
+              title={t("admin.noOrgsTitle")}
+              description={t("admin.noOrgsDescription")}
+              action={<Button onClick={() => setCreating(true)}>{t("admin.createOrganization")}</Button>}
             />
           )}
         {(tabs.length > 0 || platformAdmin) && (
@@ -252,18 +273,39 @@ export function AdminView() {
           setCreating(open)
           if (!open) form.reset()
         }}
-        title="New organization"
-        description="Organizations own domains, mailboxes and members."
-        submitLabel="Create organization"
+        title={t("admin.newOrganization")}
+        description={t("admin.newOrgDescription")}
+        submitLabel={t("admin.createOrganization")}
         pending={create.isPending}
         onSubmit={form.handleSubmit((v) => create.mutate(v))}
       >
-        <Field id="org-name" label="Name" error={form.formState.errors.name?.message}>
+        <Field id="org-name" label={t("common.name")} error={form.formState.errors.name?.message}>
           <Input id="org-name" autoComplete="off" aria-invalid={!!form.formState.errors.name} {...form.register("name")} />
         </Field>
-        <Field id="org-slug" label="Slug" hint="Used in URLs and identity provider mappings. Lowercase, for example “scala-studios”." error={form.formState.errors.slug?.message}>
+        <Field id="org-slug" label={t("admin.slug")} hint={t("admin.slugHint")} error={form.formState.errors.slug?.message}>
           <Input id="org-slug" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!form.formState.errors.slug} {...form.register("slug")} />
         </Field>
+        <Controller
+          control={form.control}
+          name="defaultLocale"
+          render={({ field }) => (
+            <Field id="org-locale" label={t("admin.defaultLanguage")} hint={t("admin.defaultLanguageHint")}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <SelectTrigger id="org-locale" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO}>{t("admin.browserDefault")}</SelectItem>
+                  {SUPPORTED_LOCALES.map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {LOCALE_LABELS[code]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+        />
       </FormDialog>
     </PageContainer>
   )

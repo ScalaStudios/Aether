@@ -527,7 +527,7 @@ func (s *Server) answerFromResource(ctx context.Context, r *resource, organizer 
 		reply.Props.SetText(ical.PropComment, out.Reason)
 	}
 	title, _ := comp.Props.Text(ical.PropSummary)
-	_, err = s.sendITIP(ctx, &ownedMailbox{ID: r.ID, OrgID: r.OrgID, Address: r.Address, DisplayName: r.Name}, nil, []mailpkg.Address{organizer}, replyVerbs[partStat]+": "+title, "REPLY", reply)
+	_, err = s.sendITIP(ctx, &ownedMailbox{ID: r.ID, OrgID: r.OrgID, Address: r.Address, DisplayName: r.Name}, nil, []mailpkg.Address{organizer}, replyKinds[partStat], title, "REPLY", reply)
 	return err
 }
 
@@ -548,7 +548,7 @@ func (s *Server) notifyApprovers(ctx context.Context, r *resource, organizer mai
 		From:    mailpkg.Address{Name: r.Name, Address: r.Address},
 		To:      approvers,
 		Subject: "Approval needed: " + r.Name + " for " + title,
-		Text:    fmt.Sprintf("%s asked to book %s.\r\n\r\nApprove or decline the request in Aether Calendar:\r\n%s\r\n\r\n", firstNonEmpty(organizer.Name, organizer.Address), r.Name, link) + describeEvent(comp),
+		Text:    fmt.Sprintf("%s asked to book %s.\r\n\r\nApprove or decline the request in Aether Calendar:\r\n%s\r\n\r\n", firstNonEmpty(organizer.Name, organizer.Address), r.Name, link) + describeEvent(comp, "en"),
 	}
 	raw, _, err := out.Build(s.cfg.MailHostname)
 	if err != nil {

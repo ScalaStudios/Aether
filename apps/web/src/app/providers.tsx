@@ -9,6 +9,7 @@ import { BrandingEffects } from "@/components/branding"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ApiError, errorMessage } from "@/lib/api"
+import { I18nProvider } from "@/lib/i18n"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -30,11 +31,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" themes={["dark", "light"]} enableSystem={false} storageKey="aether-theme" disableTransitionOnChange>
       <QueryClientProvider client={client}>
-        <Suspense>
-          <BrandingEffects />
-        </Suspense>
-        <TooltipProvider delayDuration={400}>{children}</TooltipProvider>
-        <Toaster position="bottom-right" />
+        <I18nProvider>
+          <Suspense>
+            <BrandingEffects />
+          </Suspense>
+          <TooltipProvider delayDuration={400}>{children}</TooltipProvider>
+          <Toaster position="bottom-right" />
+        </I18nProvider>
       </QueryClientProvider>
     </ThemeProvider>
   )

@@ -2,9 +2,11 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { CircleX, KeyRound } from "lucide-react"
+import { CircleX, Globe, KeyRound } from "lucide-react"
+import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
+import { useMemo } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
@@ -12,39 +14,48 @@ import { Field } from "@/components/field"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api, ApiError, apiUrl, errorMessage } from "@/lib/api"
+import { LOCALE_LABELS, SUPPORTED_LOCALES, type Locale, useI18n } from "@/lib/i18n"
 import { brandingQuery } from "@/lib/queries"
 import type { AuthProviders, LoginResult, Session, TwoFactorPrompt } from "@/lib/types"
 import { getSecurityKey, securityKeysSupported } from "@/lib/webauthn"
 
-const loginErrors: Record<string, string> = {
-  rate_limited: "Too many sign-in attempts. Wait a minute and try again.",
-  unknown_provider: "That sign-in provider is not available. Choose another sign-in method.",
-  provider_unavailable: "The identity provider could not be reached. Try again in a few minutes.",
-  provider_denied: "The identity provider did not approve the sign-in. Try again, or contact your administrator.",
-  state_mismatch: "The sign-in request could not be matched to this browser. Start the sign-in again from this page.",
-  state_expired: "The sign-in request expired. Start the sign-in again.",
-  exchange_failed: "Aether could not complete the sign-in with the identity provider. Try again.",
-  invalid_token: "The identity provider returned an invalid response. Contact your administrator.",
-  email_unverified: "Your identity provider has not verified your email address. Verify it there, then try again.",
-  not_provisioned: "Your account does not have access to Aether yet. Ask your administrator to add you.",
-  account_disabled: "This account is suspended. Contact your administrator.",
-  shared_mailbox: "This address is a shared mailbox and cannot sign in. Sign in with your own account; the shared mailbox appears in your sidebar once an administrator adds you.",
-}
+const knownLoginErrors = new Set([
+  "rate_limited",
+  "unknown_provider",
+  "provider_unavailable",
+  "provider_denied",
+  "state_mismatch",
+  "state_expired",
+  "exchange_failed",
+  "invalid_token",
+  "email_unverified",
+  "not_provisioned",
+  "account_disabled",
+  "shared_mailbox",
+])
 
-const schema = z.object({
-  email: z.email("Enter a valid email address."),
-  password: z.string().min(1, "Enter your password."),
-})
-
-type Values = z.infer<typeof schema>
+type Values = { email: string; password: string }
 
 export function LoginForm() {
+  const { t } = useI18n()
   const params = useSearchParams()
   const router = useRouter()
   const errorCode = params.get("error")
-  const providers = useQuery({ queryKey: ["auth-providers"], queryFn: () => api<AuthProviders>("/auth/providers") })
+  const providers = useQuery({
+    queryKey: ["auth-providers"],
+    queryFn: () => api<AuthProviders>("/auth/providers", { query: { host: window.location.hostname } }),
+  })
   const branding = useQuery(brandingQuery)
+  const schema = useMemo(
+    () =>
+      z.object({
+        email: z.email(t("login.validation.email")),
+        password: z.string().min(1, t("login.validation.password")),
+      }),
+    [t]
+  )
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", password: "" } })
   const [prompt, setPrompt] = useState<TwoFactorPrompt | null>(null)
   const [restartMessage, setRestartMessage] = useState("")
@@ -61,7 +72,9 @@ export function LoginForm() {
 
   const message = login.isError
     ? errorMessage(login.error)
-    : restartMessage || (errorCode && (loginErrors[errorCode] ?? `Sign-in failed (${errorCode}). Try again, or contact your administrator.`))
+    : restartMessage ||
+      (errorCode &&
+        (knownLoginErrors.has(errorCode) ? t(`login.errors.${errorCode}`) : t("login.errors.fallback", { code: errorCode })))
 
   if (providers.isPending || branding.isPending) return <RowsSkeleton rows={3} />
   if (providers.isError) return <ErrorState error={providers.error} onRetry={() => providers.refetch()} />
@@ -84,7 +97,7 @@ export function LoginForm() {
 
   return (
     <div className="animate-content flex flex-col gap-6">
-      <p className="whitespace-pre-line text-fg-secondary">{branding.data?.signInMessage || "Sign in to read your mail and manage your organization."}</p>
+      <p className="whitespace-pre-line text-fg-secondary">{branding.data?.signInMessage || t("login.defaultMessage")}</p>
       {message && <ErrorAlert>{message}</ErrorAlert>}
       {list.length > 0 && (
         <div className="flex flex-col gap-3">
@@ -92,7 +105,7 @@ export function LoginForm() {
             <Button key={p.slug} variant={localLogin ? "secondary" : "default"} asChild>
               <a href={apiUrl(`/auth/oidc/${encodeURIComponent(p.slug)}/start`, { return_to: "/mail" })}>
                 <KeyRound aria-hidden />
-                {p.kind === "halo" ? `Continue with ${p.name}` : `Sign in with ${p.name}`}
+                {p.kind === "halo" ? t("login.continueWith", { name: p.name }) : t("login.signInWith", { name: p.name })}
               </a>
             </Button>
           ))}
@@ -101,26 +114,53 @@ export function LoginForm() {
       {list.length > 0 && localLogin && (
         <div className="flex items-center gap-3 text-xs text-fg-tertiary">
           <span className="h-px flex-1 bg-border" />
-          or
+          {t("common.or")}
           <span className="h-px flex-1 bg-border" />
         </div>
       )}
       {localLogin && (
         <form onSubmit={form.handleSubmit((v) => login.mutate(v))} noValidate className="flex flex-col gap-4">
-          <Field id="email" label="Email" error={form.formState.errors.email?.message}>
+          <Field id="email" label={t("login.email")} error={form.formState.errors.email?.message}>
             <Input id="email" type="email" autoComplete="username" aria-invalid={!!form.formState.errors.email} {...form.register("email")} />
           </Field>
-          <Field id="password" label="Password" error={form.formState.errors.password?.message}>
+          <Field id="password" label={t("login.password")} error={form.formState.errors.password?.message}>
             <Input id="password" type="password" autoComplete="current-password" aria-invalid={!!form.formState.errors.password} {...form.register("password")} />
           </Field>
           <Button type="submit" loading={login.isPending || login.isSuccess} className="mt-2">
-            Sign in
+            {t("login.signIn")}
           </Button>
         </form>
       )}
-      {!localLogin && list.length === 0 && (
-        <p className="text-fg-secondary">No sign-in method is configured on this installation. Ask the operator to enable password sign-in or add an identity provider.</p>
-      )}
+      {!localLogin && list.length === 0 && <p className="text-fg-secondary">{t("login.noMethodConfigured")}</p>}
+    </div>
+  )
+}
+
+export function LoginFooter() {
+  const { t, locale, setGuestLocale } = useI18n()
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="flex items-center gap-2">
+        <Globe aria-hidden className="size-4 text-fg-tertiary" />
+        <Select value={locale} onValueChange={(value) => setGuestLocale(value as Locale)}>
+          <SelectTrigger aria-label={t("login.languageLabel")} className="h-9 w-auto gap-2 border-border bg-transparent px-3 text-sm text-fg-secondary">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SUPPORTED_LOCALES.map((code) => (
+              <SelectItem key={code} value={code}>
+                {LOCALE_LABELS[code]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="flex items-center gap-2 text-sm text-fg-tertiary">
+        <Image src="/brand/scala-symbol-gradient.svg" alt="" width={24} height={31} className="h-[31px] w-6 light:hidden" />
+        <Image src="/brand/scala-symbol-ink.svg" alt="" width={24} height={31} className="hidden h-[31px] w-6 light:block" />
+        {t("login.footer")}
+      </p>
     </div>
   )
 }

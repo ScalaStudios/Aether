@@ -38,6 +38,7 @@ import { IconButton } from "@/components/icon-button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useI18n } from "@/lib/i18n"
 import type { Signature } from "@/lib/types"
 
 export const mailEditorExtensions = [
@@ -67,7 +68,7 @@ export const mailEditorExtensions = [
 ]
 
 const fonts = [
-  { label: "Default font", value: "default" },
+  { label: "", value: "default" },
   { label: "Arial", value: "Arial, Helvetica, sans-serif" },
   { label: "Verdana", value: "Verdana, Geneva, sans-serif" },
   { label: "Trebuchet MS", value: "'Trebuchet MS', sans-serif" },
@@ -81,10 +82,10 @@ const sizes = ["default", "12px", "14px", "16px", "18px", "24px", "32px"]
 const textColors = ["#1f2937", "#6b7280", "#dc2626", "#ea580c", "#ca8a04", "#16a34a", "#2563eb", "#7c3aed"]
 const highlights = ["#fef08a", "#fed7aa", "#fbcfe8", "#bbf7d0", "#bfdbfe", "#e5e7eb"]
 
-const alignments: { value: "left" | "center" | "right"; label: string; icon: LucideIcon }[] = [
-  { value: "left", label: "Align left", icon: AlignLeft },
-  { value: "center", label: "Center", icon: AlignCenter },
-  { value: "right", label: "Align right", icon: AlignRight },
+const alignments: { value: "left" | "center" | "right"; labelKey: string; icon: LucideIcon }[] = [
+  { value: "left", labelKey: "mail.toolbar.alignLeft", icon: AlignLeft },
+  { value: "center", labelKey: "mail.toolbar.alignCenter", icon: AlignCenter },
+  { value: "right", labelKey: "mail.toolbar.alignRight", icon: AlignRight },
 ]
 
 function Divider() {
@@ -118,6 +119,7 @@ function ColorMenu({ label, icon: Icon, current, colors, onPick, onClear, clearL
 }
 
 export function FormatToolbar({ editor, signatures }: { editor: Editor; signatures?: Signature[] }) {
+  const { t } = useI18n()
   const state = useEditorState({
     editor,
     selector: ({ editor }) => ({
@@ -146,7 +148,7 @@ export function FormatToolbar({ editor, signatures }: { editor: Editor; signatur
 
   function setLink() {
     const previous = editor.getAttributes("link").href as string | undefined
-    const url = window.prompt("Link address", previous ?? "https://")
+    const url = window.prompt(t("mail.toolbar.linkPrompt"), previous ?? "https://")
     if (url === null) return
     if (url.trim() === "") chain().extendMarkRange("link").unsetLink().run()
     else chain().extendMarkRange("link").setLink({ href: url.trim() }).run()
@@ -154,23 +156,23 @@ export function FormatToolbar({ editor, signatures }: { editor: Editor; signatur
 
   const groups: { label: string; icon: LucideIcon; active?: boolean; disabled?: boolean; run: () => void }[][] = [
     [
-      { label: "Undo", icon: Undo2, disabled: !state.canUndo, run: () => chain().undo().run() },
-      { label: "Redo", icon: Redo2, disabled: !state.canRedo, run: () => chain().redo().run() },
+      { label: t("mail.toolbar.undo"), icon: Undo2, disabled: !state.canUndo, run: () => chain().undo().run() },
+      { label: t("mail.toolbar.redo"), icon: Redo2, disabled: !state.canRedo, run: () => chain().redo().run() },
     ],
     [
-      { label: "Bold", icon: Bold, active: state.bold, run: () => chain().toggleBold().run() },
-      { label: "Italic", icon: Italic, active: state.italic, run: () => chain().toggleItalic().run() },
-      { label: "Underline", icon: Underline, active: state.underline, run: () => chain().toggleUnderline().run() },
-      { label: "Strikethrough", icon: Strikethrough, active: state.strike, run: () => chain().toggleStrike().run() },
-      { label: "Subscript", icon: Subscript, active: state.subscript, run: () => chain().unsetSuperscript().toggleSubscript().run() },
-      { label: "Superscript", icon: Superscript, active: state.superscript, run: () => chain().unsetSubscript().toggleSuperscript().run() },
+      { label: t("mail.toolbar.bold"), icon: Bold, active: state.bold, run: () => chain().toggleBold().run() },
+      { label: t("mail.toolbar.italic"), icon: Italic, active: state.italic, run: () => chain().toggleItalic().run() },
+      { label: t("mail.toolbar.underline"), icon: Underline, active: state.underline, run: () => chain().toggleUnderline().run() },
+      { label: t("mail.toolbar.strikethrough"), icon: Strikethrough, active: state.strike, run: () => chain().toggleStrike().run() },
+      { label: t("mail.toolbar.subscript"), icon: Subscript, active: state.subscript, run: () => chain().unsetSuperscript().toggleSubscript().run() },
+      { label: t("mail.toolbar.superscript"), icon: Superscript, active: state.superscript, run: () => chain().unsetSubscript().toggleSuperscript().run() },
     ],
     [
-      { label: "Bulleted list", icon: List, active: state.bulletList, run: () => chain().toggleBulletList().run() },
-      { label: "Numbered list", icon: ListOrdered, active: state.orderedList, run: () => chain().toggleOrderedList().run() },
-      { label: "Decrease indent", icon: IndentDecrease, disabled: !state.canOutdent, run: () => chain().liftListItem("listItem").run() },
-      { label: "Increase indent", icon: IndentIncrease, disabled: !state.canIndent, run: () => chain().sinkListItem("listItem").run() },
-      { label: "Quote", icon: TextQuote, active: state.blockquote, run: () => chain().toggleBlockquote().run() },
+      { label: t("mail.toolbar.bulletedList"), icon: List, active: state.bulletList, run: () => chain().toggleBulletList().run() },
+      { label: t("mail.toolbar.numberedList"), icon: ListOrdered, active: state.orderedList, run: () => chain().toggleOrderedList().run() },
+      { label: t("mail.toolbar.decreaseIndent"), icon: IndentDecrease, disabled: !state.canOutdent, run: () => chain().liftListItem("listItem").run() },
+      { label: t("mail.toolbar.increaseIndent"), icon: IndentIncrease, disabled: !state.canIndent, run: () => chain().sinkListItem("listItem").run() },
+      { label: t("mail.toolbar.quote"), icon: TextQuote, active: state.blockquote, run: () => chain().toggleBlockquote().run() },
     ],
   ]
   const Align = alignments.find((a) => a.value === state.align)!.icon
@@ -182,38 +184,38 @@ export function FormatToolbar({ editor, signatures }: { editor: Editor; signatur
   )
 
   return (
-    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-1 border-b border-border p-1">
+    <div role="toolbar" aria-label={t("mail.toolbar.formatting")} className="flex flex-wrap items-center gap-1 border-b border-border p-1">
       {groups[0].map(button)}
       <Divider />
       <Select value={state.font} onValueChange={(v) => (v === "default" ? chain().unsetFontFamily().run() : chain().setFontFamily(v).run())}>
-        <SelectTrigger size="sm" aria-label="Font" className="w-36 pl-3 text-sm">
+        <SelectTrigger size="sm" aria-label={t("mail.toolbar.font")} className="w-36 pl-3 text-sm">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {fonts.map((f) => (
             <SelectItem key={f.value} value={f.value} style={f.value === "default" ? undefined : { fontFamily: f.value }}>
-              {f.label}
+              {f.value === "default" ? t("mail.toolbar.defaultFont") : f.label}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       <Select value={state.size} onValueChange={(v) => (v === "default" ? chain().unsetFontSize().run() : chain().setFontSize(v).run())}>
-        <SelectTrigger size="sm" aria-label="Font size" className="w-24 pl-3 text-sm">
+        <SelectTrigger size="sm" aria-label={t("mail.toolbar.fontSize")} className="w-24 pl-3 text-sm">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {sizes.map((s) => (
             <SelectItem key={s} value={s}>
-              {s === "default" ? "Default" : s.replace("px", "")}
+              {s === "default" ? t("mail.toolbar.defaultSize") : s.replace("px", "")}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       <Divider />
       {groups[1].map(button)}
-      <ColorMenu label="Text color" icon={Baseline} current={state.color} colors={textColors} clearLabel="Automatic" onPick={(c) => chain().setColor(c).run()} onClear={() => chain().unsetColor().run()} />
-      <ColorMenu label="Highlight" icon={Highlighter} current={state.highlight} colors={highlights} clearLabel="No highlight" onPick={(c) => chain().setBackgroundColor(c).run()} onClear={() => chain().unsetBackgroundColor().run()} />
-      <IconButton type="button" label="Clear formatting" size="icon-sm" onClick={() => chain().unsetAllMarks().clearNodes().run()}>
+      <ColorMenu label={t("mail.toolbar.textColor")} icon={Baseline} current={state.color} colors={textColors} clearLabel={t("common.automatic")} onPick={(c) => chain().setColor(c).run()} onClear={() => chain().unsetColor().run()} />
+      <ColorMenu label={t("mail.toolbar.highlight")} icon={Highlighter} current={state.highlight} colors={highlights} clearLabel={t("mail.toolbar.noHighlight")} onPick={(c) => chain().setBackgroundColor(c).run()} onClear={() => chain().unsetBackgroundColor().run()} />
+      <IconButton type="button" label={t("mail.toolbar.clearFormatting")} size="icon-sm" onClick={() => chain().unsetAllMarks().clearNodes().run()}>
         <RemoveFormatting />
       </IconButton>
       <Divider />
@@ -221,32 +223,32 @@ export function FormatToolbar({ editor, signatures }: { editor: Editor; signatur
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
-            <DropdownMenuTrigger aria-label="Alignment" className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground aria-expanded:bg-muted max-md:size-11">
+            <DropdownMenuTrigger aria-label={t("mail.toolbar.alignment")} className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground aria-expanded:bg-muted max-md:size-11">
               <Align className="size-4" />
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>Alignment</TooltipContent>
+          <TooltipContent>{t("mail.toolbar.alignment")}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent className="w-44">
           {alignments.map((a) => (
             <DropdownMenuItem key={a.value} onSelect={() => chain().setTextAlign(a.value).run()}>
               <a.icon />
-              {a.label}
+              {t(a.labelKey)}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
       <Divider />
-      {button({ label: "Link", icon: Link2, active: state.link, run: setLink })}
+      {button({ label: t("mail.toolbar.link"), icon: Link2, active: state.link, run: setLink })}
       {signatures && (
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
-              <DropdownMenuTrigger aria-label="Insert signature" className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground aria-expanded:bg-muted max-md:size-11">
+              <DropdownMenuTrigger aria-label={t("mail.toolbar.insertSignature")} className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-fg-secondary transition-colors duration-160 hover:bg-muted hover:text-foreground aria-expanded:bg-muted max-md:size-11">
                 <SignatureIcon className="size-4" />
               </DropdownMenuTrigger>
             </TooltipTrigger>
-            <TooltipContent>Insert signature</TooltipContent>
+            <TooltipContent>{t("mail.toolbar.insertSignature")}</TooltipContent>
           </Tooltip>
           <DropdownMenuContent className="w-56">
             {signatures.map((sig) => (
@@ -255,7 +257,7 @@ export function FormatToolbar({ editor, signatures }: { editor: Editor; signatur
               </DropdownMenuItem>
             ))}
             <DropdownMenuItem asChild>
-              <a href="/settings#signatures" target="_blank" rel="noopener">{signatures.length ? "Manage signatures" : "Create a signature"}</a>
+              <a href="/settings#signatures" target="_blank" rel="noopener">{signatures.length ? t("mail.toolbar.manageSignatures") : t("mail.toolbar.createSignature")}</a>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

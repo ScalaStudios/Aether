@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/scalastudios/aether/internal/auth"
+	"github.com/scalastudios/aether/internal/i18n"
 	"github.com/scalastudios/aether/internal/secrets"
 )
 
@@ -30,6 +31,7 @@ type User struct {
 	Title           string `json:"title"`
 	Phone           string `json:"phone"`
 	UndoSendSeconds int    `json:"undoSendSeconds"`
+	Locale          string `json:"locale"`
 }
 
 func allowedUndoDelay(seconds int) bool {
@@ -51,6 +53,7 @@ type membership struct {
 	DomainIDs      []string `json:"domainIds"`
 	Permissions    []string `json:"permissions"`
 	Compliance     bool     `json:"compliance"`
+	DefaultLocale  string   `json:"defaultLocale"`
 }
 
 type sessionResponse struct {
@@ -80,7 +83,15 @@ func (s *Server) authProviders(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"localLogin": s.cfg.LocalLogin, "providers": nonNil(providers)})
+	defaultLocale := ""
+	if orgID, err := s.brandingOrg(r); err == nil && orgID != "" {
+		defaultLocale = s.orgDefaultLocale(r.Context(), orgID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"localLogin":    s.cfg.LocalLogin,
+		"providers":     nonNil(providers),
+		"defaultLocale": defaultLocale,
+	})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -185,14 +196,15 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 
 func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionResponse, error) {
 	resp := &sessionResponse{Memberships: []membership{}}
-	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone, undo_send_seconds, `+twoFactorSetupPending+` FROM users u WHERE id = $1`, userID).
-		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone, &resp.User.UndoSendSeconds, &resp.TwoFactorSetupRequired)
+	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone, undo_send_seconds, locale, `+twoFactorSetupPending+` FROM users u WHERE id = $1`, userID).
+		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone, &resp.User.UndoSendSeconds, &resp.User.Locale, &resp.TwoFactorSetupRequired)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT o.id, o.name, o.slug, m.role, m.custom_role_id, coalesce(r.name, ''), coalesce(r.scopes, '{}'), m.compliance,
-			coalesce((SELECT array_agg(d.domain_id::text ORDER BY d.domain_id) FROM organization_member_domains d WHERE d.org_id = m.org_id AND d.user_id = m.user_id), '{}')
+			coalesce((SELECT array_agg(d.domain_id::text ORDER BY d.domain_id) FROM organization_member_domains d WHERE d.org_id = m.org_id AND d.user_id = m.user_id), '{}'),
+			o.default_locale
 		FROM organization_members m
 		JOIN organizations o ON o.id = m.org_id
 		LEFT JOIN organization_roles r ON r.id = m.custom_role_id
@@ -204,7 +216,7 @@ func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionRespons
 	for rows.Next() {
 		var item membership
 		var scopes []string
-		if err := rows.Scan(&item.OrgID, &item.OrgName, &item.OrgSlug, &item.Role, &item.CustomRoleID, &item.CustomRoleName, &scopes, &item.Compliance, &item.DomainIDs); err != nil {
+		if err := rows.Scan(&item.OrgID, &item.OrgName, &item.OrgSlug, &item.Role, &item.CustomRoleID, &item.CustomRoleName, &scopes, &item.Compliance, &item.DomainIDs, &item.DefaultLocale); err != nil {
 			return nil, err
 		}
 		item.DomainIDs = nonNil(item.DomainIDs)
@@ -231,15 +243,34 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request, p *principal) {
 
 func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request, p *principal) {
 	var in struct {
-		Title           string `json:"title"`
-		Phone           string `json:"phone"`
-		UndoSendSeconds *int   `json:"undoSendSeconds"`
+		Title           *string `json:"title"`
+		Phone           *string `json:"phone"`
+		Locale          *string `json:"locale"`
+		UndoSendSeconds *int    `json:"undoSendSeconds"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	in.Title, in.Phone = strings.TrimSpace(in.Title), strings.TrimSpace(in.Phone)
-	if utf8.RuneCountInString(in.Title) > 100 || utf8.RuneCountInString(in.Phone) > 40 {
+	var title, phone, locale string
+	if err := s.db.QueryRow(r.Context(), `SELECT title, phone, locale FROM users WHERE id = $1`, p.User.ID).Scan(&title, &phone, &locale); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if in.Title != nil {
+		title = strings.TrimSpace(*in.Title)
+	}
+	if in.Phone != nil {
+		phone = strings.TrimSpace(*in.Phone)
+	}
+	if in.Locale != nil {
+		norm, ok := i18n.Normalize(*in.Locale)
+		if !ok {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_locale", "Choose one of the supported languages, or leave empty for the default.")
+			return
+		}
+		locale = norm
+	}
+	if utf8.RuneCountInString(title) > 100 || utf8.RuneCountInString(phone) > 40 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_profile", "Keep the job title to 100 characters and the phone number to 40.")
 		return
 	}
@@ -247,13 +278,7 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request, p *princi
 		writeError(w, http.StatusUnprocessableEntity, "invalid_undo_send", "Choose off, or a delay of 5, 10, 20 or 30 seconds.")
 		return
 	}
-	var err error
-	if in.UndoSendSeconds != nil {
-		_, err = s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, undo_send_seconds = $4, updated_at = now() WHERE id = $1`, p.User.ID, in.Title, in.Phone, *in.UndoSendSeconds)
-	} else {
-		_, err = s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, updated_at = now() WHERE id = $1`, p.User.ID, in.Title, in.Phone)
-	}
-	if err != nil {
+	if _, err := s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, locale = $4, undo_send_seconds = coalesce($5, undo_send_seconds), updated_at = now() WHERE id = $1`, p.User.ID, title, phone, locale, in.UndoSendSeconds); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

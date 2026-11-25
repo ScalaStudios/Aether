@@ -14,11 +14,13 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
+import { useI18n } from "@/lib/i18n"
 import type { AuditEvent, MailboxAuditSettings } from "@/lib/types"
 
 const PAGE = 50
 
 export function AuditTab({ orgId }: { orgId: string }) {
+  const { t } = useI18n()
   const audit = useInfiniteQuery({
     queryKey: ["audit", orgId],
     queryFn: ({ pageParam }) => api<AuditEvent[]>(`/organizations/${orgId}/audit`, { query: { before: pageParam } }),
@@ -31,23 +33,23 @@ export function AuditTab({ orgId }: { orgId: string }) {
     <div className="flex flex-col gap-10">
       <MailboxAuditSection orgId={orgId} />
       <section className="flex flex-col gap-6">
-        <SectionHeader title="Audit log" description="Changes and sign-ins in this organization, newest first." />
+        <SectionHeader title={t("admin.audit.title")} description={t("admin.audit.description")} />
         {audit.isPending ? (
           <RowsSkeleton rows={5} />
         ) : audit.isError ? (
           <ErrorState error={audit.error} onRetry={() => audit.refetch()} />
         ) : events.length === 0 ? (
-          <EmptyState icon={ScrollText} title="No events yet" description="Actions such as creating mailboxes or verifying domains are recorded here." />
+          <EmptyState icon={ScrollText} title={t("admin.audit.emptyTitle")} description={t("admin.audit.emptyDescription")} />
         ) : (
           <div className="animate-content flex flex-col gap-4">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>IP address</TableHead>
+                  <TableHead>{t("admin.audit.time")}</TableHead>
+                  <TableHead>{t("admin.audit.actor")}</TableHead>
+                  <TableHead>{t("admin.audit.action")}</TableHead>
+                  <TableHead>{t("admin.audit.target")}</TableHead>
+                  <TableHead>{t("admin.audit.ipAddress")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -67,7 +69,7 @@ export function AuditTab({ orgId }: { orgId: string }) {
             </Table>
             {audit.hasNextPage && (
               <Button variant="secondary" className="self-center" loading={audit.isFetchingNextPage} onClick={() => audit.fetchNextPage()}>
-                Load older events
+                {t("admin.audit.loadOlder")}
               </Button>
             )}
           </div>

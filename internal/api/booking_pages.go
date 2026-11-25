@@ -945,7 +945,7 @@ func (s *Server) bookMeeting(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	if _, err := s.sendITIP(ctx, organizer, nil, []mailpkg.Address{guest}, "Invitation: "+title, "REQUEST", event.Component); err != nil {
+	if _, err := s.sendITIP(ctx, organizer, nil, []mailpkg.Address{guest}, "request", title, "REQUEST", event.Component); err != nil {
 		if _, delErr := s.db.Exec(ctx, `DELETE FROM bookings WHERE id = $1`, bookingID); delErr != nil {
 			s.log.Error("booked meeting could not be rolled back", "booking", bookingID, "err", delErr)
 			writeError(w, http.StatusBadGateway, "send_failed", "The time was reserved, but the invitation email could not be sent. The host has it on their calendar.")

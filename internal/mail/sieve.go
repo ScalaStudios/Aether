@@ -196,7 +196,7 @@ func (r Rule) Validate() error {
 	return nil
 }
 
-func CompileSieve(rules []Rule, reply AutoReply, address string, forward ForwardPolicy) string {
+func CompileSieve(rules []Rule, reply AutoReply, address string, forward ForwardPolicy, defaultSubject string) string {
 	var b strings.Builder
 	b.WriteString(`require ["fileinto", "imap4flags", "mailbox", "copy", "vacation", "date", "relational", "body"];` + "\n")
 	if reply.Enabled {
@@ -208,6 +208,9 @@ func CompileSieve(rules []Rule, reply AutoReply, address string, forward Forward
 			window = append(window, `currentdate :value "le" "date" `+sieveString(reply.End))
 		}
 		subject := reply.Subject
+		if subject == "" {
+			subject = defaultSubject
+		}
 		if subject == "" {
 			subject = "Automatic reply"
 		}

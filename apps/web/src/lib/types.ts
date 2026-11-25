@@ -12,6 +12,7 @@ export interface User {
   title: string
   phone: string
   undoSendSeconds: number
+  locale: string
 }
 
 export interface Membership {
@@ -24,6 +25,7 @@ export interface Membership {
   customRoleName?: string
   domainIds: string[]
   permissions: string[]
+  defaultLocale: string
 }
 
 export interface Session {
@@ -77,6 +79,7 @@ export type ProviderKind = "halo" | "generic"
 
 export interface AuthProviders {
   localLogin: boolean
+  defaultLocale?: string
   providers: { slug: string; name: string; kind: ProviderKind }[]
 }
 
@@ -86,6 +89,7 @@ export interface Organization {
   id: string
   name: string
   slug: string
+  defaultLocale: string
   createdAt: string
   spamLearning: boolean
   deletedItemRetentionDays: number

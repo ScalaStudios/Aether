@@ -20,10 +20,12 @@ import { useSession } from "@/hooks/use-session"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api } from "@/lib/api"
 import { senderIdentities } from "@/lib/mail"
+import { useI18n } from "@/lib/i18n"
 import { myMailboxesQuery, signaturesQuery } from "@/lib/queries"
 import type { Signature, SignatureSettings } from "@/lib/types"
 
 export function Signatures() {
+  const { t } = useI18n()
   const identities = useQuery({ ...myMailboxesQuery, select: (list) => senderIdentities(list.filter((m) => m.access !== "read" && m.protocols.includes("webmail"))) })
   const [chosen, setChosen] = useState<string | null>(null)
   const identity = identities.data?.find((i) => i.from.address === chosen) ?? identities.data?.[0]
@@ -32,13 +34,13 @@ export function Signatures() {
   return (
     <section id="signatures" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
-        title="Signatures"
+        title={t("settings.signatures.title")}
         description="Each address you send from has its own From name and signatures in Aether Mail. Mail apps on your phone or computer keep their own settings."
         actions={
           identity && (
             <Button onClick={() => setEditing({ id: "", name: "", html: "" })}>
               <Plus aria-hidden />
-              New signature
+              {t("settings.signatures.newSignature")}
             </Button>
           )
         }
@@ -73,6 +75,7 @@ export function Signatures() {
 }
 
 function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailboxId: string; fromAddress: string; editing: Signature | null; setEditing: (s: Signature | null) => void }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const query = useQuery(signaturesQuery(mailboxId, fromAddress))
   const [deleting, setDeleting] = useState<Signature | null>(null)
@@ -96,7 +99,7 @@ function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailbo
       { ...settings, signatures, newMessage: first ? id : settings.newMessage, replies: first ? id : settings.replies },
       {
         onSuccess: () => {
-          toast.success(exists ? "Signature updated" : "Signature created")
+          toast.success(exists ? t("settings.signatures.updatedToast") : t("settings.signatures.createdToast"))
           setEditing(null)
         },
       }
@@ -110,7 +113,7 @@ function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailbo
       { ...settings, signatures: settings.signatures.filter((s) => s.id !== sig.id), newMessage: unset(settings.newMessage), replies: unset(settings.replies) },
       {
         onSuccess: () => {
-          toast.success("Signature deleted")
+          toast.success(t("settings.signatures.deletedToast"))
           setDeleting(null)
         },
       }
@@ -147,12 +150,12 @@ function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailbo
         </Button>
       </form>
       {settings.signatures.length === 0 ? (
-        <EmptyState icon={SignatureIcon} title="No signatures" description="Create one to sign new messages and replies automatically." />
+        <EmptyState icon={SignatureIcon} title={t("settings.signatures.emptyTitle")} description={t("settings.signatures.emptyDescription")} />
       ) : (
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
           <div className="grid gap-4 sm:grid-cols-2">
-            <DefaultPicker id="sig-new" label="New messages" value={settings.newMessage} signatures={settings.signatures} onChange={(v) => save.mutate({ ...settings, newMessage: v })} />
-            <DefaultPicker id="sig-replies" label="Replies and forwards" value={settings.replies} signatures={settings.signatures} onChange={(v) => save.mutate({ ...settings, replies: v })} />
+            <DefaultPicker id="sig-new" label={t("settings.signatures.newMessages")} value={settings.newMessage} signatures={settings.signatures} onChange={(v) => save.mutate({ ...settings, newMessage: v })} />
+            <DefaultPicker id="sig-replies" label={t("settings.signatures.repliesAndForwards")} value={settings.replies} signatures={settings.signatures} onChange={(v) => save.mutate({ ...settings, replies: v })} />
           </div>
           <ul className="flex flex-col divide-y divide-border">
             {settings.signatures.map((sig) => (
@@ -161,10 +164,10 @@ function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailbo
                   <span className="font-semibold">{sig.name}</span>
                   <div className="prose-editor max-h-32 overflow-hidden text-sm text-fg-secondary" dangerouslySetInnerHTML={{ __html: sig.html }} />
                 </div>
-                <IconButton label={`Edit ${sig.name}`} size="icon-sm" onClick={() => setEditing(sig)}>
+                <IconButton label={t("settings.signatures.editAria", { name: sig.name })} size="icon-sm" onClick={() => setEditing(sig)}>
                   <Pencil />
                 </IconButton>
-                <IconButton label={`Delete ${sig.name}`} size="icon-sm" onClick={() => setDeleting(sig)}>
+                <IconButton label={t("settings.signatures.deleteAria", { name: sig.name })} size="icon-sm" onClick={() => setDeleting(sig)}>
                   <Trash2 />
                 </IconButton>
               </li>
@@ -176,9 +179,9 @@ function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailbo
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title="Delete signature?"
-        description={`“${deleting?.name ?? ""}” will no longer be added to new messages or replies.`}
-        confirmLabel="Delete"
+        title={t("settings.signatures.deleteTitle")}
+        description={t("settings.signatures.deleteDescription", { name: deleting?.name ?? "" })}
+        confirmLabel={t("common.delete")}
         pending={save.isPending}
         onConfirm={() => deleting && remove(deleting)}
       />
@@ -187,6 +190,7 @@ function SignatureList({ mailboxId, fromAddress, editing, setEditing }: { mailbo
 }
 
 function DefaultPicker({ id, label, value, signatures, onChange }: { id: string; label: string; value: string; signatures: Signature[]; onChange: (id: string) => void }) {
+  const { t } = useI18n()
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
@@ -195,7 +199,7 @@ function DefaultPicker({ id, label, value, signatures, onChange }: { id: string;
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="none">No signature</SelectItem>
+          <SelectItem value="none">{t("settings.signatures.noSignature")}</SelectItem>
           {signatures.map((s) => (
             <SelectItem key={s.id} value={s.id}>
               {s.name}
@@ -208,6 +212,7 @@ function DefaultPicker({ id, label, value, signatures, onChange }: { id: string;
 }
 
 function SignatureDialog({ mailboxId, fromAddress, signature, pending, onSave, onClose }: { mailboxId: string; fromAddress: string; signature: Signature; pending: boolean; onSave: (s: Signature) => void; onClose: () => void }) {
+  const { t } = useI18n()
   const [name, setName] = useState(signature.name)
   const [error, setError] = useState("")
   const mailbox = useQuery({ ...myMailboxesQuery, select: (list) => list.find((m) => m.id === mailboxId) }).data
@@ -216,13 +221,13 @@ function SignatureDialog({ mailboxId, fromAddress, signature, pending, onSave, o
     extensions: mailEditorExtensions,
     content: signature.html,
     immediatelyRender: false,
-    editorProps: { attributes: { class: "prose-editor min-h-[160px] px-4 py-3 text-base outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Signature", "data-focus-ring": "off" } },
+    editorProps: { attributes: { class: "prose-editor min-h-[160px] px-4 py-3 text-base outline-none", role: "textbox", "aria-multiline": "true", "aria-label": t("settings.signatures.editorAria"), "data-focus-ring": "off" } },
   })
   const template = useMutation({
     mutationFn: () => api<{ html: string }>(`/mailboxes/${mailboxId}/signature-template`, { query: { fromAddress } }),
     onSuccess: ({ html }) => {
       editor?.commands.setContent(html)
-      if (!name.trim()) setName(org || "Default")
+      if (!name.trim()) setName(org || t("settings.signatures.defaultName"))
     },
   })
 
@@ -230,23 +235,23 @@ function SignatureDialog({ mailboxId, fromAddress, signature, pending, onSave, o
     <FormDialog
       open
       onOpenChange={(open) => !open && onClose()}
-      title={signature.id ? "Edit signature" : "New signature"}
-      submitLabel={signature.id ? "Save signature" : "Create signature"}
+      title={signature.id ? t("settings.signatures.editTitle") : t("settings.signatures.newSignature")}
+      submitLabel={signature.id ? t("settings.signatures.saveSubmit") : t("settings.signatures.createSubmit")}
       pending={pending}
       wide
       onSubmit={(e) => {
         e.preventDefault()
-        if (!name.trim()) return setError("Name the signature, for example “Work”.")
+        if (!name.trim()) return setError(t("settings.signatures.nameRequired"))
         onSave({ ...signature, name: name.trim(), html: editor?.isEmpty ? "" : (editor?.getHTML() ?? "") })
       }}
     >
-      <Field id="sig-name" label="Name" error={error}>
+      <Field id="sig-name" label={t("common.name")} error={error}>
         <Input id="sig-name" value={name} autoComplete="off" aria-invalid={!!error} onChange={(e) => setName(e.target.value)} />
       </Field>
       {editor && (
         <Button type="button" variant="secondary" size="sm" className="self-start" loading={template.isPending} onClick={() => template.mutate()}>
           <LayoutTemplate aria-hidden />
-          Use {org || "company"} template
+          {t("settings.signatures.useOrgTemplate", { org: org || t("settings.signatures.companyFallback") })}
         </Button>
       )}
       <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">

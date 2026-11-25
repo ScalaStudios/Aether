@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Ban, History, KeyRound, Plus, SearchX, Send, Trash2, Webhook as WebhookIcon } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -27,41 +27,33 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useSession } from "@/hooks/use-session"
 import { ApiError, api } from "@/lib/api"
 import { formatDate, formatDateTime } from "@/lib/format"
+import { useI18n } from "@/lib/i18n"
 import { hasPerm } from "@/lib/permissions"
 import type { APIKey, Suppression, Webhook, WebhookDelivery } from "@/lib/types"
 
 type Access = "" | "read" | "write"
 
-const resources: { value: string; label: string; description: string; levels: Access[] }[] = [
-  { value: "domains", label: "Domains", description: "Domains, DNS records, verification and DMARC reports.", levels: ["", "read", "write"] },
-  {
-    value: "mailboxes",
-    label: "Mailboxes",
-    description: "Mailboxes, delegates, mail rules, automatic replies and signatures. Write also imports calendars and contacts for the mailbox owner.",
-    levels: ["", "read", "write"],
-  },
-  { value: "aliases", label: "Aliases", description: "Aliases and distribution lists, with their members, sender restrictions and owners.", levels: ["", "read", "write"] },
-  { value: "contacts", label: "Contacts", description: "Organization contacts shown in the directory.", levels: ["", "read", "write"] },
-  { value: "members", label: "Members", description: "Members and their roles. Write also adds and removes members.", levels: ["", "read", "write"] },
-  { value: "audit", label: "Audit log", description: "The organization’s audit log.", levels: ["", "read"] },
-  { value: "message-trace", label: "Message trace", description: "Search and export delivery records for the organization’s domains.", levels: ["", "read"] },
-  { value: "webhooks", label: "Webhooks", description: "Webhooks, their delivery history and test deliveries.", levels: ["", "read", "write"] },
-  { value: "senders", label: "Senders", description: "Allowed and blocked senders for the organization and its domains.", levels: ["", "read", "write"] },
-  { value: "mailflow", label: "Mail flow", description: "Mail flow rules, their recent matches and held messages. Write also approves and rejects held messages.", levels: ["", "read", "write"] },
-  { value: "suppressions", label: "Suppression list", description: "Addresses Aether refuses to send to. Write also adds and removes addresses.", levels: ["", "read", "write"] },
+const resources: { value: string; levels: Access[] }[] = [
+  { value: "domains", levels: ["", "read", "write"] },
+  { value: "mailboxes", levels: ["", "read", "write"] },
+  { value: "aliases", levels: ["", "read", "write"] },
+  { value: "members", levels: ["", "read", "write"] },
+  { value: "audit", levels: ["", "read"] },
+  { value: "webhooks", levels: ["", "read", "write"] },
+  { value: "contacts", levels: ["", "read", "write"] },
+  { value: "message-trace", levels: ["", "read"] },
+  { value: "senders", levels: ["", "read", "write"] },
+  { value: "mailflow", levels: ["", "read", "write"] },
+  { value: "suppressions", levels: ["", "read", "write"] },
 ]
 
-const levelLabels: Record<Access, string> = { "": "None", read: "Read", write: "Write" }
+interface KeyValues {
+  name: string
+  access: Record<string, Access>
+  expires: string
+}
 
-const keySchema = z.object({
-  name: z.string().trim().min(1, "Enter a name.").max(100, "Use up to 100 characters."),
-  access: z.record(z.string(), z.enum(["", "read", "write"])).refine((a) => Object.values(a).some(Boolean), "Choose at least one scope."),
-  expires: z.string(),
-})
-
-type KeyValues = z.infer<typeof keySchema>
-
-const keyDefaults: KeyValues = { name: "", access: Object.fromEntries(resources.map((r) => [r.value, ""])), expires: "" }
+const keyDefaults: KeyValues = { name: "", access: Object.fromEntries(resources.map((r) => [r.value, "" as Access])), expires: "" }
 
 const splitEvents = (events: string) =>
   events
@@ -69,20 +61,16 @@ const splitEvents = (events: string) =>
     .map((e) => e.trim())
     .filter(Boolean)
 
-const hookSchema = z
-  .object({
-    url: z.url("Enter a full URL such as https://example.com/aether."),
-    all: z.boolean(),
-    events: z.string(),
-  })
-  .refine((v) => v.all || splitEvents(v.events).length > 0, { message: "Enter at least one event name.", path: ["events"] })
+interface HookValues {
+  url: string
+  all: boolean
+  events: string
+}
 
-type HookValues = z.infer<typeof hookSchema>
-
-const deliveryStatus: Record<WebhookDelivery["status"], { tone: "success" | "info" | "danger"; label: string }> = {
-  delivered: { tone: "success", label: "Delivered" },
-  pending: { tone: "info", label: "Pending" },
-  failed: { tone: "danger", label: "Failed" },
+const deliveryTones: Record<WebhookDelivery["status"], "success" | "info" | "danger"> = {
+  delivered: "success",
+  pending: "info",
+  failed: "danger",
 }
 
 const chip = "rounded-xs bg-muted px-2 py-1 font-mono text-xs"
@@ -104,11 +92,26 @@ export function IntegrationsTab({ orgId }: { orgId: string }) {
 }
 
 function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const keys = useQuery({ queryKey: ["api-keys", orgId], queryFn: () => api<APIKey[]>(`/organizations/${orgId}/api-keys`) })
   const [creating, setCreating] = useState(false)
   const [token, setToken] = useState<string | null>(null)
   const [revoking, setRevoking] = useState<APIKey | null>(null)
+  const keySchema = useMemo(
+    () =>
+      z.object({
+        name: z.string().trim().min(1, t("admin.integrations.apiKeys.validation.nameRequired")).max(100, t("admin.integrations.apiKeys.validation.nameMax")),
+        access: z.record(z.string(), z.enum(["", "read", "write"])).refine((a) => Object.values(a).some(Boolean), t("admin.integrations.apiKeys.validation.scopeRequired")),
+        expires: z.string(),
+      }),
+    [t]
+  )
+  const levelLabels: Record<Access, string> = {
+    "": t("admin.integrations.apiKeys.levels.none"),
+    read: t("admin.integrations.apiKeys.levels.read"),
+    write: t("admin.integrations.apiKeys.levels.write"),
+  }
   const form = useForm<KeyValues>({ resolver: zodResolver(keySchema), defaultValues: keyDefaults })
 
   const create = useMutation({
@@ -130,7 +133,7 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   const revoke = useMutation({
     mutationFn: (id: string) => api(`/api-keys/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("API key revoked")
+      toast.success(t("admin.integrations.apiKeys.revokedToast"))
       setRevoking(null)
       qc.invalidateQueries({ queryKey: ["api-keys", orgId] })
     },
@@ -149,30 +152,30 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title="API keys"
-        description="A key acts as an administrator of this organization, limited to its scopes. Send it as a bearer token."
+        title={t("admin.integrations.apiKeys.title")}
+        description={t("admin.integrations.apiKeys.description")}
         actions={
           canWrite && (
             <Button onClick={() => setCreating(true)}>
               <Plus aria-hidden />
-              Create API key
+              {t("admin.integrations.apiKeys.create")}
             </Button>
           )
         }
       />
-      <QueryView query={keys} empty={<EmptyState icon={KeyRound} title="No API keys" description="Create a key to manage domains, mailboxes and aliases from scripts." />}>
+      <QueryView query={keys} empty={<EmptyState icon={KeyRound} title={t("admin.integrations.apiKeys.emptyTitle")} description={t("admin.integrations.apiKeys.emptyDescription")} />}>
         {(items) => (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead>Scopes</TableHead>
-                <TableHead>Last used</TableHead>
-                <TableHead>Expires</TableHead>
+                <TableHead>{t("common.name")}</TableHead>
+                <TableHead>{t("admin.integrations.apiKeys.key")}</TableHead>
+                <TableHead>{t("admin.integrations.apiKeys.scopes")}</TableHead>
+                <TableHead>{t("admin.integrations.apiKeys.lastUsed")}</TableHead>
+                <TableHead>{t("admin.integrations.apiKeys.expires")}</TableHead>
                 {canWrite && (
                   <TableHead className="w-12">
-                    <span className="sr-only">Actions</span>
+                    <span className="sr-only">{t("common.actions")}</span>
                   </TableHead>
                 )}
               </TableRow>
@@ -191,11 +194,11 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
                       ))}
                     </div>
                   </TableCell>
-                  <TableCell>{k.lastUsedAt ? formatDateTime(k.lastUsedAt) : "Never"}</TableCell>
-                  <TableCell>{k.expiresAt ? formatDate(k.expiresAt) : "Never"}</TableCell>
+                  <TableCell>{k.lastUsedAt ? formatDateTime(k.lastUsedAt) : t("common.never")}</TableCell>
+                  <TableCell>{k.expiresAt ? formatDate(k.expiresAt) : t("common.never")}</TableCell>
                   {canWrite && (
                     <TableCell>
-                      <IconButton label={`Revoke ${k.name}`} size="icon-sm" onClick={() => setRevoking(k)}>
+                      <IconButton label={t("admin.integrations.apiKeys.revokeAria", { name: k.name })} size="icon-sm" onClick={() => setRevoking(k)}>
                         <Trash2 />
                       </IconButton>
                     </TableCell>
@@ -210,46 +213,49 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
       <FormDialog
         open={creating}
         onOpenChange={close}
-        title={token ? "API key created" : "Create API key"}
-        description={token ? "Copy this token now. You won't be able to see it again." : "A write scope includes read access."}
-        submitLabel="Create API key"
+        title={token ? t("admin.integrations.apiKeys.createdTitle") : t("admin.integrations.apiKeys.create")}
+        description={token ? t("admin.integrations.apiKeys.createdDescription") : t("admin.integrations.apiKeys.createDescription")}
+        submitLabel={t("admin.integrations.apiKeys.create")}
         pending={create.isPending}
         onSubmit={form.handleSubmit((v) => create.mutate(v))}
         footer={
           token && (
             <DialogClose asChild>
-              <Button type="button">Done</Button>
+              <Button type="button">{t("common.done")}</Button>
             </DialogClose>
           )
         }
       >
         {token ? (
-          <CopyField id="api-key-token" label="Token" value={token} copyLabel="Copy token" />
+          <CopyField id="api-key-token" label={t("admin.integrations.apiKeys.token")} value={token} copyLabel={t("admin.integrations.apiKeys.copyToken")} />
         ) : (
           <>
-            <Field id="api-key-name" label="Name" error={form.formState.errors.name?.message}>
-              <Input id="api-key-name" placeholder="Provisioning script" autoComplete="off" aria-invalid={!!form.formState.errors.name} {...form.register("name")} />
+            <Field id="api-key-name" label={t("common.name")} error={form.formState.errors.name?.message}>
+              <Input id="api-key-name" placeholder={t("admin.integrations.apiKeys.namePlaceholder")} autoComplete="off" aria-invalid={!!form.formState.errors.name} {...form.register("name")} />
             </Field>
             <Controller
               control={form.control}
               name="access"
               render={({ field, fieldState }) => (
                 <fieldset className="flex flex-col gap-4">
-                  <legend className="mb-2 text-label text-fg-secondary">Scopes</legend>
-                  {resources.map((r) => (
-                    <div key={r.value} className="flex items-center justify-between gap-4">
-                      <div className="flex flex-col gap-1">
-                        <span>{r.label}</span>
-                        <span className="text-sm text-fg-tertiary">{r.description}</span>
+                  <legend className="mb-2 text-label text-fg-secondary">{t("admin.integrations.apiKeys.scopes")}</legend>
+                  {resources.map((r) => {
+                    const label = t(`admin.integrations.apiKeys.resources.${r.value}`)
+                    return (
+                      <div key={r.value} className="flex items-center justify-between gap-4">
+                        <div className="flex flex-col gap-1">
+                          <span>{label}</span>
+                          <span className="text-sm text-fg-tertiary">{t(`admin.integrations.apiKeys.resources.${r.value}Description`)}</span>
+                        </div>
+                        <SegmentedControl
+                          label={t("admin.integrations.apiKeys.accessLabel", { resource: label })}
+                          options={r.levels.map((level) => ({ value: level, label: levelLabels[level] }))}
+                          value={field.value[r.value]}
+                          onChange={(level) => field.onChange({ ...field.value, [r.value]: level })}
+                        />
                       </div>
-                      <SegmentedControl
-                        label={`${r.label} access`}
-                        options={r.levels.map((level) => ({ value: level, label: levelLabels[level] }))}
-                        value={field.value[r.value]}
-                        onChange={(level) => field.onChange({ ...field.value, [r.value]: level })}
-                      />
-                    </div>
-                  ))}
+                    )
+                  })}
                   {fieldState.error && (
                     <p role="alert" className="text-sm text-danger">
                       {fieldState.error.message}
@@ -258,7 +264,7 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
                 </fieldset>
               )}
             />
-            <Field id="api-key-expires" label="Expires" hint="Optional. The key stops working at the end of this day.">
+            <Field id="api-key-expires" label={t("admin.integrations.apiKeys.expires")} hint={t("admin.integrations.apiKeys.expiresHint")}>
               <Input id="api-key-expires" type="date" min={today} {...form.register("expires")} />
             </Field>
           </>
@@ -268,9 +274,9 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
       <ConfirmDialog
         open={!!revoking}
         onOpenChange={(open) => !open && setRevoking(null)}
-        title="Revoke API key?"
-        description={`Requests using “${revoking?.name}” are rejected immediately. This cannot be undone.`}
-        confirmLabel="Revoke"
+        title={t("admin.integrations.apiKeys.revokeTitle")}
+        description={t("admin.integrations.apiKeys.revokeDescription", { name: revoking?.name ?? "" })}
+        confirmLabel={t("admin.integrations.apiKeys.revokeConfirm")}
         pending={revoke.isPending}
         onConfirm={() => revoking && revoke.mutate(revoking.id)}
       />
@@ -279,12 +285,24 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
 }
 
 function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const hooks = useQuery({ queryKey: ["webhooks", orgId], queryFn: () => api<Webhook[]>(`/organizations/${orgId}/webhooks`) })
   const [creating, setCreating] = useState(false)
   const [secret, setSecret] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Webhook | null>(null)
   const [viewing, setViewing] = useState<Webhook | null>(null)
+  const hookSchema = useMemo(
+    () =>
+      z
+        .object({
+          url: z.url(t("admin.integrations.webhooks.validation.urlInvalid")),
+          all: z.boolean(),
+          events: z.string(),
+        })
+        .refine((v) => v.all || splitEvents(v.events).length > 0, { message: t("admin.integrations.webhooks.validation.eventsRequired"), path: ["events"] }),
+    [t]
+  )
   const form = useForm<HookValues>({ resolver: zodResolver(hookSchema), defaultValues: { url: "", all: true, events: "" } })
   const all = useWatch({ control: form.control, name: "all" })
 
@@ -303,7 +321,7 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   const remove = useMutation({
     mutationFn: (id: string) => api(`/webhooks/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("Webhook deleted")
+      toast.success(t("admin.integrations.webhooks.deletedToast"))
       setDeleting(null)
       qc.invalidateQueries({ queryKey: ["webhooks", orgId] })
     },
@@ -311,7 +329,7 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   const test = useMutation({
     mutationFn: (hook: Webhook) => api(`/webhooks/${hook.id}/test`, { method: "POST" }),
     onSuccess: (_d, hook) => {
-      toast.success("Test event queued. Aether sends it within 15 seconds.")
+      toast.success(t("admin.integrations.webhooks.testQueuedToast"))
       qc.invalidateQueries({ queryKey: ["webhook-deliveries", hook.id] })
       setViewing(hook)
     },
@@ -328,13 +346,13 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title="Webhooks"
+        title={t("admin.integrations.webhooks.title")}
         description="Aether posts matching audit and mail delivery events to these URLs as JSON. Verify the Aether-Signature header with your secret."
         actions={
           canWrite && (
             <Button variant="secondary" onClick={() => setCreating(true)}>
               <Plus aria-hidden />
-              Create webhook
+              {t("admin.integrations.webhooks.create")}
             </Button>
           )
         }
@@ -344,11 +362,11 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>URL</TableHead>
-                <TableHead>Events</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t("admin.integrations.webhooks.url")}</TableHead>
+                <TableHead>{t("admin.integrations.webhooks.events")}</TableHead>
+                <TableHead>{t("admin.integrations.webhooks.created")}</TableHead>
                 <TableHead className="w-28">
-                  <span className="sr-only">Actions</span>
+                  <span className="sr-only">{t("common.actions")}</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -358,7 +376,7 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
                   <TableCell className="font-mono text-sm break-all whitespace-normal">{h.url}</TableCell>
                   <TableCell className="whitespace-normal">
                     {h.events.includes("*") ? (
-                      "All events"
+                      t("admin.integrations.webhooks.allEvents")
                     ) : (
                       <div className="flex flex-wrap gap-1">
                         {h.events.map((e) => (
@@ -373,15 +391,15 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
                   <TableCell>
                     <div className="flex gap-1">
                       {canWrite && (
-                        <IconButton label="Send test event" size="icon-sm" disabled={test.isPending} onClick={() => test.mutate(h)}>
+                        <IconButton label={t("admin.integrations.webhooks.sendTestAria")} size="icon-sm" disabled={test.isPending} onClick={() => test.mutate(h)}>
                           <Send />
                         </IconButton>
                       )}
-                      <IconButton label="Deliveries" size="icon-sm" onClick={() => setViewing(h)}>
+                      <IconButton label={t("admin.integrations.webhooks.deliveriesAria")} size="icon-sm" onClick={() => setViewing(h)}>
                         <History />
                       </IconButton>
                       {canWrite && (
-                        <IconButton label={`Delete webhook to ${h.url}`} size="icon-sm" onClick={() => setDeleting(h)}>
+                        <IconButton label={t("admin.integrations.webhooks.deleteAria", { url: h.url })} size="icon-sm" onClick={() => setDeleting(h)}>
                           <Trash2 />
                         </IconButton>
                       )}
@@ -397,27 +415,27 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
       <FormDialog
         open={creating}
         onOpenChange={close}
-        title={secret ? "Webhook created" : "Create webhook"}
-        description={secret ? "Copy this secret now. You won't be able to see it again." : "Aether signs each request with a secret shown after you create the webhook."}
-        submitLabel="Create webhook"
+        title={secret ? t("admin.integrations.webhooks.createdTitle") : t("admin.integrations.webhooks.create")}
+        description={secret ? t("admin.integrations.webhooks.createdDescription") : t("admin.integrations.webhooks.createDescription")}
+        submitLabel={t("admin.integrations.webhooks.create")}
         pending={create.isPending}
         onSubmit={form.handleSubmit((v) => create.mutate(v))}
         footer={
           secret && (
             <DialogClose asChild>
-              <Button type="button">Done</Button>
+              <Button type="button">{t("common.done")}</Button>
             </DialogClose>
           )
         }
       >
         {secret ? (
-          <CopyField id="webhook-secret" label="Signing secret" value={secret} copyLabel="Copy secret" />
+          <CopyField id="webhook-secret" label={t("admin.integrations.webhooks.signingSecret")} value={secret} copyLabel={t("admin.integrations.webhooks.copySecret")} />
         ) : (
           <>
-            <Field id="webhook-url" label="URL" hint="Must use https." error={form.formState.errors.url?.message}>
+            <Field id="webhook-url" label={t("admin.integrations.webhooks.url")} hint={t("admin.integrations.webhooks.urlHint")} error={form.formState.errors.url?.message}>
               <Input id="webhook-url" type="url" placeholder="https://example.com/aether" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!form.formState.errors.url} {...form.register("url")} />
             </Field>
-            <SwitchField control={form.control} name="all" id="webhook-all" label="All events" />
+            <SwitchField control={form.control} name="all" id="webhook-all" label={t("admin.integrations.webhooks.allEvents")} />
             {!all && (
               <Field id="webhook-events" label="Events" hint="Comma-separated event names, for example mailbox.create, message.bounced, message.delivered." error={form.formState.errors.events?.message}>
                 <Input id="webhook-events" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!form.formState.errors.events} {...form.register("events")} />
@@ -430,9 +448,9 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title="Delete webhook?"
-        description={`Aether stops sending events to ${deleting?.url} and deletes its delivery history.`}
-        confirmLabel="Delete webhook"
+        title={t("admin.integrations.webhooks.deleteTitle")}
+        description={t("admin.integrations.webhooks.deleteDescription", { url: deleting?.url ?? "" })}
+        confirmLabel={t("admin.integrations.webhooks.deleteConfirm")}
         pending={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting.id)}
       />
@@ -443,6 +461,7 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
 }
 
 function DeliveriesDialog({ webhook, onClose }: { webhook: Webhook; onClose: () => void }) {
+  const { t } = useI18n()
   const deliveries = useQuery({
     queryKey: ["webhook-deliveries", webhook.id],
     queryFn: () => api<WebhookDelivery[]>(`/webhooks/${webhook.id}/deliveries`),
@@ -453,19 +472,19 @@ function DeliveriesDialog({ webhook, onClose }: { webhook: Webhook; onClose: () 
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[800px]">
         <DialogHeader>
-          <DialogTitle>Deliveries</DialogTitle>
-          <DialogDescription className="break-all">The 50 most recent deliveries to {webhook.url}, newest first.</DialogDescription>
+          <DialogTitle>{t("admin.integrations.webhooks.deliveriesTitle")}</DialogTitle>
+          <DialogDescription className="break-all">{t("admin.integrations.webhooks.deliveriesDescription", { url: webhook.url })}</DialogDescription>
         </DialogHeader>
-        <QueryView query={deliveries} empty={<EmptyState icon={History} title="No deliveries yet" description="Send a test event to check that your endpoint responds." />}>
+        <QueryView query={deliveries} empty={<EmptyState icon={History} title={t("admin.integrations.webhooks.noDeliveriesTitle")} description={t("admin.integrations.webhooks.noDeliveriesDescription")} />}>
           {(items) => (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Event</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Response</TableHead>
-                  <TableHead>Error</TableHead>
+                  <TableHead>{t("admin.integrations.webhooks.time")}</TableHead>
+                  <TableHead>{t("admin.integrations.webhooks.event")}</TableHead>
+                  <TableHead>{t("common.status")}</TableHead>
+                  <TableHead>{t("admin.integrations.webhooks.response")}</TableHead>
+                  <TableHead>{t("admin.integrations.webhooks.error")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -474,7 +493,7 @@ function DeliveriesDialog({ webhook, onClose }: { webhook: Webhook; onClose: () 
                     <TableCell>{formatDateTime(d.deliveredAt ?? d.createdAt)}</TableCell>
                     <TableCell className="font-mono text-sm">{d.event}</TableCell>
                     <TableCell>
-                      <StatusBadge tone={deliveryStatus[d.status].tone}>{deliveryStatus[d.status].label}</StatusBadge>
+                      <StatusBadge tone={deliveryTones[d.status]}>{t(`admin.integrations.webhooks.deliveryStatus.${d.status}`)}</StatusBadge>
                     </TableCell>
                     <TableCell className="font-mono text-sm">{d.responseCode ?? "—"}</TableCell>
                     <TableCell className="text-sm break-words whitespace-normal text-fg-secondary">{d.lastError || "—"}</TableCell>

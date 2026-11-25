@@ -1,0 +1,67 @@
+{
+  "dates": {
+    "dateFormat": "{weekday}, {day} de {month} de {year}",
+    "dateTimeRangeFormat": "{weekday}, {day} de {month} de {year}, {startTime} – {endTime} {zone}",
+    "weekdays": {
+      "0": "domingo",
+      "1": "lunes",
+      "2": "martes",
+      "3": "miércoles",
+      "4": "jueves",
+      "5": "viernes",
+      "6": "sábado"
+    },
+    "months": {
+      "1": "enero",
+      "2": "febrero",
+      "3": "marzo",
+      "4": "abril",
+      "5": "mayo",
+      "6": "junio",
+      "7": "julio",
+      "8": "agosto",
+      "9": "septiembre",
+      "10": "octubre",
+      "11": "noviembre",
+      "12": "diciembre"
+    }
+  },
+  "email": {
+    "autoReply": {
+      "defaultSubject": "Respuesta automática"
+    },
+    "invitation": {
+      "when": "Cuándo: {when}",
+      "where": "Dónde: {where}",
+      "organizer": "Organizador: {organizer}",
+      "subject": {
+        "request": "Invitación: {title}",
+        "update": "Invitación actualizada: {title}",
+        "cancel": "Cancelado: {title}",
+        "accepted": "Aceptado: {title}",
+        "tentative": "Aceptado provisionalmente: {title}",
+        "declined": "Rechazado: {title}"
+      }
+    },
+    "quotaWarning": {
+      "subject": "Almacenamiento del buzón casi lleno ({percent}%)",
+      "body": "Hola {name},\n\nTu buzón {address} está usando {used} de {limit} ({percent}%).\n\nElimina mensajes innecesarios o vacía la Papelera y el Spam para seguir recibiendo correo sin interrupciones.\n\n— {organization}"
+    },
+    "digest": {
+      "subject": "Tu resumen de {organization} — {period}",
+      "body": "Hola {name},\n\nAquí tienes tu resumen de {period}:\n\n{summary}\n\n— {organization}"
+    },
+    "notification": {
+      "subject": "{title}",
+      "body": "Hola {name},\n\n{message}\n\n— {organization}"
+    }
+  },
+  "appleProfile": {
+    "appPasswordName": "Perfil de dispositivo Apple",
+    "mail": "Correo",
+    "calendar": "Calendario",
+    "contacts": "Contactos",
+    "displayName": "Aether: {address}",
+    "description": "Correo, calendario y contactos para {address}. Elimina este perfil para desconectar el dispositivo; la contraseña de aplicación que contiene también puede revocarse en Aether."
+  }
+}

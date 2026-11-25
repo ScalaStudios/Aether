@@ -148,11 +148,15 @@ func TestCompileSieveEscapesAndSkipsDisabled(t *testing.T) {
 			Actions: RuleActions{MoveTo: "Archive", MarkRead: true, Stop: true}},
 		{Name: "off", Enabled: false, Match: "all", Conditions: []RuleCondition{{Field: "to", Contains: "x"}}, Actions: RuleActions{Flag: true}},
 		{Name: "fwd", Enabled: true, Match: "all", Conditions: []RuleCondition{{Field: "from", Contains: "boss"}}, Actions: RuleActions{ForwardTo: []string{"me@else.example"}, KeepCopy: true}},
-	}, AutoReply{Enabled: true, Subject: "Away", Message: "Back on \"Monday\"", Start: "2026-10-14", End: "2026-10-20"}, "me@example.test", ForwardPolicy{})
+	}, AutoReply{Enabled: true, Subject: "Away", Message: "Back on \"Monday\"", Start: "2026-10-14", End: "2026-10-20"}, "me@example.test", ForwardPolicy{}, "Automatic reply")
 	for _, want := range []string{`redirect :copy "me@else.example";`, `currentdate :value "ge" "date" "2026-10-14"`, `vacation :days 1 :subject "Away" :from "me@example.test" "Back on \"Monday\"";`, `anyof (header :contains "Subject" "say \"hi\" \\ now", header :contains "From" "billing@")`, `addflag "\\Seen";`, `fileinto :create "Archive";`, "stop;"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %s:\n%s", want, script)
 		}
+	}
+	localized := CompileSieve(nil, AutoReply{Enabled: true, Message: "Volto segunda"}, "me@example.test", ForwardPolicy{}, "Resposta automática")
+	if !strings.Contains(localized, `:subject "Resposta automática"`) {
+		t.Errorf("localized auto-reply subject missing:\n%s", localized)
 	}
 	if strings.Contains(script, `"To"`) {
 		t.Errorf("disabled rule compiled:\n%s", script)
@@ -178,7 +182,7 @@ func TestCompileSieveBodyHeaderSizeAndDelete(t *testing.T) {
 	if err := rule.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	script := CompileSieve([]Rule{rule}, AutoReply{}, "me@example.test", ForwardPolicy{})
+	script := CompileSieve([]Rule{rule}, AutoReply{}, "me@example.test", ForwardPolicy{}, "")
 	for _, want := range []string{`"body"]`, `body :text :contains "automatically generated"`, `not header :contains "List-Id" "alerts"`, `size :over 512K`, `not address :is ["to", "cc"] "me@example.test"`, "discard;"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %s:\n%s", want, script)
@@ -235,7 +239,7 @@ func TestForwardPolicy(t *testing.T) {
 	}
 	rule := Rule{Name: "fwd", Enabled: true, Match: "all", Conditions: []RuleCondition{{Field: "subject", Contains: "x"}},
 		Actions: RuleActions{ForwardTo: []string{"me@gmail.example", "team@example.test"}}}
-	script := CompileSieve([]Rule{rule}, AutoReply{}, "me@example.test", ForwardPolicy{Mode: "blocked", OrgDomains: org})
+	script := CompileSieve([]Rule{rule}, AutoReply{}, "me@example.test", ForwardPolicy{Mode: "blocked", OrgDomains: org}, "")
 	if strings.Contains(script, "gmail.example") || !strings.Contains(script, `redirect "team@example.test";`) {
 		t.Errorf("blocked destination compiled or allowed one dropped:\n%s", script)
 	}

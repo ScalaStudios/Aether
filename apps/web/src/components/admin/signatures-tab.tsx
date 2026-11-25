@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
+import { useI18n } from "@/lib/i18n"
 import { messageDocument } from "@/lib/mail"
 import { hasPerm, isDomainScoped } from "@/lib/permissions"
 import { domainsQuery, mailboxesQuery } from "@/lib/queries"
@@ -28,6 +29,7 @@ export function SignaturesTab({ orgId }: { orgId: string }) {
   const session = useSession().data
   const canWrite = hasPerm(session, orgId, "signatures:write")
   const scoped = isDomainScoped(session, orgId)
+  const { t } = useI18n()
   const templates = useQuery({
     queryKey: ["signature-templates", orgId],
     queryFn: () => api<{ builtIn: SignatureTemplate; templates: SignatureTemplate[] }>(`/organizations/${orgId}/signature-templates`),
@@ -41,12 +43,12 @@ export function SignaturesTab({ orgId }: { orgId: string }) {
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title="Signature template"
-        description="People start their signature from this template in Settings → Signatures, with their own name, job title and phone filled in."
+        title={t("admin.signatures.title")}
+        description={t("admin.signatures.description")}
         actions={
           domainList.length > 0 && (
             <Select value={effectiveScope} onValueChange={setScope}>
-              <SelectTrigger aria-label="Template for" className="w-64">
+              <SelectTrigger aria-label={t("admin.signatures.templateFor")} className="w-64">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -68,8 +70,8 @@ export function SignaturesTab({ orgId }: { orgId: string }) {
       ) : (
         <QueryView query={templates} skeleton={<RowsSkeleton rows={4} />}>
           {(data) => {
-            const own = data.templates.find((t) => t.domainId === (domain?.id ?? null))
-            const fallback = data.templates.find((t) => t.domainId === null) ?? data.builtIn
+            const own = data.templates.find((item) => item.domainId === (domain?.id ?? null))
+            const fallback = data.templates.find((item) => item.domainId === null) ?? data.builtIn
             return (
               <TemplateEditor
                 key={`${effectiveScope}-${!!own}`}
@@ -103,6 +105,7 @@ function TemplateEditor({
   stored: boolean
   canWrite: boolean
 }) {
+  const { t } = useI18n()
   const qc = useQueryClient()
   const session = useSession().data
   const [html, setHtml] = useState(template.html)
@@ -127,11 +130,11 @@ function TemplateEditor({
   }
   const save = useMutation({
     mutationFn: () => api<SignatureTemplate>(`/organizations/${orgId}/signature-templates`, { method: "PUT", body: { domainId: template.domainId, html, links, logoWidth: Number(logoWidth) } }),
-    onSuccess: () => done(domain ? `Template for @${domain.name} saved` : "Signature template saved"),
+    onSuccess: () => done(domain ? t("admin.signatures.savedDomainToast", { domain: domain.name }) : t("admin.signatures.savedToast")),
   })
   const remove = useMutation({
     mutationFn: () => api(`/organizations/${orgId}/signature-templates`, { method: "DELETE", query: { domainId: template.domainId } }),
-    onSuccess: () => done(`@${domain?.name} uses the template for all domains again`),
+    onSuccess: () => done(t("admin.signatures.revertedToast", { domain: domain?.name ?? "" })),
   })
   const setLink = (i: number, change: Partial<SignatureTemplate["links"][number]>) => setLinks((list) => list.map((l, j) => (j === i ? { ...l, ...change } : l)))
 
@@ -157,33 +160,36 @@ function TemplateEditor({
         <div className="flex flex-col gap-4">
           <Field
             id="template-html"
-            label="Template"
+            label={t("admin.signatures.template")}
             hint={
               <>
-                HTML with placeholders: {placeholders.map((p, i) => (
+                {t("admin.signatures.placeholdersPrefix")}
+                {placeholders.map((p, i) => (
                   <span key={p}>
                     <code className="font-mono text-xs">{`{{${p}}}`}</code>
                     {i < placeholders.length - 1 ? ", " : ". "}
                   </span>
                 ))}
-                Wrap a part in <code className="font-mono text-xs">{"{{#title}}…{{/title}}"}</code> to leave it out when the value is empty.
+                {t("admin.signatures.conditionalHintBefore")}
+                <code className="font-mono text-xs">{"{{#title}}…{{/title}}"}</code>
+                {t("admin.signatures.conditionalHintAfter")}
               </>
             }
           >
             <Textarea id="template-html" rows={14} spellCheck={false} readOnly={!canWrite} value={html} className="font-mono text-sm" onChange={(e) => setHtml(e.target.value)} />
           </Field>
-          <Field id="template-logo" label="Logo width" hint="In pixels. The logo is the light theme logo from Branding, when there is one.">
+          <Field id="template-logo" label={t("admin.signatures.logoWidth")} hint={t("admin.signatures.logoWidthHint")}>
             <Input id="template-logo" type="number" min={16} max={240} readOnly={!canWrite} value={logoWidth} className="w-28" onChange={(e) => setLogoWidth(e.target.value)} />
           </Field>
           <fieldset className="flex flex-col gap-2">
-            <legend className="pb-2 text-label text-fg-secondary">Links</legend>
+            <legend className="pb-2 text-label text-fg-secondary">{t("admin.signatures.links")}</legend>
             {links.length === 0 && !canWrite && <p className="text-sm text-fg-tertiary">No links configured.</p>}
             {links.map((l, i) => (
               <div key={i} className="flex gap-2">
                 <Input aria-label={`Label of link ${i + 1}`} placeholder="LinkedIn" maxLength={40} readOnly={!canWrite} value={l.label} className="w-36 shrink-0" onChange={(e) => setLink(i, { label: e.target.value })} />
                 <Input aria-label={`Address of link ${i + 1}`} placeholder="https://" readOnly={!canWrite} value={l.url} spellCheck={false} onChange={(e) => setLink(i, { url: e.target.value })} />
                 {canWrite && (
-                  <IconButton label={`Remove link ${i + 1}`} onClick={() => setLinks((list) => list.filter((_, j) => j !== i))}>
+                  <IconButton label={t("admin.signatures.removeLinkAria", { index: i + 1 })} onClick={() => setLinks((list) => list.filter((_, j) => j !== i))}>
                     <Trash2 />
                   </IconButton>
                 )}
@@ -192,24 +198,26 @@ function TemplateEditor({
             {canWrite && (
               <Button type="button" variant="secondary" size="sm" className="self-start" disabled={links.length >= 10} onClick={() => setLinks((list) => [...list, { label: "", url: "" }])}>
                 <Plus aria-hidden />
-                Add link
+                {t("admin.signatures.addLink")}
               </Button>
             )}
-            <p className="text-sm text-fg-tertiary">Shown where the template has {"{{links}}"}, separated by dots. Up to 10.</p>
+            <p className="text-sm text-fg-tertiary">{t("admin.signatures.linksHint")}</p>
           </fieldset>
         </div>
         <div className="flex flex-col gap-2">
           <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
-            <span className="text-label text-fg-secondary">Preview</span>
+            <span className="text-label text-fg-secondary">{t("admin.signatures.preview")}</span>
             <MailboxPicker mailboxes={mailboxes.data} value={mailboxId} onChange={setChosen} />
           </div>
           {mailboxes.isPending || (mailboxId && preview.isPending) ? (
             <RowsSkeleton rows={2} />
           ) : !mailboxId ? (
-            <p className="rounded-lg border border-border p-6 text-sm text-fg-secondary">Add a mailbox{domain ? ` on @${domain.name}` : ""} to preview the template with real details.</p>
+            <p className="rounded-lg border border-border p-6 text-sm text-fg-secondary">
+              {domain ? t("admin.signatures.addMailboxDomainPreview", { domain: domain.name }) : t("admin.signatures.addMailboxPreview")}
+            </p>
           ) : (
             <iframe
-              title="Signature preview"
+              title={t("admin.signatures.previewTitle")}
               sandbox="allow-popups allow-popups-to-escape-sandbox"
               srcDoc={messageDocument(preview.data?.html ?? "")}
               className={cn("h-64 w-full rounded-lg border border-border bg-white transition-opacity duration-160", preview.isFetching && "opacity-60")}
@@ -225,7 +233,7 @@ function TemplateEditor({
       {canWrite && (
         <div className="flex flex-wrap gap-3">
           <Button type="submit" variant="secondary" loading={save.isPending}>
-            Save template
+            {t("admin.signatures.saveTemplate")}
           </Button>
           {domain && stored ? (
             <Button type="button" variant="quiet" loading={remove.isPending} onClick={() => remove.mutate()}>
@@ -241,7 +249,7 @@ function TemplateEditor({
                 setLogoWidth(String(builtIn.logoWidth))
               }}
             >
-              Restore the default layout
+              {t("admin.signatures.restoreDefault")}
             </Button>
           )}
         </div>

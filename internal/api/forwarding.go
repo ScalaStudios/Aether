@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/scalastudios/aether/internal/i18n"
+
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
 
@@ -151,7 +153,7 @@ func (s *Server) saveForwarding(w http.ResponseWriter, r *http.Request, p *princ
 			continue
 		}
 		installed[f.MailboxID] = true
-		if err := s.reinstallSieve(r.Context(), f.MailboxID, f.Address, policy); err != nil {
+		if err := s.reinstallSieve(r.Context(), orgID, f.MailboxID, f.Address, policy); err != nil {
 			mailBackendErrs.Inc()
 			s.log.Error("reinstalling mail rules after a forwarding policy change failed", "mailbox", f.MailboxID, "err", err)
 			failed = append(failed, f.Address)
@@ -164,7 +166,7 @@ func (s *Server) saveForwarding(w http.ResponseWriter, r *http.Request, p *princ
 	s.writeForwarding(w, r, orgID, policy)
 }
 
-func (s *Server) reinstallSieve(ctx context.Context, mailboxID, address string, policy mailpkg.ForwardPolicy) error {
+func (s *Server) reinstallSieve(ctx context.Context, orgID, mailboxID, address string, policy mailpkg.ForwardPolicy) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM mailbox_rules WHERE mailbox_id = $1 FOR UPDATE`, mailboxID); err != nil {
 			return err
@@ -173,6 +175,11 @@ func (s *Server) reinstallSieve(ctx context.Context, mailboxID, address string, 
 		if err != nil {
 			return err
 		}
-		return s.mail.PutSieve(address, mailpkg.CompileSieve(rules, reply, address, policy))
+		catalog, err := s.labelRefs(ctx, mailboxID)
+		if err != nil {
+			return err
+		}
+		defaultSubject := i18n.T(s.mailboxLocale(ctx, mailboxID, orgID), "email.autoReply.defaultSubject")
+		return s.mail.PutSieve(address, mailpkg.CompileSieve(mailpkg.WithLabelColors(rules, catalog), reply, address, policy, defaultSubject))
 	})
 }

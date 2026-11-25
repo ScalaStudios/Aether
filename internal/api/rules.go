@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/scalastudios/aether/internal/i18n"
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
 
@@ -62,7 +63,8 @@ func (s *Server) persistSieveWith(ctx context.Context, m *ownedMailbox, rules []
 	if err != nil {
 		return err
 	}
-	script := mailpkg.CompileSieve(mailpkg.WithLabelColors(rules, catalog), reply, m.Address, forward)
+	defaultSubject := i18n.T(s.mailboxLocale(ctx, m.ID, m.OrgID), "email.autoReply.defaultSubject")
+	script := mailpkg.CompileSieve(mailpkg.WithLabelColors(rules, catalog), reply, m.Address, forward, defaultSubject)
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO mailbox_rules (mailbox_id, rules, auto_reply) VALUES ($1, $2, $3)
