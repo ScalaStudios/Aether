@@ -25,6 +25,13 @@ import (
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
 
+func TestHandlerRoutes(t *testing.T) {
+	s := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if s.Handler() == nil {
+		t.Fatal("no handler")
+	}
+}
+
 func TestRateLimitFailsClosedWhenStoreUnavailable(t *testing.T) {
 	kv := redis.NewClient(&redis.Options{
 		Addr:         "127.0.0.1:1",

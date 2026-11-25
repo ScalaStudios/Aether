@@ -199,7 +199,7 @@ const accessibleCollections = `
 	UNION ALL
 	SELECT c.id, 'shared-' || c.id, c.name, c.description, c.color, c.updated_at, max(s.access), c.created_at
 	FROM calendar_shares s JOIN dav_collections c ON c.id = s.collection_id
-	WHERE $2 = 'calendar' AND c.user_id <> $1 AND (s.user_id = $1 OR s.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1))
+	WHERE c.kind = $2 AND c.user_id <> $1 AND (s.user_id = $1 OR s.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1))
 	GROUP BY c.id`
 
 func (s *Server) davCollections(ctx context.Context, kind string) ([]collectionRow, error) {
@@ -223,7 +223,11 @@ func (s *Server) davCollection(ctx context.Context, kind, slug string) (*collect
 func (s *Server) writableCollection(ctx context.Context, kind, slug string) (*collectionRow, error) {
 	c, err := s.davCollection(ctx, kind, slug)
 	if err == nil && c.Access == "read" {
-		return nil, webdav.NewHTTPError(http.StatusForbidden, errors.New("this calendar is shared with you read-only"))
+		noun := map[string]string{"calendar": "calendar", "addressbook": "address book"}[kind]
+		if noun == "" {
+			noun = "collection"
+		}
+		return nil, webdav.NewHTTPError(http.StatusForbidden, errors.New("this "+noun+" is shared with you read-only"))
 	}
 	return c, err
 }
@@ -255,12 +259,14 @@ func (s *Server) davObjects(ctx context.Context, collectionID, name string) ([]o
 }
 
 type objectFields struct {
-	UID       string
-	Summary   string
-	Emails    []string
-	StartsAt  *time.Time
-	EndsAt    *time.Time
-	Recurring bool
+	UID        string
+	Summary    string
+	Emails     []string
+	StartsAt   *time.Time
+	EndsAt     *time.Time
+	Recurring  bool
+	Group      bool
+	MemberUIDs []string
 }
 
 func etagOf(data string) string {
@@ -305,11 +311,12 @@ func putDAVObjectIn(ctx context.Context, db txBeginner, collectionID, name, data
 			}
 		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO dav_objects (collection_id, name, uid, etag, data, summary, emails, starts_at, ends_at, recurring)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			INSERT INTO dav_objects (collection_id, name, uid, etag, data, summary, emails, starts_at, ends_at, recurring, is_group, member_uids)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			ON CONFLICT (collection_id, name) DO UPDATE SET uid = EXCLUDED.uid, etag = EXCLUDED.etag, data = EXCLUDED.data, summary = EXCLUDED.summary,
-				emails = EXCLUDED.emails, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, recurring = EXCLUDED.recurring, updated_at = now()`,
-			collectionID, name, f.UID, row.ETag, data, f.Summary, nonNil(f.Emails), f.StartsAt, f.EndsAt, f.Recurring)
+				emails = EXCLUDED.emails, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, recurring = EXCLUDED.recurring,
+				is_group = EXCLUDED.is_group, member_uids = EXCLUDED.member_uids, updated_at = now()`,
+			collectionID, name, f.UID, row.ETag, data, f.Summary, nonNil(f.Emails), f.StartsAt, f.EndsAt, f.Recurring, f.Group, nonNil(f.MemberUIDs))
 		if isUniqueViolation(err) {
 			return webdav.NewHTTPError(http.StatusConflict, errors.New("another object in this collection has the same UID"))
 		}
@@ -323,11 +330,18 @@ func putDAVObjectIn(ctx context.Context, db txBeginner, collectionID, name, data
 }
 
 func (s *Server) deleteDAVObject(ctx context.Context, collectionID, name string) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM dav_objects WHERE collection_id = $1 AND name = $2`, collectionID, name)
-	if err == nil && tag.RowsAffected() == 0 {
-		return davNotFound()
-	}
-	return err
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var uid string
+		var group bool
+		err := tx.QueryRow(ctx, `DELETE FROM dav_objects WHERE collection_id = $1 AND name = $2 RETURNING uid, is_group`, collectionID, name).Scan(&uid, &group)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return davNotFound()
+		}
+		if err != nil || group {
+			return err
+		}
+		return detachFromGroups(ctx, tx, collectionID, uid)
+	})
 }
 
 type calendarBackend struct{ s *Server }
@@ -550,6 +564,9 @@ func (b *contactsBackend) DeleteAddressBook(ctx context.Context, p string) error
 	if err != nil || dp.name != "" {
 		return davNotFound()
 	}
+	if dp.slug == defaultAddressBook || strings.HasPrefix(dp.slug, sharedSlugPrefix) {
+		return webdav.NewHTTPError(http.StatusForbidden, errors.New("this address book can't be deleted"))
+	}
 	tag, err := b.s.db.Exec(ctx, `DELETE FROM dav_collections WHERE user_id = $1 AND kind = 'addressbook' AND slug = $2`, davUser(ctx), dp.slug)
 	if err == nil && tag.RowsAffected() == 0 {
 		return davNotFound()
@@ -635,9 +652,19 @@ func (b *contactsBackend) QueryAddressObjects(ctx context.Context, p string, que
 }
 
 func cardFields(card vcard.Card) (objectFields, error) {
-	f := objectFields{UID: card.Value(vcard.FieldUID), Summary: card.PreferredValue(vcard.FieldFormattedName)}
+	f := objectFields{UID: strings.TrimSpace(card.Value(vcard.FieldUID)), Summary: strings.TrimSpace(card.PreferredValue(vcard.FieldFormattedName))}
+	if f.Summary == "" {
+		if n := card.Name(); n != nil {
+			f.Summary = strings.TrimSpace(strings.TrimSpace(n.GivenName + " " + n.FamilyName))
+		}
+	}
 	if f.UID == "" {
 		return f, webdav.NewHTTPError(http.StatusBadRequest, errors.New("contact without UID"))
+	}
+	if isGroupCard(card) {
+		f.Group = true
+		f.MemberUIDs = memberUIDs(card)
+		return f, nil
 	}
 	for _, e := range card.Values(vcard.FieldEmail) {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
@@ -652,7 +679,7 @@ func (b *contactsBackend) PutAddressObject(ctx context.Context, p string, card v
 	if err != nil || dp.name == "" {
 		return nil, davNotFound()
 	}
-	c, err := b.s.davCollection(ctx, "addressbook", dp.slug)
+	c, err := b.s.writableCollection(ctx, "addressbook", dp.slug)
 	if err != nil {
 		return nil, err
 	}
@@ -676,7 +703,7 @@ func (b *contactsBackend) DeleteAddressObject(ctx context.Context, p string) err
 	if err != nil || dp.name == "" {
 		return davNotFound()
 	}
-	c, err := b.s.davCollection(ctx, "addressbook", dp.slug)
+	c, err := b.s.writableCollection(ctx, "addressbook", dp.slug)
 	if err != nil {
 		return err
 	}

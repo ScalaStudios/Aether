@@ -7,9 +7,24 @@ import { z } from "zod"
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api"
-import { formatAddress } from "@/lib/format"
+import { formatAddress, plural } from "@/lib/format"
 import { resourceTypes } from "@/lib/resources"
 import type { Address, Recipient } from "@/lib/types"
+
+const sourceLabel = { contact: "Contact", directory: "Directory", group: "Group" }
+
+function available(recipient: Recipient, chosen: Set<string>) {
+  if (recipient.source !== "group") return !chosen.has(recipient.address.toLowerCase())
+  const members = recipient.members ?? []
+  if (members.length === 0) return true
+  return members.some((member) => !chosen.has(member.address.toLowerCase()))
+}
+
+function recipientDetail(recipient: Recipient) {
+  if (recipient.source !== "group") return recipient.address
+  const count = recipient.members?.length ?? 0
+  return count ? plural(count, "address") : "No email addresses"
+}
 
 const emailSchema = z.email()
 const domainPattern = /^@([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/i
@@ -52,12 +67,27 @@ export function RecipientInput({
     staleTime: 30_000,
   })
   const chosen = new Set(value.map((a) => a.address.toLowerCase()))
-  const options = draft.trim().length >= 2 ? (suggestions.data ?? []).filter((r) => !chosen.has(r.address.toLowerCase())) : []
+  const options = draft.trim().length >= 2 ? (suggestions.data ?? []).filter((r) => available(r, chosen)) : []
   const expanded = !!suggest && open && options.length > 0
   const activeIndex = Math.min(active, options.length - 1)
   const listboxId = `${id}-suggestions`
 
   function pick(r: Recipient) {
+    if (r.source === "group") {
+      const known = new Set(value.map((a) => a.address.toLowerCase()))
+      const add = (r.members ?? []).filter((member) => member.address && !known.has(member.address.toLowerCase()))
+      if (add.length === 0) {
+        setError(r.members?.length ? "Everyone in this group is already added." : `${r.name || "This group"} has no email addresses.`)
+        setDraft("")
+        setOpen(false)
+        return
+      }
+      onChange([...value, ...add.map((member) => (member.name ? { name: member.name, address: member.address } : { address: member.address }))])
+      setDraft("")
+      setError("")
+      setOpen(false)
+      return
+    }
     onChange([...value, r.name ? { name: r.name, address: r.address } : { address: r.address }])
     setDraft("")
     setError("")
@@ -158,7 +188,7 @@ export function RecipientInput({
         >
           {options.map((r, i) => (
             <li
-              key={r.address}
+              key={`${r.source}:${r.address}`}
               id={`${listboxId}-${i}`}
               role="option"
               aria-selected={i === activeIndex}
@@ -169,9 +199,9 @@ export function RecipientInput({
             >
               <span className="flex min-w-0 flex-1 flex-col">
                 {r.name && <span className="truncate">{r.name}</span>}
-                <span className="truncate font-mono text-sm text-fg-tertiary">{r.address}</span>
+                <span className="truncate font-mono text-sm text-fg-tertiary">{recipientDetail(r)}</span>
               </span>
-              <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-semibold text-fg-secondary">{r.kind ? resourceTypes[r.kind].label : r.source === "contact" ? "Contact" : "Directory"}</span>
+              <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-semibold text-fg-secondary">{r.kind ? resourceTypes[r.kind].label : sourceLabel[r.source]}</span>
             </li>
           ))}
         </ul>

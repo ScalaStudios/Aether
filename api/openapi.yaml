@@ -1609,8 +1609,10 @@ paths:
   /contacts/import:
     post:
       tags: [contacts]
-      summary: Import contacts from a vCard file into the personal address book
-      description: A contact whose UID already exists is replaced. Contacts without a UID get one.
+      summary: Import contacts from a vCard file into an address book
+      description: A contact whose UID already exists is replaced. Contacts without a UID get one. Group cards become contact groups. Without `book`, the file goes into the main address book.
+      parameters:
+        - { name: book, in: query, schema: { type: string }, description: Address book id. Defaults to the main book, contacts. }
       requestBody:
         required: true
         content:
@@ -3555,8 +3557,10 @@ paths:
   /contacts:
     get:
       tags: [contacts]
-      summary: The caller's contacts, also served over CardDAV
-      parameters: [{ name: q, in: query, schema: { type: string }, description: Matches name or email }]
+      summary: Contacts in the caller's address books and the address books shared with them, also served over CardDAV
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Matches name or email }
+        - { name: book, in: query, schema: { type: string }, description: Limit to one address book id, including a shared- id }
       responses:
         "200":
           description: Sorted by name, at most 500
@@ -3577,6 +3581,147 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Contact" }
         "422": { $ref: "#/components/responses/Error" }
+  /contacts/books:
+    get:
+      tags: [contacts]
+      summary: Address books you own and address books shared with you
+      responses:
+        "200":
+          description: Yours first, then shared ones. Shared books have ids that start with shared-.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AddressBook" } }
+    post:
+      tags: [contacts]
+      summary: Create an address book
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressBookInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AddressBook" }
+        "422": { $ref: "#/components/responses/Error" }
+  /contacts/books/{bookId}:
+    parameters: [{ name: bookId, in: path, required: true, schema: { type: string } }]
+    patch:
+      tags: [contacts]
+      summary: Rename an address book you own, or change its description and color
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressBookInput" }
+      responses:
+        "204": { description: Updated }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [contacts]
+      summary: Delete an address book you own, and every contact and group in it
+      responses:
+        "204": { description: Deleted }
+        "422": { $ref: "#/components/responses/Error" }
+  /contacts/books/{bookId}/shares:
+    post:
+      tags: [contacts]
+      summary: Share an address book you own with a person or an organization
+      description: Give either the email of someone who belongs to one of your organizations, or an organization you administer to share with all of its members. Sharing again changes the access. A shared book appears in CardDAV as shared-<id>.
+      parameters: [{ name: bookId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [access]
+              properties:
+                email: { type: string, format: email }
+                orgId: { type: string, format: uuid }
+                access: { type: string, enum: [read, write] }
+      responses:
+        "204": { description: Shared }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /contacts/books/{bookId}/shares/{shareId}:
+    delete:
+      tags: [contacts]
+      summary: Stop sharing an address book
+      parameters:
+        - { name: bookId, in: path, required: true, schema: { type: string } }
+        - { name: shareId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: No longer shared }
+  /contacts/groups:
+    get:
+      tags: [contacts]
+      summary: Contact groups in your address books and the address books shared with you
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Matches the group name }
+        - { name: book, in: query, schema: { type: string }, description: Limit to one address book id }
+      responses:
+        "200":
+          description: At most 500, sorted by name
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ContactGroup" } }
+    post:
+      tags: [contacts]
+      summary: Create a contact group in an address book
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactGroupInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactGroup" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /contacts/groups/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: book, in: query, schema: { type: string }, description: Address book id, required when the same id exists in more than one book }
+    get:
+      tags: [contacts]
+      summary: One contact group, including its members
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactGroup" }
+        "409": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [contacts]
+      summary: Replace a group's name and members
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactGroupInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactGroup" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [contacts]
+      summary: Delete a contact group. The people in it stay in the address book.
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /contacts/{id}:
     put:
       tags: [contacts]
@@ -3595,9 +3740,13 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
     delete:
       tags: [contacts]
-      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: book, in: query, schema: { type: string }, description: Address book id, required when the same id exists in more than one book }
       responses:
-        "204": { description: Deleted }
+        "204": { description: Deleted. The contact is also removed from groups in that address book. }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /directory:
     get:
       tags: [contacts]
@@ -3612,7 +3761,7 @@ paths:
   /recipients:
     get:
       tags: [contacts]
-      summary: Up to 10 recipient suggestions from the caller's contacts and the directory
+      summary: Up to 10 recipient suggestions from the caller's contacts, contact groups, and the directory
       parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
       responses:
         "200":
@@ -4880,6 +5029,8 @@ components:
         phones: { type: array, items: { type: string } }
         organization: { type: string }
         notes: { type: string }
+        bookId: { type: string, description: Address book that holds the contact. Shared books use an id that starts with shared-. }
+        readOnly: { type: boolean, description: The address book is shared with you to view only }
     ContactInput:
       type: object
       required: [name]
@@ -4889,15 +5040,88 @@ components:
         phones: { type: array, maxItems: 10, items: { type: string } }
         organization: { type: string }
         notes: { type: string, maxLength: 5000 }
+        bookId: { type: string, description: Address book to create the contact in, or that holds the contact being updated. Defaults to contacts. }
+    ContactGroup:
+      type: object
+      required: [id, name, bookId, members]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        bookId: { type: string }
+        readOnly: { type: boolean }
+        members:
+          type: array
+          items:
+            type: object
+            required: [id, name, emails]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              emails: { type: array, items: { type: string, format: email } }
+    ContactGroupInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 200 }
+        bookId: { type: string, description: Defaults to the main address book, contacts }
+        members:
+          type: array
+          maxItems: 500
+          description: Contact ids in the same address book. Sending this list replaces the group's members.
+          items: { type: string }
+    AddressBook:
+      type: object
+      required: [id, name, description, color, access]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        color: { type: string }
+        access: { type: string, enum: [owner, write, read] }
+        owner:
+          type: object
+          description: Present on address books shared with you
+          properties:
+            name: { type: string }
+            email: { type: string }
+        shares:
+          type: array
+          description: Present on address books you own that are shared
+          items:
+            type: object
+            required: [id, access]
+            properties:
+              id: { type: string, format: uuid }
+              access: { type: string, enum: [read, write] }
+              email: { type: string }
+              name: { type: string }
+              orgId: { type: string, format: uuid }
+              orgName: { type: string }
+    AddressBookInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        color: { type: string, pattern: "^(#[0-9a-fA-F]{6})?$" }
     Recipient:
       type: object
       required: [name, address, source]
       properties:
         name: { type: string }
-        address: { type: string }
-        source: { type: string, enum: [contact, directory] }
+        address: { type: string, description: For a group, a group: id rather than an email address. Add members instead of this value. }
+        source: { type: string, enum: [contact, directory, group] }
         company: { type: string, description: Organization contacts only }
         phone: { type: string, description: Organization contacts only }
+        members:
+          type: array
+          description: Present for a group. Choosing the group addresses these people.
+          items:
+            type: object
+            required: [address]
+            properties:
+              name: { type: string }
+              address: { type: string, format: email }
     OrgContact:
       type: object
       required: [id, orgId, name, email, company, phone]

@@ -222,6 +222,8 @@ Platform administrators see current blocks under **Administration → Blocked ad
 
 On Kubernetes, set the two variables through `api.extraEnv`.
 
+Contact groups sync inside the address book, as group cards. An address book someone shared with you appears next to your own. A view-only share can be read from the phone, and the server refuses changes to it.
+
 ## Bootstrap administrator
 
 On a standalone installation, create the first platform administrator from the CLI:

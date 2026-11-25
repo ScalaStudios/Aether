@@ -168,6 +168,10 @@ func (s *Server) shareCalendar(w http.ResponseWriter, r *http.Request, p *princi
 	if !ok {
 		return
 	}
+	s.shareCollection(w, r, p, id, "calendar")
+}
+
+func (s *Server) shareCollection(w http.ResponseWriter, r *http.Request, p *principal, collectionID, noun string) {
 	var in struct {
 		Email  string `json:"email"`
 		OrgID  string `json:"orgId"`
@@ -180,16 +184,20 @@ func (s *Server) shareCalendar(w http.ResponseWriter, r *http.Request, p *princi
 		writeError(w, http.StatusUnprocessableEntity, "invalid_access", "Access must be read or write.")
 		return
 	}
+	article := "a"
+	if strings.HasPrefix(noun, "a") {
+		article = "an"
+	}
 	var err error
 	switch {
 	case in.OrgID != "" && in.Email == "":
 		if !uuidPattern.MatchString(in.OrgID) || !p.canAdminOrg(in.OrgID) {
-			writeError(w, http.StatusForbidden, "forbidden", "Only organization administrators can share a calendar with everyone in the organization.")
+			writeError(w, http.StatusForbidden, "forbidden", "Only organization administrators can share "+article+" "+noun+" with everyone in the organization.")
 			return
 		}
 		_, err = s.db.Exec(r.Context(), `
 			INSERT INTO calendar_shares (collection_id, org_id, access) VALUES ($1, $2, $3)
-			ON CONFLICT (collection_id, org_id) WHERE org_id IS NOT NULL DO UPDATE SET access = EXCLUDED.access`, id, in.OrgID, in.Access)
+			ON CONFLICT (collection_id, org_id) WHERE org_id IS NOT NULL DO UPDATE SET access = EXCLUDED.access`, collectionID, in.OrgID, in.Access)
 	case in.Email != "" && in.OrgID == "":
 		var userID string
 		err = s.db.QueryRow(r.Context(), `
@@ -202,7 +210,7 @@ func (s *Server) shareCalendar(w http.ResponseWriter, r *http.Request, p *princi
 		if err == nil {
 			_, err = s.db.Exec(r.Context(), `
 				INSERT INTO calendar_shares (collection_id, user_id, access) VALUES ($1, $2, $3)
-				ON CONFLICT (collection_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET access = EXCLUDED.access`, id, userID, in.Access)
+				ON CONFLICT (collection_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET access = EXCLUDED.access`, collectionID, userID, in.Access)
 		}
 	default:
 		writeError(w, http.StatusUnprocessableEntity, "invalid_share", "Share with either a person's email address or an organization.")
@@ -220,11 +228,15 @@ func (s *Server) unshareCalendar(w http.ResponseWriter, r *http.Request, p *prin
 	if !ok {
 		return
 	}
+	s.unshareCollection(w, r, id)
+}
+
+func (s *Server) unshareCollection(w http.ResponseWriter, r *http.Request, collectionID string) {
 	shareID, ok := pathID(w, r, "shareId")
 	if !ok {
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `DELETE FROM calendar_shares WHERE id = $1 AND collection_id = $2`, shareID, id)
+	tag, err := s.db.Exec(r.Context(), `DELETE FROM calendar_shares WHERE id = $1 AND collection_id = $2`, shareID, collectionID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return

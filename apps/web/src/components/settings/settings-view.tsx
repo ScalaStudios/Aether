@@ -531,7 +531,7 @@ function CalendarApps() {
     <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
       <SectionHeader
         title="Calendar and contacts apps"
-        description="Your Aether calendar and contacts sync to phone and desktop apps over CalDAV and CardDAV. These apps need an app password, not the password you use to sign in on the web."
+        description="Your calendars, address books, and contact groups sync to phone and desktop apps over CalDAV and CardDAV. Shared address books come along with your account. These apps need an app password, not the password you use to sign in on the web."
       />
       <dl className="flex flex-col rounded-xl border border-border">
         <div className="flex flex-col gap-1 border-b border-border p-4 sm:flex-row sm:items-center sm:gap-4">

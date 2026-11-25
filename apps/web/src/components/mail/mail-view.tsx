@@ -27,7 +27,7 @@ import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
 import { buildDraft, composeIdentity, defaultListView, describeSearch, filtersFromFlags, folderLabel, retentionNotice, savedSearchBody, senderIdentities, snoozedFolder, type ComposeMode, type Draft, type ListView, type SenderIdentity } from "@/lib/mail"
 import { foldersQuery, labelsQuery, myMailboxesQuery, savedSearchesQuery } from "@/lib/queries"
-import type { Folder, Label, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedSearch, ScheduledMessage, SnoozedMessage } from "@/lib/types"
+import type { ContactGroup, Folder, Label, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedSearch, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
 
@@ -183,6 +183,7 @@ export function MailView() {
   const router = useRouter()
   const params = useSearchParams()
   const composeTo = params.get("compose")
+  const groupTo = params.get("group")
   const linkMailbox = params.get("mailbox")
   const linkFolder = params.get("folder")
   const linkMessage = params.get("message")
@@ -191,7 +192,10 @@ export function MailView() {
   const [composedTo, setComposedTo] = useState<string | null>(null)
   if (mailbox && composeTo !== composedTo) {
     setComposedTo(composeTo)
-    if (composeTo && from) setCompose({ key: (compose?.key ?? 0) + 1, initial: from, draft: { ...buildDraft("new", undefined, [mailbox.address], folder), to: [{ address: composeTo }] } })
+    if (composeTo && from) {
+      const to = composeTo.split(",").map((address) => address.trim()).filter(Boolean).map((address) => ({ address }))
+      setCompose({ key: (compose?.key ?? 0) + 1, initial: from, draft: { ...buildDraft("new", undefined, [mailbox.address], folder), to } })
+    }
   }
   const linked = params.get("quarantine")
   const [linkedTo, setLinkedTo] = useState<string | null>(null)
@@ -229,6 +233,40 @@ export function MailView() {
     const id = window.setInterval(send, 20_000)
     return () => window.clearInterval(id)
   }, [live, mbx, folder, linkMailbox, linkFolder])
+  const sender = mailbox?.address
+  const composeReady = Boolean(from && sender)
+  useEffect(() => {
+    if (!groupTo || !composeReady || !sender) return
+    const slash = groupTo.indexOf("/")
+    if (slash <= 0 || slash === groupTo.length - 1) return
+    const book = groupTo.slice(0, slash)
+    const id = groupTo.slice(slash + 1)
+    let active = true
+    api<ContactGroup>(`/contacts/groups/${encodeURIComponent(id)}`, { query: { book } })
+      .then((group) => {
+        if (!active) return
+        const seen = new Set<string>()
+        const to = group.members.flatMap((member) =>
+          member.emails.filter((address) => {
+            const key = address.toLowerCase()
+            if (!address || seen.has(key)) return false
+            seen.add(key)
+            return true
+          }).map((address) => (member.name ? { name: member.name, address } : { address }))
+        )
+        if (to.length === 0) toast.error(`${group.name} has no email addresses`)
+        else if (from) setCompose((current) => ({ key: (current?.key ?? 0) + 1, initial: from, draft: { ...buildDraft("new", undefined, [sender], folder), to } }))
+        router.replace("/mail", { scroll: false })
+      })
+      .catch((error) => {
+        if (!active) return
+        toast.error(errorMessage(error))
+        router.replace("/mail", { scroll: false })
+      })
+    return () => {
+      active = false
+    }
+  }, [groupTo, composeReady, sender, folder, router, from])
 
   const message = useQuery({
     queryKey: ["message", mbx, selected?.folder, selected?.uid],

@@ -86,6 +86,8 @@ type contact struct {
 	Phones       []string `json:"phones"`
 	Organization string   `json:"organization"`
 	Notes        string   `json:"notes"`
+	BookID       string   `json:"bookId,omitempty"`
+	ReadOnly     bool     `json:"readOnly,omitempty"`
 }
 
 type contactInput struct {
@@ -94,6 +96,7 @@ type contactInput struct {
 	Phones       []string `json:"phones"`
 	Organization string   `json:"organization"`
 	Notes        string   `json:"notes"`
+	BookID       string   `json:"bookId"`
 }
 
 func contactFromCard(id string, card vcard.Card) contact {
@@ -110,26 +113,51 @@ func (s *Server) listContacts(w http.ResponseWriter, r *http.Request, p *princip
 		s.internalError(w, r, err)
 		return
 	}
+	books, err := s.addressBooks(ctx, r.URL.Query().Get("book"))
+	if err != nil {
+		s.davError(w, r, err)
+		return
+	}
+	out := []contact{}
+	if len(books) == 0 {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	byID := map[string]collectionRow{}
+	ids := make([]string, len(books))
+	for i, book := range books {
+		byID[book.ID] = book
+		ids[i] = book.ID
+	}
 	q := "%" + strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))) + "%"
 	rows, err := s.db.Query(ctx, `
-		SELECT o.name, o.data FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
-		WHERE c.user_id = $1 AND c.kind = 'addressbook' AND (lower(o.summary) LIKE $2 OR EXISTS (SELECT 1 FROM unnest(o.emails) e WHERE e LIKE $2))
-		ORDER BY lower(o.summary) LIMIT 500`, p.User.ID, q)
+		SELECT o.collection_id, o.name, o.data FROM dav_objects o
+		WHERE o.collection_id = ANY($1) AND NOT o.is_group
+		  AND (lower(o.summary) LIKE $2 OR EXISTS (SELECT 1 FROM unnest(o.emails) e WHERE e LIKE $2))
+		ORDER BY lower(o.summary), o.name LIMIT 500`, ids, q)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	defer rows.Close()
-	out := []contact{}
 	for rows.Next() {
-		var name, data string
-		if err := rows.Scan(&name, &data); err != nil {
+		var collectionID, name, data string
+		if err := rows.Scan(&collectionID, &name, &data); err != nil {
 			s.internalError(w, r, err)
 			return
 		}
-		if card, err := vcard.NewDecoder(strings.NewReader(data)).Decode(); err == nil {
-			out = append(out, contactFromCard(name, card))
+		card, err := vcard.NewDecoder(strings.NewReader(data)).Decode()
+		if err != nil || isGroupCard(card) {
+			continue
 		}
+		item := contactFromCard(name, card)
+		item.BookID = byID[collectionID].Slug
+		item.ReadOnly = byID[collectionID].Access == "read"
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		s.internalError(w, r, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -188,26 +216,32 @@ func (s *Server) saveContact(w http.ResponseWriter, r *http.Request, p *principa
 	if !decode(w, r, 64<<10, &in) {
 		return
 	}
-	book, err := s.davCollection(ctx, "addressbook", "contacts")
-	if err != nil {
-		s.davError(w, r, err)
-		return
-	}
 	name := r.PathValue("id")
+	var book *collectionRow
 	var existing vcard.Card
 	var ifMatch webdav.ConditionalMatch
 	if name == "" {
+		slug := in.BookID
+		if slug == "" {
+			slug = defaultAddressBook
+		}
+		book, err = s.writableCollection(ctx, "addressbook", slug)
 		name = secrets.Token(16) + ".vcf"
 	} else {
-		if !objectNamePattern.MatchString(name) {
-			notFound(w)
+		book, existing, ifMatch, err = s.findAddressObject(ctx, name, in.BookID, false)
+		if errors.Is(err, errAmbiguousObject) {
+			writeError(w, http.StatusConflict, "ambiguous", "This contact is in more than one address book. Choose the address book.")
 			return
 		}
-		book, existing, ifMatch, err = s.findContact(ctx, p.User.ID, name)
 		if err != nil {
 			s.davError(w, r, err)
 			return
 		}
+		book, err = s.writableCollection(ctx, "addressbook", book.Slug)
+	}
+	if err != nil {
+		s.davError(w, r, err)
+		return
 	}
 	card, msg := in.card(strings.TrimSuffix(name, ".vcf"), existing)
 	if msg != "" {
@@ -232,23 +266,56 @@ func (s *Server) saveContact(w http.ResponseWriter, r *http.Request, p *principa
 	if existing == nil {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, contactFromCard(name, card))
+	out := contactFromCard(name, card)
+	out.BookID = book.Slug
+	writeJSON(w, status, out)
 }
 
-func (s *Server) findContact(ctx context.Context, userID, name string) (*collectionRow, vcard.Card, webdav.ConditionalMatch, error) {
-	var c collectionRow
-	var data, etag string
-	err := s.db.QueryRow(ctx, `
-		SELECT c.id, c.slug, o.data, o.etag FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
-		WHERE c.user_id = $1 AND c.kind = 'addressbook' AND o.name = $2 LIMIT 1`, userID, name).Scan(&c.ID, &c.Slug, &data, &etag)
-	if errors.Is(err, pgx.ErrNoRows) {
+func (s *Server) findAddressObject(ctx context.Context, name, bookSlug string, group bool) (*collectionRow, vcard.Card, webdav.ConditionalMatch, error) {
+	if !objectNamePattern.MatchString(name) {
 		return nil, nil, "", davNotFound()
 	}
+	books, err := s.addressBooks(ctx, bookSlug)
 	if err != nil {
 		return nil, nil, "", err
 	}
+	byID := map[string]collectionRow{}
+	ids := make([]string, 0, len(books))
+	for _, book := range books {
+		byID[book.ID] = book
+		ids = append(ids, book.ID)
+	}
+	if len(ids) == 0 {
+		return nil, nil, "", davNotFound()
+	}
+	rows, err := s.db.Query(ctx, `SELECT collection_id, data, etag FROM dav_objects WHERE collection_id = ANY($1) AND name = $2 AND is_group = $3`, ids, name, group)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	defer rows.Close()
+	var collectionID, data, etag string
+	count := 0
+	for rows.Next() {
+		count++
+		if count > 1 {
+			return nil, nil, "", errAmbiguousObject
+		}
+		if err := rows.Scan(&collectionID, &data, &etag); err != nil {
+			return nil, nil, "", err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, "", err
+	}
+	if count == 0 {
+		return nil, nil, "", davNotFound()
+	}
 	card, err := vcard.NewDecoder(strings.NewReader(data)).Decode()
-	return &c, card, webdav.ConditionalMatch(`"` + etag + `"`), err
+	if err != nil {
+		return nil, nil, "", err
+	}
+	book := byID[collectionID]
+	return &book, card, webdav.ConditionalMatch(`"` + etag + `"`), nil
 }
 
 func (s *Server) deleteContact(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -257,13 +324,27 @@ func (s *Server) deleteContact(w http.ResponseWriter, r *http.Request, p *princi
 		notFound(w)
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `DELETE FROM dav_objects o USING dav_collections c WHERE c.id = o.collection_id AND c.user_id = $1 AND c.kind = 'addressbook' AND o.name = $2`, p.User.ID, name)
+	ctx, err := s.pimContext(r, p)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		notFound(w)
+	book, _, _, err := s.findAddressObject(ctx, name, r.URL.Query().Get("book"), false)
+	if errors.Is(err, errAmbiguousObject) {
+		writeError(w, http.StatusConflict, "ambiguous", "This contact is in more than one address book. Choose the address book.")
+		return
+	}
+	if err != nil {
+		s.davError(w, r, err)
+		return
+	}
+	book, err = s.writableCollection(ctx, "addressbook", book.Slug)
+	if err != nil {
+		s.davError(w, r, err)
+		return
+	}
+	if err := s.deleteDAVObject(ctx, book.ID, name); err != nil {
+		s.davError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -313,42 +394,76 @@ func (s *Server) listDirectory(w http.ResponseWriter, r *http.Request, p *princi
 func (s *Server) suggestRecipients(w http.ResponseWriter, r *http.Request, p *principal) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	if q == "" {
-		writeJSON(w, http.StatusOK, []directoryEntry{})
+		writeJSON(w, http.StatusOK, []recipient{})
+		return
+	}
+	ctx, err := s.pimContext(r, p)
+	if err != nil {
+		s.internalError(w, r, err)
 		return
 	}
 	like := "%" + q + "%"
-	rows, err := s.db.Query(r.Context(), `
-		SELECT o.summary, e, 'contact', '', '', '' FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id, unnest(o.emails) e
-		WHERE c.user_id = $1 AND c.kind = 'addressbook' AND (e LIKE $2 OR lower(o.summary) LIKE $2) LIMIT 10`, p.User.ID, like)
+	books, err := s.addressBooks(ctx, "")
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	contacts, err := pgx.CollectRows(rows, pgx.RowToStructByPos[directoryEntry])
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	dir, err := s.directory(r.Context(), p.User.ID, like, 10)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	seen := map[string]bool{}
-	out := []directoryEntry{}
-	for _, e := range append(contacts, dir...) {
-		if !seen[e.Address] {
-			seen[e.Address] = true
-			out = append(out, e)
+	var contacts []directoryEntry
+	if len(books) > 0 {
+		ids := make([]string, len(books))
+		for i, book := range books {
+			ids[i] = book.ID
+		}
+		rows, err := s.db.Query(ctx, `
+			SELECT o.summary, e, 'contact', '', '', '' FROM dav_objects o, unnest(o.emails) e
+			WHERE o.collection_id = ANY($1) AND NOT o.is_group AND (e LIKE $2 OR lower(o.summary) LIKE $2)
+			LIMIT 8`, ids, like)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		contacts, err = pgx.CollectRows(rows, pgx.RowToStructByPos[directoryEntry])
+		if err != nil {
+			s.internalError(w, r, err)
+			return
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return strings.HasPrefix(out[i].Address, q) && !strings.HasPrefix(out[j].Address, q)
-	})
-	if len(out) > 10 {
-		out = out[:10]
+	groups, err := s.suggestGroups(ctx, books, like)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	dir, err := s.directory(ctx, p.User.ID, like, 8)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := make([]recipient, 0, len(contacts)+len(groups)+len(dir))
+	for _, entry := range contacts {
+		out = append(out, recipient{Name: entry.Name, Address: entry.Address, Source: entry.Source})
+	}
+	out = append(out, groups...)
+	for _, entry := range dir {
+		out = append(out, recipient{Name: entry.Name, Address: entry.Address, Source: entry.Source, Kind: entry.Kind, Company: entry.Company, Phone: entry.Phone})
+	}
+	seen := map[string]bool{}
+	deduped := out[:0]
+	for _, entry := range out {
+		if seen[entry.Address] {
+			continue
+		}
+		seen[entry.Address] = true
+		deduped = append(deduped, entry)
+	}
+	sort.SliceStable(deduped, func(i, j int) bool {
+		iMatch := strings.HasPrefix(deduped[i].Address, q) || strings.HasPrefix(strings.ToLower(deduped[i].Name), q)
+		jMatch := strings.HasPrefix(deduped[j].Address, q) || strings.HasPrefix(strings.ToLower(deduped[j].Name), q)
+		return iMatch && !jMatch
+	})
+	if len(deduped) > 10 {
+		deduped = deduped[:10]
+	}
+	writeJSON(w, http.StatusOK, nonNil(deduped))
 }
 
 type calendarEvent struct {

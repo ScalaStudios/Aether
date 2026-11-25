@@ -41,7 +41,7 @@ Organization administrators, signed in or using a key, can prepare a mailbox on 
 | `GET`, `PUT /api/v1/mailboxes/{mailboxId}/rules` and `/auto-reply` | Mail rules and automatic replies, compiled to Sieve as when the owner changes them |
 | `GET`, `PUT /api/v1/mailboxes/{mailboxId}/signatures` | Signatures |
 | `POST /api/v1/mailboxes/{mailboxId}/calendar/import` | An iCalendar file into the owner's personal calendar |
-| `POST /api/v1/mailboxes/{mailboxId}/contacts/import` | A vCard file into the owner's address book |
+| `POST /api/v1/mailboxes/{mailboxId}/contacts/import` | A vCard file into the owner's address book. Group cards in the file become contact groups. `book` chooses another address book of that owner; without it, the file goes into their main address book. |
 | `GET`, `PUT /api/v1/organizations/{orgId}/forwarding` | The organization's forwarding policy and every rule that forwards outside it, as [Architecture](architecture.md#forwarding-to-outside-addresses) describes |
 
 An import takes a file of up to 10 MB with at most 5,000 events or contacts, answers with how many were imported, updated and skipped, and fails with `no_owner` when the mailbox has no owner. Delegate and member changes, conversions, rule, automatic reply and signature changes, and imports appear in the audit log with the administrator or the key as the actor.

@@ -240,7 +240,11 @@ func (s *Server) importContactsInto(ctx context.Context, w http.ResponseWriter, 
 		}
 		cards = append(cards, card)
 	}
-	book, err := s.davCollection(ctx, "addressbook", "contacts")
+	slug := r.URL.Query().Get("book")
+	if slug == "" {
+		slug = defaultAddressBook
+	}
+	book, err := s.writableCollection(ctx, "addressbook", slug)
 	if err != nil {
 		s.davError(w, r, err)
 		return nil, false

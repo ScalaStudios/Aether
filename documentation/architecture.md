@@ -124,7 +124,9 @@ Every saved rule change records `rule.forwarding.add` or `rule.forwarding.remove
 
 ## Calendar and contacts
 
-Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events and cards are stored as iCalendar and vCard text in `dav_objects`, together with a few extracted columns: UID, ETag, summary, email addresses, start and end time, and whether the event repeats. Those columns serve the web app's JSON API and recipient suggestions without parsing every object. Sharing is a row in `calendar_shares` that grants a user or every member of an organization read or write access to one collection. A shared calendar appears in the other person's calendar home as `shared-<collection id>`, and writes to a read-only share are refused with 403.
+Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events and cards are stored as iCalendar and vCard text in `dav_objects`, together with a few extracted columns: UID, ETag, summary, email addresses, start and end time, whether the event repeats, and, for a contact group, `is_group` and `member_uids`. Those columns serve the web app's JSON API and recipient suggestions without parsing every object. Sharing is a row in `calendar_shares` that grants a user or every member of an organization read or write access to one collection, calendar or address book. A shared collection appears in the other person's home as `shared-<collection id>`, and writes to a read-only share are refused with 403.
+
+A contact group is a vCard in an address book. Aether writes both Apple's `X-ADDRESSBOOKSERVER-KIND:group` (with `X-ADDRESSBOOKSERVER-MEMBER`) and vCard `KIND:group` (with `MEMBER`), so CardDAV clients such as Apple Contacts, DAVx⁵ and Thunderbird can sync it. Members are other cards in the same address book. Choosing a group in Aether Mail adds each member's email addresses. Deleting a contact removes them from the groups in that book. The main address book, `contacts`, cannot be deleted.
 
 - **Login:** DAV requests sign in with a mailbox address and an app password.
 - **Ownership:** the user ID is part of every DAV path, and requests for another user's path are refused with 403.
@@ -155,6 +157,7 @@ The data model is defined in `migrations/0001_init.sql`:
 - `protected_messages`, the ciphertext of a password-protected message, the salt, and the hashes of the access token and the reply proof
 - `organization_transfer_limits`, the message, attachment and download-link limits for one organization
 - `file_links`, one row per download link, pointing at a PostgreSQL large object
+- `dav_collections` and `dav_objects` for calendars and address books. `dav_objects.is_group` and `dav_objects.member_uids` record contact groups. `calendar_shares` grants read or write access to a calendar or an address book, for one user or every member of an organization
 
 Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data.
 

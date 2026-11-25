@@ -902,9 +902,35 @@ export interface Contact {
   phones: string[]
   organization: string
   notes: string
+  bookId?: string
+  readOnly?: boolean
 }
 
-export type ContactInput = Omit<Contact, "id">
+export type ContactInput = Omit<Contact, "id" | "bookId" | "readOnly"> & { bookId?: string }
+
+export interface ContactGroupMember {
+  id: string
+  name: string
+  emails: string[]
+}
+
+export interface ContactGroup {
+  id: string
+  name: string
+  bookId: string
+  readOnly?: boolean
+  members: ContactGroupMember[]
+}
+
+export interface AddressBook {
+  id: string
+  name: string
+  description: string
+  color: string
+  access: CalendarAccess
+  owner?: { name: string; email: string }
+  shares?: CalendarShare[]
+}
 
 export interface ImportCounts {
   imported: number
@@ -915,7 +941,8 @@ export interface ImportCounts {
 export interface Recipient {
   name: string
   address: string
-  source: "contact" | "directory"
+  source: "contact" | "directory" | "group"
+  members?: Address[]
   kind?: ResourceType
   company?: string
   phone?: string
