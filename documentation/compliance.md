@@ -54,7 +54,7 @@ Releasing the last hold on a mailbox lets retention and the clean-up of recovera
 
 ### Jobs that delete mail
 
-Any job that removes mail permanently must respect holds. In the API code, `holdScope(ctx, mailboxID)` loads a mailbox's holds, and `ExpungeHeld` (or `PurgeRecoverable` for recoverable items) in the mail package removes only what no hold keeps: text and date terms become `NOT ( … )` terms of the `doveadm` query, and attachment names are checked per message as described above. If the holds cannot be loaded, nothing is removed. `mailboxHeld("m.id")` is the SQL condition for any hold, and the `mail_userdb` view's `held` column gives Dovecot the per-mailbox settings above.
+Any job that removes mail permanently must respect holds. In the API code, `holdScope(ctx, mailboxID)` loads a mailbox's holds, and `ExpungeHeld` (or `PurgeRecoverable` for recoverable items) in the mail package removes only what no hold keeps: it lists the messages the job would remove, finds the held ones with an IMAP search for each hold, including attachment names as described above, and removes the rest by UID. Negated `doveadm` queries are not used, because the full-text index does not evaluate negated multi-word header searches correctly. If the holds cannot be loaded, nothing is removed. `mailboxHeld("m.id")` is the SQL condition for any hold, and the `mail_userdb` view's `held` column gives Dovecot the per-mailbox settings above.
 
 ## Journaling
 

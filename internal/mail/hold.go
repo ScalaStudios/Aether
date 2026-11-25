@@ -15,23 +15,17 @@ import (
 var ErrMailboxChanged = errors.New("the folder changed while its held messages were being checked")
 
 type HoldScope struct {
-	Exclude    []string
-	Attachment []SearchQuery
-	Whole      bool
+	Scopes []SearchQuery
+	Whole  bool
 }
 
 func NewHoldScope(scopes []SearchQuery) HoldScope {
 	var h HoldScope
 	for _, q := range scopes {
-		terms := q.doveadmTerms()
-		switch {
-		case q.Attachment != "":
-			h.Attachment = append(h.Attachment, q)
-		case len(terms) == 0:
+		if q.Attachment == "" && len(q.doveadmTerms()) == 0 {
 			return HoldScope{Whole: true}
-		default:
-			h.Exclude = append(append(append(h.Exclude, "NOT", "("), terms...), ")")
 		}
+		h.Scopes = append(h.Scopes, q)
 	}
 	return h
 }
@@ -46,8 +40,7 @@ func (c *Client) ExpungeHeld(ctx context.Context, user string, query []string, h
 	if hold.Whole {
 		return nil
 	}
-	query = append(slices.Clone(query), hold.Exclude...)
-	if len(hold.Attachment) == 0 {
+	if len(hold.Scopes) == 0 {
 		return c.Expunge(ctx, user, query)
 	}
 	payload, err := c.doveadmOK(ctx, "fetch", map[string]any{"user": user, "field": []string{"mailbox", "mailbox-guid", "uid"}, "query": query}, 64<<20)
@@ -75,7 +68,7 @@ func (c *Client) ExpungeHeld(ctx context.Context, user string, query []string, h
 			errs = append(errs, err)
 			continue
 		}
-		held, err := c.heldUIDs(ctx, user, f.name, validity, uids, hold.Attachment)
+		held, err := c.heldUIDs(ctx, user, f.name, validity, uids, hold.Scopes)
 		if err != nil {
 			errs = append(errs, err)
 			continue

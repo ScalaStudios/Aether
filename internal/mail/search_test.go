@@ -79,14 +79,13 @@ func TestWriteHitMboxEscapesFromLines(t *testing.T) {
 func TestNewHoldScope(t *testing.T) {
 	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	h := NewHoldScope([]SearchQuery{{Subject: "Atlas", Since: since, Before: since.AddDate(0, 1, 0)}, {To: "carol@example.com"}, {Subject: "Atlas", Attachment: "invoice"}, {Attachment: "contract"}})
-	want := []string{"NOT", "(", "subject", "Atlas", "since", "2026-01-01", "before", "2026-02-01", ")", "NOT", "(", "(", "to", "carol@example.com", "OR", "cc", "carol@example.com", "OR", "bcc", "carol@example.com", ")", ")"}
-	if h.Whole || !slices.Equal(h.Exclude, want) || len(h.Attachment) != 2 {
+	if h.Whole || len(h.Scopes) != 4 {
 		t.Fatalf("got %+v", h)
 	}
 	if h := NewHoldScope([]SearchQuery{{Attachment: "contract"}, {}}); !h.Whole {
 		t.Fatal("a hold without terms must keep the whole mailbox")
 	}
-	if h := NewHoldScope(nil); h.Whole || h.Exclude != nil || h.Attachment != nil {
+	if h := NewHoldScope(nil); h.Whole || h.Scopes != nil {
 		t.Fatal("no holds must exclude nothing")
 	}
 }

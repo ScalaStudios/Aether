@@ -173,9 +173,9 @@ func (c *Client) PurgeRecoverable(ctx context.Context, address string, days, kee
 	if keep > 0 {
 		query = append(query, "before", strconv.Itoa(keep)+"d")
 	}
-	if hold.Whole || len(hold.Attachment) > 0 {
+	if hold.Whole || len(hold.Scopes) > 0 {
 		return c.ExpungeHeld(ctx, address, query, hold)
 	}
-	_, err := c.doveadmOK(ctx, "expunge", map[string]any{"user": address, "query": append(query, hold.Exclude...)}, 64<<10)
+	_, err := c.doveadmOK(ctx, "expunge", map[string]any{"user": address, "query": query}, 64<<10)
 	return err
 }
