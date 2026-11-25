@@ -32,6 +32,7 @@ import { SecurityTab } from "@/components/admin/security-tab"
 import { OutboundRoutingTab } from "@/components/admin/outbound-routing-tab"
 import { SendingTab } from "@/components/admin/sending-tab"
 import { SenderWarningsTab } from "@/components/admin/sender-warnings-tab"
+import { PrivacyTab } from "@/components/admin/privacy-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { ImportMail } from "@/components/settings/import-mail"
@@ -69,6 +70,7 @@ const orgTabs = [
   { value: "security", label: "Security", Component: SecurityTab },
   { value: "sending", label: "Sending", Component: SendingTab },
   { value: "branding", label: "Branding", Component: BrandingTab },
+  { value: "privacy", label: "Privacy", Component: PrivacyTab },
   { value: "signatures", label: "Signatures", Component: SignaturesTab },
   { value: "quarantine", label: "Quarantine", Component: QuarantineTab },
   { value: "spam", label: "Spam filter", Component: SpamFilterTab },

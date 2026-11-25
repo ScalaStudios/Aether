@@ -517,6 +517,16 @@ export interface MessageProtection {
   autocrypt?: string
 }
 
+export interface RemoteImages {
+  status: "none" | "hidden" | "proxied"
+  remote: number
+  trackers: number
+  sender?: string
+  senderAllowed: boolean
+  messageAllowed: boolean
+  policy: "block" | "proxy"
+}
+
 export interface Message extends MessageSummary {
   deliveredTo?: string
   cc: Address[]
@@ -531,6 +541,7 @@ export interface Message extends MessageSummary {
   invitation?: Invitation
   protection?: MessageProtection
   unsubscribe?: Unsubscribe
+  remoteImages?: RemoteImages
   related?: { folder: string; uid: number; date: string }[]
   sender?: SenderInsight | null
 }
@@ -594,6 +605,15 @@ export interface NewsletterSender {
   link: boolean
   mailto: boolean
   blocked: boolean
+}
+
+export interface RemoteImageSender {
+  address: string
+  createdAt: string
+}
+
+export interface MailPrivacy {
+  remoteImages: "block" | "proxy"
 }
 
 export interface OutgoingMessage {

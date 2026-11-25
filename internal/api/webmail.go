@@ -199,28 +199,8 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, p *principal
 		s.mailError(w, r, err)
 		return
 	}
-	var inv *invitation
-	if msg.Calendar != "" && len(msg.From) > 0 {
-		if ctx, err := s.pimContext(r, p); err == nil {
-			inv = s.describeInvitation(ctx, p.User, m, strings.ToLower(msg.From[0].Address), msg.Calendar)
-		}
-	}
 	s.recordAccess(r, p, m, "message.read", folderParam(r), []accessItem{{UID: uid, Subject: msg.Subject, MessageID: msg.MessageID}}, nil)
-	related, err := s.mail.Related(m.Address, folderParam(r), msg)
-	if err != nil {
-		s.log.Warn("finding related messages failed", "mailbox", m.ID, "err", err)
-	}
-	sender, err := s.assessSender(r.Context(), m, folderParam(r), msg)
-	if err != nil {
-		s.log.Warn("assessing sender failed", "mailbox", m.ID, "err", err)
-	}
-	msg.Unsubscribe = unsubscribeOffer(msg.ParsedUnsubscribe(), s.cfg.WebhookAllowPrivate)
-	writeJSON(w, http.StatusOK, struct {
-		*mailpkg.Message
-		Invitation *invitation       `json:"invitation,omitempty"`
-		Related    []mailpkg.Related `json:"related"`
-		Sender     *senderInsight    `json:"sender"`
-	}{msg, inv, nonNil(related), sender})
+	s.writeMessage(w, r, p, m, msg)
 }
 
 func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, p *principal) {

@@ -11,12 +11,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 )
 
-var (
-	htmlPolicy    = newHTMLPolicy(true)
-	previewPolicy = newHTMLPolicy(false)
-)
-
-func newHTMLPolicy(links bool) *bluemonday.Policy {
+func newHTMLPolicy(links, keepRemoteImages bool) *bluemonday.Policy {
 	p := bluemonday.UGCPolicy()
 	p.AllowDataURIImages()
 	p.AllowTables()
@@ -41,13 +36,21 @@ func newHTMLPolicy(links bool) *bluemonday.Policy {
 	}
 	p.RequireNoReferrerOnLinks(true)
 	p.AddTargetBlankToFullyQualifiedLinks(true)
-	p.RewriteSrc(func(u *url.URL) {
-		if u.Scheme != "data" {
-			*u = url.URL{}
-		}
-	})
+	if !keepRemoteImages {
+		p.RewriteSrc(func(u *url.URL) {
+			if u.Scheme != "data" {
+				*u = url.URL{}
+			}
+		})
+	}
 	return p
 }
+
+var (
+	htmlPolicy        = newHTMLPolicy(true, false)
+	previewPolicy     = newHTMLPolicy(false, false)
+	messageHTMLPolicy = newHTMLPolicy(true, true)
+)
 
 func SanitizeHTML(html string) string {
 	return htmlPolicy.Sanitize(html)
@@ -92,4 +95,8 @@ func clip(s string, limit int) string {
 		return strings.TrimSpace(string(r[:limit])) + "…"
 	}
 	return s
+}
+
+func SanitizeMessageHTML(html string) string {
+	return messageHTMLPolicy.Sanitize(html)
 }

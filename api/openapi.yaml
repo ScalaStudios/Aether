@@ -2770,7 +2770,7 @@ paths:
         - { $ref: "#/components/parameters/folder" }
       responses:
         "200":
-          description: Message with sanitized HTML. Remote resources are stripped. protection says when the body is S/MIME or OpenPGP and still needs the browser to decrypt or verify it.
+          description: Message with sanitized HTML. Remote images are removed unless this message, its sender, or the organization policy is set to load them through the image proxy. Known tracking images are always removed. protection says when the body is S/MIME or OpenPGP and still needs the browser to decrypt or verify it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
@@ -2803,6 +2803,108 @@ paths:
         - { $ref: "#/components/parameters/folder" }
       responses:
         "204": { description: Deleted }
+  /mailboxes/{mailboxId}/messages/{uid}/remote-images:
+    post:
+      tags: [mail]
+      summary: Show or hide remote images for this message, or always for its sender
+      description: Showing images rewrites them to the image proxy. The choice is stored for the signed-in user. Read-only access to the mailbox is enough, because this does not change the message.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [show, hide, allowSender, forgetSender]
+      responses:
+        "200":
+          description: The message, with remote images applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /image-proxy/{token}:
+    get:
+      tags: [mail]
+      security: []
+      summary: Fetch one remote image through the Aether proxy
+      description: The token is an HMAC of the exact image URL and an expiry, minted only when a message the reader can open is rendered with images shown. The proxy does not accept an arbitrary URL, does not forward the reader's address or browser, refuses private and link-local targets, and returns only responses whose bytes are a PNG, JPEG, GIF, WebP, AVIF, or BMP.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The image bytes
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "404": { description: The token is invalid or the image could not be fetched }
+        "429": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/mail-privacy:
+    get:
+      tags: [organizations]
+      summary: Organization default for remote images
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+      responses:
+        "200":
+          description: block hides images until a reader asks. proxy loads them through the image proxy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailPrivacy" }
+    put:
+      tags: [organizations]
+      summary: Set the organization default for remote images
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MailPrivacy" }
+      responses:
+        "200":
+          description: Saved. Recorded as organization.remote_images.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailPrivacy" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/remote-image-senders:
+    get:
+      tags: [mail]
+      summary: Senders whose remote images this user always loads
+      responses:
+        "200":
+          description: Ordered by address
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RemoteImageSender" }
+  /me/remote-image-senders/{address}:
+    delete:
+      tags: [mail]
+      summary: Stop always loading remote images from a sender
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema: { type: string, format: email }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}/move:
     post:
       tags: [mail]
@@ -4508,7 +4610,8 @@ components:
             inReplyTo: { type: string }
             references: { type: array, items: { type: string } }
             text: { type: string }
-            html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
+            html: { type: string, description: "Sanitized HTML. Render inside a sandboxed iframe whose img-src allows only data and cid, plus this server's origin when remoteImages.status is proxied." }
+            remoteImages: { $ref: "#/components/schemas/RemoteImages" }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
             unsubscribe:
               $ref: "#/components/schemas/Unsubscribe"
@@ -4553,6 +4656,28 @@ components:
         link: { type: boolean }
         mailto: { type: boolean }
         blocked: { type: boolean, description: A mail rule already deletes messages from this address }
+    RemoteImages:
+      type: object
+      required: [status, remote, trackers, senderAllowed, messageAllowed, policy]
+      properties:
+        status: { type: string, enum: [none, hidden, proxied] }
+        remote: { type: integer, description: Remote images that are not known trackers }
+        trackers: { type: integer, description: Known tracking images removed before any request }
+        sender: { type: string, description: Address used for Always show from this sender }
+        senderAllowed: { type: boolean }
+        messageAllowed: { type: boolean }
+        policy: { type: string, enum: [block, proxy], description: Organization default }
+    RemoteImageSender:
+      type: object
+      required: [address, createdAt]
+      properties:
+        address: { type: string }
+        createdAt: { type: string, format: date-time }
+    MailPrivacy:
+      type: object
+      required: [remoteImages]
+      properties:
+        remoteImages: { type: string, enum: [block, proxy] }
     Invitation:
       type: object
       required: [method, event, organizer, status, applied]

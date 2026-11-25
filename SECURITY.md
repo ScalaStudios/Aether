@@ -23,7 +23,7 @@ These areas are in scope and are of particular interest:
 - **Cross-tenant access:** reading or changing another organization's domains, mailboxes, or mail.
 - **Relay abuse:** sending mail as an address the authenticated mailbox does not own, or relaying without authentication.
 - **Authentication bypass:** in the OIDC flow (state, nonce, PKCE), in sessions, or in the CSRF checks.
-- **Unsafe email rendering:** script execution or remote content loading from a received message in Aether Mail.
+- **Unsafe email rendering:** script execution, or remote content from a received message loading in the reader's browser instead of through the image proxy, in Aether Mail.
 - **Credential exposure:** secrets, tokens, or app passwords appearing in logs, API responses, or the database in plaintext.
 
 The threat model and trust boundaries are described in `documentation/architecture.md`.

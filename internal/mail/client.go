@@ -686,7 +686,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			out.HTML = strings.ReplaceAll(out.HTML, cid, "data:"+p.part.MediaType()+";base64,"+base64.StdEncoding.EncodeToString(body))
 		}
 		if out.HTML != "" {
-			out.HTML = SanitizeHTML(out.HTML)
+			out.HTML = SanitizeMessageHTML(out.HTML)
 		}
 		return nil
 	})

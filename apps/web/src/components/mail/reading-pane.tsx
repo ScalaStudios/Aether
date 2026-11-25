@@ -14,6 +14,7 @@ import { LabelChips, LabelDialog, LabelMenu } from "@/components/mail/label-cont
 import { LaterMenu } from "@/components/mail/later-menu"
 import { senderListQuery } from "@/components/settings/sender-lists"
 import { SenderNotice, SenderVerification } from "@/components/mail/sender-notice"
+import { RemoteImagesNotice } from "@/components/mail/remote-images-notice"
 import { Spinner } from "@/components/spinner"
 import { EmptyState, ErrorState } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -105,13 +106,14 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
           ))}
         </ul>
       )}
+      <RemoteImagesNotice message={m} mailboxId={mailboxId} folder={folder} />
       {secure ? (
         <SecureMessage message={m} mailboxId={mailboxId} folder={folder} />
       ) : m.html ? (
         <iframe
           title="Message body"
           sandbox="allow-popups allow-popups-to-escape-sandbox"
-          srcDoc={messageDocument(m.html)}
+          srcDoc={messageDocument(m.html, m.remoteImages?.status === "proxied")}
           className="min-h-[400px] w-full flex-1 rounded-xl border border-border bg-white"
         />
       ) : (

@@ -21,6 +21,7 @@ import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
 import { MailboxAccess } from "@/components/settings/mailbox-access"
 import { Notifications } from "@/components/settings/notifications"
+import { RemoteImages } from "@/components/settings/remote-images"
 import { ManagedLists } from "@/components/settings/managed-lists"
 import { SenderLists } from "@/components/settings/sender-lists"
 import { Security } from "@/components/settings/security"
@@ -97,6 +98,7 @@ export function SettingsView() {
           <Signatures />
           <Encryption />
           <MailRules />
+          <RemoteImages />
           <Notifications />
           <PersonalAliases />
           <SenderLists />

@@ -52,16 +52,18 @@ type Server struct {
 	apnsKey       string
 	apns          *apnsClient
 	scheduleWake  chan struct{}
+	imageClient   *http.Client
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
 	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
-		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1),
+		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(),
 	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/image-proxy/{token}", s.proxyImage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /readyz", s.ready)
 
@@ -150,6 +152,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PATCH /api/v1/organizations/{orgId}", s.updateOrganization)
 	authed("GET /api/v1/organizations/{orgId}/encryption", s.encryptionSettings)
 	authed("PUT /api/v1/organizations/{orgId}/encryption", s.encryptionSettings)
+	authed("GET /api/v1/organizations/{orgId}/mail-privacy", s.getMailPrivacy)
+	authed("PUT /api/v1/organizations/{orgId}/mail-privacy", s.saveMailPrivacy)
 	authed("GET /api/v1/organizations/{orgId}/branding", s.getBranding)
 	authed("PUT /api/v1/organizations/{orgId}/branding", s.saveBranding)
 	authed("PUT /api/v1/organizations/{orgId}/branding/{image}", s.putBrandImage)
@@ -280,6 +284,8 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/me/push-subscriptions", s.createPushSubscription)
 	authed("DELETE /api/v1/me/push-subscriptions", s.deletePushSubscription)
 	authed("GET /api/v1/me/mailboxes", s.myMailboxes)
+	authed("GET /api/v1/me/remote-image-senders", s.listRemoteImageSenders)
+	authed("DELETE /api/v1/me/remote-image-senders/{address}", s.forgetRemoteImageSender)
 	authed("GET /api/v1/me/app-passwords", s.listAppPasswords)
 	authed("POST /api/v1/me/app-passwords", s.createAppPassword)
 	authed("DELETE /api/v1/me/app-passwords/{id}", s.revokeAppPassword)
@@ -330,6 +336,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/mailboxes/{mailboxId}/newsletters/block", s.blockNewsletter)
 	authed("GET /api/v1/mailboxes/{mailboxId}/messages/{uid}/attachments/{part}", s.getAttachment)
 	authed("GET /api/v1/mailboxes/{mailboxId}/messages/{uid}/source", s.messageSource)
+	authed("POST /api/v1/mailboxes/{mailboxId}/messages/{uid}/remote-images", s.setRemoteImages)
 	authed("POST /api/v1/mailboxes/{mailboxId}/send", s.sendMessage)
 	authed("POST /api/v1/mailboxes/{mailboxId}/protected", s.sendProtectedMessage)
 	authed("GET /api/v1/mailboxes/{mailboxId}/protected/{messageId}", s.protectedSender)

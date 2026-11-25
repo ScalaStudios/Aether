@@ -314,6 +314,7 @@ export function buildDraft(mode: ComposeMode, source: Message | undefined, self:
   }
 }
 
-export function messageDocument(html: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'"><style>html{color-scheme:light}body{margin:0;padding:24px;font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;color:#2a2724;background:#fff;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`
+export function messageDocument(html: string, loadImages = false) {
+  const origin = loadImages && typeof window !== "undefined" ? ` ${window.location.origin}` : ""
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:${origin}; style-src 'unsafe-inline'"><style>html{color-scheme:light}body{margin:0;padding:24px;font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;color:#2a2724;background:#fff;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`
 }
