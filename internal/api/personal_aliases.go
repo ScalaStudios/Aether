@@ -158,7 +158,7 @@ func validAliasDetails(w http.ResponseWriter, note string, expires *time.Time) b
 
 func (s *Server) createPersonalAlias(w http.ResponseWriter, r *http.Request, p *principal) {
 	orgID, ok := s.orgFromPath(w, r, p, false)
-	if !ok {
+	if !ok || !s.requireFeature(w, r, orgID, featurePersonalAliases) {
 		return
 	}
 	var in personalAliasInput
@@ -274,7 +274,7 @@ func (s *Server) updatePersonalAlias(w http.ResponseWriter, r *http.Request, p *
 
 func (s *Server) setPersonalAliasKey(w http.ResponseWriter, r *http.Request, p *principal) {
 	orgID, ok := s.orgFromPath(w, r, p, false)
-	if !ok {
+	if !ok || !s.requireFeature(w, r, orgID, featurePersonalAliases) {
 		return
 	}
 	var target personalAliasTarget

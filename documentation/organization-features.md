@@ -6,10 +6,10 @@ Every feature is on for a new organization. Owners can turn off the ones the org
 | --- | --- | --- | --- |
 | Calendar and contacts | `calendar` | Owners | `/api/v1/calendar/*`, `/api/v1/contacts/*`, invitation replies and the mailbox calendar and contacts imports answer `403`; messages no longer show invitation details |
 | CalDAV and CardDAV | `dav` | Owners | `/dav/` answers `404` after sign-in |
-| Mail import | `mailImport` | Platform administrators | `/api/v1/mailboxes/{mailboxId}/imports` answers `403`, and running imports for the organization's mailboxes are cancelled |
+| Mail import | `mailImport` | Platform administrators | `/api/v1/mailboxes/{mailboxId}/imports` and starting import schedules answer `403`, running imports for the organization's mailboxes are cancelled, and scheduled imports wait until the feature is on again |
 | App passwords | `appPasswords` | Owners | No new app passwords; existing ones stop working for IMAP, SMTP and DAV, and open mail sessions of mailboxes with app passwords are ended. Listing and revoking them still works |
-| Forwarding outside the organization | `externalForwarding` | Platform administrators | Mail rules no longer forward to addresses outside the organization's domains; the rules are kept and forward again when the feature is turned back on. Saving rules with a new outside address answers `403` |
-| Personal aliases | `personalAliases` | Owners | Stored only. Personal aliases are not built yet |
+| Forwarding outside the organization | `externalForwarding` | Platform administrators | Mail rules no longer forward to addresses outside the organization's domains; the rules are kept and forward again when the feature is turned back on. Saving rules with an outside address answers `403`. The organization's [forwarding policy](architecture.md#rules-forwarding-and-automatic-replies) shows `blocked` and cannot be changed until the feature is on again |
+| Personal aliases | `personalAliases` | Owners | Creating personal aliases and setting the personal alias key answer `403`, and Settings hides personal aliases; existing personal aliases keep receiving mail |
 | Webhooks | `webhooks` | Platform administrators | Webhook endpoints answer `403`, no new deliveries are queued, and pending deliveries wait until the feature is on again |
 | API keys | `apiKeys` | Owners | API key endpoints answer `403`, and requests made with the organization's API keys answer `403` |
 

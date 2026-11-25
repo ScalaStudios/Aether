@@ -60,6 +60,9 @@ func (s *Server) startBulkImports(w http.ResponseWriter, r *http.Request, p *pri
 }
 
 func (s *Server) createImportSchedules(w http.ResponseWriter, r *http.Request, p *principal, orgID string, userID *string, inputs []importScheduleInput) {
+	if !s.requireFeature(w, r, orgID, featureMailImport) {
+		return
+	}
 	if len(inputs) < 1 || len(inputs) > 100 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_batch", "Choose between 1 and 100 mailboxes.")
 		return

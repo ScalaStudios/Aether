@@ -105,7 +105,7 @@ export function SettingsView() {
           <MailRules />
           <RemoteImages />
           <Notifications />
-          <PersonalAliases />
+          {!featureOff(session, "personalAliases") && <PersonalAliases />}
           <SenderLists />
           <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />
           <HeldMessages />

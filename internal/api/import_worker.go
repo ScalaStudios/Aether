@@ -23,7 +23,10 @@ func (s *Server) dispatchImports(ctx context.Context) {
 		s.log.Warn("expiring mail import schedules failed", "err", err)
 		return
 	}
-	rows, err := s.db.Query(ctx, `SELECT id, mailbox_id FROM mail_import_schedules WHERE credential IS NOT NULL AND next_run_at <= now() ORDER BY next_run_at, id`)
+	rows, err := s.db.Query(ctx, `SELECT j.id, j.mailbox_id FROM mail_import_schedules j JOIN mailboxes m ON m.id = j.mailbox_id
+		WHERE j.credential IS NOT NULL AND j.next_run_at <= now()
+		  AND NOT EXISTS (SELECT 1 FROM organization_disabled_features f WHERE f.org_id = m.org_id AND f.feature = 'mailImport')
+		ORDER BY j.next_run_at, j.id`)
 	if err != nil {
 		s.log.Warn("listing due mail imports failed", "err", err)
 		return
