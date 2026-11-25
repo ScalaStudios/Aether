@@ -145,6 +145,20 @@ func serve(log *slog.Logger) error {
 		errCh <- srv.ServePolicy(policy)
 	}()
 	defer policy.Close()
+	for _, m := range []struct {
+		addr  string
+		after bool
+	}{{cfg.MilterListen, false}, {cfg.MilterAfterListen, true}} {
+		ln, err := net.Listen("tcp", m.addr)
+		if err != nil {
+			return err
+		}
+		go func() {
+			log.Info("mail flow milter listening", "addr", m.addr, "after_spam_filter", m.after)
+			errCh <- srv.ServeMilter(ln, m.after)
+		}()
+		defer ln.Close()
+	}
 	go func() {
 		log.Info("aether api listening", "addr", cfg.Listen, "public_url", cfg.PublicURL.String())
 		errCh <- httpServer.ListenAndServe()

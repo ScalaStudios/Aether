@@ -235,6 +235,7 @@ func (s *Server) unsnoozeMessage(w http.ResponseWriter, r *http.Request, p *prin
 func (s *Server) RunScheduler(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	var cleaned time.Time
 	for {
 		for s.sendNextScheduled(ctx) {
 		}
@@ -242,6 +243,10 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		s.deliverWebhooks(ctx)
 		s.sweepQuarantine(ctx)
 		s.sendQuarantineDigests(ctx)
+		if time.Since(cleaned) > time.Hour {
+			s.cleanMailFlow(ctx)
+			cleaned = time.Now()
+		}
 		select {
 		case <-ctx.Done():
 			return

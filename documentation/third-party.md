@@ -23,6 +23,7 @@ Aether's own code is AGPL-3.0-or-later. The components below are either Go or np
 | github.com/go-jose/go-jose/v4 | Apache-2.0 |
 | golang.org/x/oauth2, golang.org/x/crypto | BSD-3-Clause |
 | github.com/emersion/go-imap/v2, go-message, go-smtp, go-sasl | MIT |
+| github.com/emersion/go-milter | BSD-2-Clause |
 | github.com/microcosm-cc/bluemonday | BSD-3-Clause |
 | github.com/redis/go-redis/v9 | BSD-2-Clause |
 

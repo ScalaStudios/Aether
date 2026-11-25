@@ -15,6 +15,7 @@ import { DomainsTab } from "@/components/admin/domains-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
+import { MailFlowTab } from "@/components/admin/mail-flow-tab"
 import { MembersTab } from "@/components/admin/members-tab"
 import { QuarantineTab } from "@/components/admin/quarantine-tab"
 import { SendersTab } from "@/components/admin/senders-tab"
@@ -51,6 +52,7 @@ const orgTabs = [
   { value: "signatures", label: "Signatures", Component: SignaturesTab },
   { value: "quarantine", label: "Quarantine", Component: QuarantineTab },
   { value: "spam", label: "Spam filter", Component: SpamFilterTab },
+  { value: "mail-flow", label: "Mail flow", Component: MailFlowTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

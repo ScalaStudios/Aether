@@ -252,6 +252,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Authentication](documentation/authentication.md): local accounts, Halo, other OpenID Connect providers, app passwords, and setting up mail, calendar and contacts apps.
 - [Shared mailboxes](documentation/shared-mailboxes.md): team addresses with members, access levels, Send as and Send on behalf, and what they need from Dovecot.
 - [Quarantine](documentation/quarantine.md): what is held, who may release it, digests, and how Rspamd hands mail to the API.
+- [Mail flow rules](documentation/mail-flow-rules.md): organization-wide disclaimers, copies, redirects, rejections, headers, required TLS and approval, for every mail app.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

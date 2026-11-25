@@ -45,6 +45,9 @@ proxywrite unix -       -       n       -       1       proxymap
 smtp      unix  -       -       n       -       -       smtp
 relay     unix  -       -       n       -       -       smtp
   -o syslog_name=postfix/$service_name
+smtp-tls  unix  -       -       n       -       -       smtp
+  -o syslog_name=postfix/smtp-tls
+  -o smtp_tls_security_level=encrypt
 showq     unix  n       -       n       -       -       showq
 error     unix  -       -       n       -       -       error
 retry     unix  -       -       n       -       -       error

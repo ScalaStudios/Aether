@@ -55,10 +55,11 @@ aether_list_policy = check_policy_service inet:__POLICY__
 smtpd_sender_restrictions = reject_non_fqdn_sender
 smtpd_data_restrictions = reject_unauth_pipelining
 
-smtpd_milters = inet:rspamd:11332
+smtpd_milters = { inet:__MILTER__, default_action=tempfail }, inet:rspamd:11332, { inet:__MILTER_AFTER__, default_action=tempfail }
 non_smtpd_milters = $smtpd_milters
 milter_protocol = 6
 milter_default_action = accept
 milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
+milter_header_checks = regexp:/etc/postfix/milter_header_checks
 
 smtp_dns_support_level = dnssec

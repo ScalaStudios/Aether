@@ -24,6 +24,7 @@ tags:
   - name: calendar
   - name: integrations
   - name: branding
+  - name: mail-flow
 paths:
   /auth/providers:
     get:
@@ -315,6 +316,133 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RenderedSignature" }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/mail-flow/rules:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [mail-flow]
+      summary: The organization's mail flow rules, in the order they run (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/FlowRule" } }
+    post:
+      tags: [mail-flow]
+      summary: Add a rule at the end of the list
+      description: "Up to 200 rules per organization. Recorded in the audit log as mail_flow_rule.create with the new rule."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FlowRule" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlowRule" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/mail-flow/rules/{ruleId}:
+    parameters:
+      - { $ref: "#/components/parameters/orgId" }
+      - { name: ruleId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [mail-flow]
+      summary: Replace a rule
+      description: "Recorded in the audit log as mail_flow_rule.update with the old and new rule."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FlowRule" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlowRule" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [mail-flow]
+      summary: Delete a rule
+      description: "Recorded in the audit log as mail_flow_rule.delete with the old rule. Messages it holds for approval keep waiting."
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/mail-flow/order:
+    put:
+      tags: [mail-flow]
+      summary: Set the order the rules run in
+      description: "ids lists every rule of the organization exactly once. Recorded as mail_flow_rule.reorder with the old and new order."
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "204": { description: Saved }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/mail-flow/matches:
+    get:
+      tags: [mail-flow]
+      summary: The last 200 messages a rule matched, newest first, including rules in test mode
+      description: "Matches are kept for 30 days."
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/FlowMatch" } }
+  /organizations/{orgId}/mail-flow/held:
+    get:
+      tags: [mail-flow]
+      summary: Messages of this organization waiting for approval, oldest first
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/HeldMessage" } }
+  /me/held-messages:
+    get:
+      tags: [mail-flow]
+      summary: Messages waiting for the signed-in person's approval
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/HeldMessage" } }
+  /held-messages/{heldId}/approve:
+    post:
+      tags: [mail-flow]
+      summary: Approve a held message and send it on to its recipients
+      description: "Allowed for the rule's approvers who are still members of the organization, and for its owners and administrators. Recorded as mail_flow.held.approve. Answers 502 send_failed, leaving the message waiting, when the mail server does not accept it."
+      parameters:
+        - { name: heldId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Sent on }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /held-messages/{heldId}/reject:
+    post:
+      tags: [mail-flow]
+      summary: Reject a held message; it is discarded without telling the sender
+      description: "Recorded as mail_flow.held.reject."
+      parameters:
+        - { name: heldId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Discarded }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/signature-template:
     get:
       tags: [mail]
@@ -767,7 +895,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write"]
+                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write"]
                 expiresAt: { type: string, format: date-time }
       responses:
         "201":
@@ -1910,7 +2038,7 @@ components:
     apiKey:
       type: http
       scheme: bearer
-      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, members, audit, and webhooks. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
+      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, members, audit, webhooks, and mail flow rules with their held messages. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2032,6 +2160,72 @@ components:
         links: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/SignatureLink" } }
         logoWidth: { type: integer, minimum: 16, maximum: 240, description: "Width of {{logo}} in pixels. The light theme logo from branding is embedded, scaled down to at most twice this width." }
         updatedAt: { type: string, format: date-time, readOnly: true }
+    FlowCondition:
+      type: object
+      required: [field]
+      properties:
+        field: { type: string, enum: [sender, recipient, subject, body, header, attachmentName, attachmentType, sizeOver, spamScoreOver, direction] }
+        scope: { type: string, enum: [address, domain, inside, outside, memberOf], description: "For sender and recipient. A sender is inside the organization only when it signed in. A recipient condition matches when any recipient does; memberOf matches the list itself and its direct members." }
+        header: { type: string, description: "For header: the header name." }
+        values: { type: array, minItems: 1, maxItems: 100, items: { type: string }, description: "Addresses, domains or list addresses for sender and recipient; incoming, outgoing or internal for direction; text for the others, matched case-insensitively when the field contains any of the values." }
+        number: { type: number, description: "Kilobytes for sizeOver, the Rspamd score for spamScoreOver." }
+    FlowActions:
+      type: object
+      properties:
+        disclaimer:
+          type: object
+          required: [text, fallback]
+          properties:
+            text: { type: string, maxLength: 10000 }
+            html: { type: string, description: "Used in HTML parts instead of the text; sanitized like mail." }
+            fallback: { type: string, enum: [wrap, skip, reject], description: "For S/MIME or PGP signed or encrypted messages: attach the disclaimer as a separate part, leave the message alone, or reject it." }
+        bcc: { type: array, maxItems: 20, items: { type: string, format: email } }
+        redirectTo: { type: array, maxItems: 20, items: { type: string, format: email }, description: "Replaces the recipients; for incoming mail, only this organization's recipients." }
+        reject: { type: string, maxLength: 200, description: "Rejects the message with 550 5.7.1 and this ASCII text. Cannot be combined with other actions." }
+        addHeaders: { type: array, maxItems: 10, items: { type: object, required: [name, value], properties: { name: { type: string }, value: { type: string } } } }
+        removeHeaders: { type: array, maxItems: 10, items: { type: string } }
+        spamScore: { type: number, minimum: -50, maximum: 50, description: "Added to the Rspamd score." }
+        requireTls: { type: boolean, description: "Delivers over mandatory TLS. Messages that also go to recipients on this server are rejected." }
+        approvers: { type: array, maxItems: 20, items: { type: string, format: email }, description: "Active members of the organization. Needs AETHER_SIEVE_RELAY_PASSWORD on the API." }
+    FlowRule:
+      type: object
+      required: [name, mode, conditions, exceptions, actions, stop]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        name: { type: string, maxLength: 100 }
+        mode: { type: string, enum: [enforce, test, off], description: "test records matches without changing the message." }
+        conditions: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/FlowCondition" }, description: "All must match. None means every message." }
+        exceptions: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/FlowCondition" }, description: "The rule is skipped when any matches." }
+        actions: { $ref: "#/components/schemas/FlowActions" }
+        stop: { type: boolean, description: "Skip this organization's later rules for messages this rule matches." }
+        updatedAt: { type: string, format: date-time, readOnly: true }
+    FlowMatch:
+      type: object
+      required: [id, ruleId, ruleName, test, direction, sender, recipients, subject, actions, createdAt]
+      properties:
+        id: { type: integer }
+        ruleId: { type: [string, "null"], format: uuid }
+        ruleName: { type: string }
+        test: { type: boolean }
+        direction: { type: string, enum: [incoming, outgoing, internal] }
+        sender: { type: string }
+        recipients: { type: array, items: { type: string } }
+        subject: { type: string }
+        actions: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+    HeldMessage:
+      type: object
+      required: [id, orgId, ruleName, approvers, sender, recipients, subject, preview, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        ruleName: { type: string }
+        approvers: { type: array, items: { type: string } }
+        sender: { type: string }
+        recipients: { type: array, items: { type: string } }
+        subject: { type: string }
+        preview: { type: string, description: "Up to 2,000 characters of the message text." }
+        createdAt: { type: string, format: date-time }
     RenderedSignature:
       type: object
       required: [html]

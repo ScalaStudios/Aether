@@ -11,7 +11,10 @@ sed -i \
   -e "s|__RELAYHOST__|${AETHER_RELAYHOST:-}|" \
   -e "s|__REPORTS__|${AETHER_REPORT_LMTP:-api:2424}|" \
   -e "s|__POLICY__|${AETHER_POLICY_SERVICE:-api:10040}|" \
+  -e "s|__MILTER__|${AETHER_MILTER_SERVICE:-api:10045}|" \
+  -e "s|__MILTER_AFTER__|${AETHER_MILTER_AFTER_SERVICE:-api:10046}|" \
   /etc/postfix/main.cf
+printf '/^X-Aether-Require-TLS:[[:space:]]*yes/ FILTER smtp-tls:%s\n' "${AETHER_RELAYHOST:-}" > /etc/postfix/milter_header_checks
 
 install -d -m 0750 -o root -g postfix /etc/postfix/pgsql
 write_map() {

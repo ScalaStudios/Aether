@@ -20,6 +20,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
 | `audit:read` | Reading the audit log |
 | `webhooks:read`, `webhooks:write` | Managing webhooks and reading deliveries |
+| `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
 
 A `write` scope includes `read`. Keys cannot read mail, use the platform administration endpoints, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name.
 

@@ -333,6 +333,66 @@ export interface MailRule {
   actions: { moveTo?: string; delete?: boolean; markRead?: boolean; flag?: boolean; forwardTo?: string[]; keepCopy?: boolean; stop?: boolean }
 }
 
+export type FlowField = "sender" | "recipient" | "subject" | "body" | "header" | "attachmentName" | "attachmentType" | "sizeOver" | "spamScoreOver" | "direction"
+
+export type FlowScope = "address" | "domain" | "inside" | "outside" | "memberOf"
+
+export interface FlowCondition {
+  field: FlowField
+  scope?: FlowScope
+  header?: string
+  values?: string[]
+  number?: number
+}
+
+export interface FlowActions {
+  disclaimer?: { text: string; html?: string; fallback: "wrap" | "skip" | "reject" }
+  bcc?: string[]
+  redirectTo?: string[]
+  reject?: string
+  addHeaders?: { name: string; value: string }[]
+  removeHeaders?: string[]
+  spamScore?: number
+  requireTls?: boolean
+  approvers?: string[]
+}
+
+export interface FlowRule {
+  id: string
+  name: string
+  mode: "enforce" | "test" | "off"
+  conditions: FlowCondition[]
+  exceptions: FlowCondition[]
+  actions: FlowActions
+  stop: boolean
+  updatedAt: string
+}
+
+export interface FlowMatch {
+  id: number
+  ruleId: string | null
+  ruleName: string
+  test: boolean
+  direction: "incoming" | "outgoing" | "internal"
+  sender: string
+  recipients: string[]
+  subject: string
+  actions: string[]
+  createdAt: string
+}
+
+export interface HeldMessage {
+  id: string
+  orgId: string
+  ruleName: string
+  approvers: string[]
+  sender: string
+  recipients: string[]
+  subject: string
+  preview: string
+  createdAt: string
+}
+
 export interface AutoReply {
   enabled: boolean
   subject: string

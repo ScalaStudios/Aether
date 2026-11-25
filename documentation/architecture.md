@@ -127,7 +127,7 @@ Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renam
 2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address.
 3. The API opens SMTP with STARTTLS to Postfix on port 587. It authenticates with SASL PLAIN as `alice@example.com*aether-webmail`.
 4. Dovecot reports the authenticated user as `alice@example.com`.
-5. Postfix applies `smtpd_sender_login_maps`, then hands the message to Rspamd. Rspamd scores it, signs it with the domain's DKIM key from Valkey, and returns it.
+5. Postfix applies `smtpd_sender_login_maps`, then hands the message to the API's first milter, which runs the organization's [mail flow rules](mail-flow-rules.md), and then to Rspamd. Rspamd scores it, signs it with the domain's DKIM key from Valkey, and returns it. The API's second milter runs the rules that test the spam score.
 6. Postfix delivers the message: through Dovecot LMTP for local recipients, or by direct MX delivery or the configured relay host for remote ones.
 7. The API appends a copy to the mailbox's Sent folder over IMAP.
 

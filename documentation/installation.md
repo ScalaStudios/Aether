@@ -156,6 +156,12 @@ With these set, Postfix requires TLS to the relay. Mail between Aether's own dom
 
 Postfix decides who may send to a restricted distribution list by asking the API on port 10040 during the SMTP session. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). In Compose the port is not published and is reachable only inside the Compose network. If the API runs elsewhere, open that port to Postfix and set `AETHER_POLICY_SERVICE` on the Postfix container.
 
+## Mail flow milters
+
+Postfix runs [mail flow rules](mail-flow-rules.md) by calling two milters in the API, one before Rspamd on port 10045 and one after it on port 10046. The API listens on `AETHER_MILTER_LISTEN` (default `:10045`) and `AETHER_MILTER_AFTER_LISTEN` (default `:10046`), and Postfix connects to `AETHER_MILTER_SERVICE` (default `api:10045`) and `AETHER_MILTER_AFTER_SERVICE` (default `api:10046`). Like the policy service, the ports are reachable only inside the Compose network. Postfix answers `451` while the API is unreachable, so start the API before Postfix, as Compose does.
+
+The API passes approved messages back to Postfix through the Sieve relay port 10025, signed in with `AETHER_SIEVE_RELAY_PASSWORD`; Compose and the Helm chart give it the same password as Dovecot. If the API runs elsewhere, set `AETHER_SIEVE_RELAY_ADDR` (default `postfix:10025`) and open that port to the API.
+
 ## Dovecot management API
 
 Dovecot serves its doveadm HTTP API on port 8089 inside the Compose network, protected by `AETHER_DOVECOT_API_KEY`, which `setup.sh` generates. The API uses it to end a member's IMAP sessions when their shared mailbox access changes. Only the API and the Dovecot containers receive the key, and neither starts without it; Postfix does not get it. Never publish the port: the key allows every doveadm command, including reading any mailbox. If the API runs elsewhere, set `AETHER_DOVECOT_API_URL` (default `http://dovecot:8089`) and open the port to the API only.

@@ -999,6 +999,21 @@ func appendRaw(ic *imapclient.Client, folder string, flags []imap.Flag, raw []by
 	return err
 }
 
+func (c *Client) Relay(addr, password, from string, rcpts []string, raw []byte) error {
+	sc, err := smtp.DialStartTLS(addr, c.tls)
+	if err != nil {
+		return fmt.Errorf("relay connect: %w", err)
+	}
+	defer sc.Close()
+	if err := sc.Auth(sasl.NewPlainClient("", "aether-sieve-relay", password)); err != nil {
+		return fmt.Errorf("relay auth: %w", err)
+	}
+	if err := sc.SendMail(from, rcpts, bytes.NewReader(raw)); err != nil {
+		return err
+	}
+	return sc.Quit()
+}
+
 func (c *Client) SaveSent(address string, raw []byte) error {
 	return c.with(address, func(ic *imapclient.Client) error {
 		sent, err := c.specialFolder(ic, "sent")

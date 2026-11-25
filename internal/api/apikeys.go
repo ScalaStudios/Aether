@@ -14,7 +14,7 @@ import (
 
 const apiKeyPrefix = "aether_"
 
-var apiKeyResources = []string{"domains", "mailboxes", "aliases", "members", "audit", "webhooks", "senders"}
+var apiKeyResources = []string{"domains", "mailboxes", "aliases", "members", "audit", "webhooks", "senders", "mailflow"}
 
 var apiKeyRoutes = map[string]string{
 	"GET /api/v1/organizations/{orgId}":                       "",
@@ -62,6 +62,16 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/mailboxes/{mailboxId}/sender-lists":              "mailboxes",
 	"POST /api/v1/mailboxes/{mailboxId}/sender-lists":             "mailboxes",
 	"DELETE /api/v1/mailboxes/{mailboxId}/sender-lists/{entryId}": "mailboxes",
+
+	"GET /api/v1/organizations/{orgId}/mail-flow/rules":             "mailflow",
+	"POST /api/v1/organizations/{orgId}/mail-flow/rules":            "mailflow",
+	"PUT /api/v1/organizations/{orgId}/mail-flow/rules/{ruleId}":    "mailflow",
+	"DELETE /api/v1/organizations/{orgId}/mail-flow/rules/{ruleId}": "mailflow",
+	"PUT /api/v1/organizations/{orgId}/mail-flow/order":             "mailflow",
+	"GET /api/v1/organizations/{orgId}/mail-flow/matches":           "mailflow",
+	"GET /api/v1/organizations/{orgId}/mail-flow/held":              "mailflow",
+	"POST /api/v1/held-messages/{heldId}/approve":                   "mailflow",
+	"POST /api/v1/held-messages/{heldId}/reject":                    "mailflow",
 }
 
 type apiKeyIdentity struct {

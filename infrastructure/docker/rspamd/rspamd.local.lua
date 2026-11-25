@@ -155,3 +155,15 @@ local sender_lists = rspamd_config:register_symbol({
 
 rspamd_config:register_symbol({ name = 'AETHER_SENDER_BLOCKED', type = 'virtual', parent = sender_lists, score = 0.0, description = 'Sender is on an Aether block list' })
 rspamd_config:register_symbol({ name = 'AETHER_SENDER_ALLOWED', type = 'virtual', parent = sender_lists, score = 0.0, description = 'Sender is on an Aether allow list' })
+
+rspamd_config:register_symbol({
+  name = 'AETHER_FLOW_SCORE',
+  score = 1.0,
+  group = 'aether',
+  callback = function(task)
+    local score = tonumber(task:get_header('X-Aether-Flow-Score') or '')
+    if score and score >= -50 and score <= 50 then
+      task:insert_result('AETHER_FLOW_SCORE', score)
+    end
+  end,
+})

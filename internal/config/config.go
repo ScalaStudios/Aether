@@ -35,6 +35,10 @@ type Config struct {
 	WebhookAllowPrivate   bool
 	ReportListen          string
 	PolicyListen          string
+	MilterListen          string
+	MilterAfterListen     string
+	RelayAddr             string
+	RelayPassword         string
 	CustomCSS             bool
 }
 
@@ -63,6 +67,10 @@ func Load() (*Config, error) {
 		WebhookAllowPrivate:   os.Getenv("AETHER_WEBHOOK_ALLOW_PRIVATE") == "true",
 		ReportListen:          env("AETHER_REPORT_LISTEN", ":2424"),
 		PolicyListen:          env("AETHER_POLICY_LISTEN", ":10040"),
+		MilterListen:          env("AETHER_MILTER_LISTEN", ":10045"),
+		MilterAfterListen:     env("AETHER_MILTER_AFTER_LISTEN", ":10046"),
+		RelayAddr:             env("AETHER_SIEVE_RELAY_ADDR", "postfix:10025"),
+		RelayPassword:         os.Getenv("AETHER_SIEVE_RELAY_PASSWORD"),
 		CustomCSS:             env("AETHER_CUSTOM_CSS", "true") == "true",
 	}
 	var errs []error
