@@ -57,6 +57,9 @@ spec:
         - namespaceSelector:
             matchLabels: {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
       ports: [{ port: 8080 }]
+    - from:
+        {{- include "aether.allowFrom" (list "dovecot") | nindent 8 }}
+      ports: [{ port: 8080 }]
     - ports: [{ port: 9090 }]
     - from:
         {{- include "aether.allowFrom" (list "postfix") | nindent 8 }}

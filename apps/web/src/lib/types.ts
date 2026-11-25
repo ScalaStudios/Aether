@@ -505,6 +505,16 @@ export interface GroupMapping {
   role: Role
 }
 
+export interface BlockedAddress {
+  id: string
+  address: string
+  protocol: string
+  failures: number
+  blocks: number
+  blockedAt: string
+  blockedUntil: string
+}
+
 export interface IdentityProvider {
   id: string
   slug: string

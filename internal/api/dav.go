@@ -63,9 +63,15 @@ func (s *Server) serveDAV(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
+	if s.authBlocked(r.Context(), s.clientIP(r)) {
+		http.Error(w, "Too many failed sign-ins from this address. Try again later.", http.StatusForbidden)
+		return
+	}
 	userID, ok := s.davAuthenticate(r)
 	if !ok && r.Header.Get("Authorization") != "" {
 		authAttempts.WithLabelValues("dav", "failure").Inc()
+		username, password, _ := r.BasicAuth()
+		s.recordAuthFailure(r.Context(), s.clientIP(r), username, s.passwordTag(password), "dav")
 	}
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Aether", charset="UTF-8"`)

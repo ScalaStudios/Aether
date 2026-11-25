@@ -201,6 +201,23 @@ An authenticated SMTP connection that is already open when SMTP is turned off ca
 
 Each app password also has a scope, chosen when it is created: **Mail** (IMAP and SMTP submission), **Calendar and contacts** (CalDAV and CardDAV), or **Mail, calendar and contacts**, which also allows ManageSieve. App passwords created before scopes existed, and those in Apple device profiles, have the last one.
 
+## Blocking repeated failed sign-ins
+
+Aether blocks an address that keeps failing to sign in, on IMAP, SMTP submission, ManageSieve, CalDAV and CardDAV, and the web sign-in. Dovecot asks the API before each IMAP, ManageSieve and SMTP login (Postfix authenticates through Dovecot) and reports the result afterwards, using Dovecot's authentication policy on `POST /internal/auth-policy`, authenticated with `AETHER_DOVECOT_API_KEY`.
+
+- An address is blocked after failed sign-ins with `AETHER_AUTH_BLOCK_THRESHOLD` (default 10) different passwords or accounts within 10 minutes. A mail app retrying the same wrong saved password counts once, so one person with an outdated password does not block the rest of their office.
+- The first block lasts 15 minutes. Each further block within a day of the previous one doubles, up to 24 hours.
+- IPv4 addresses are blocked one by one; IPv6 addresses by their `/64` network.
+- A blocked address cannot sign in at all, even with the right password. Mail apps see `Too many failed sign-ins from this address. Try again later.`; SMTP answers `535`, the web sign-in `403 address_blocked`.
+- Addresses in `AETHER_AUTH_BLOCK_ALLOW_NETS` are never blocked. The default is loopback and the private ranges (`127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7`), which covers Aether's own containers and clients on the local network. Add your offices' public addresses there, as a comma-separated list of addresses and networks. Adding an address does not lift a block already in place. `AETHER_AUTH_BLOCK_THRESHOLD=0` turns blocking off.
+- When the API cannot be reached, Dovecot lets logins through rather than locking everyone out.
+
+Dovecot's own per-address delay after failed logins is turned off, because it grew to 15 seconds for every login from the same address, correct ones included, and made Postfix answer `454` to everyone behind a shared address. Each failed attempt is still delayed by 2 seconds.
+
+Platform administrators see current blocks under **Administration → Blocked addresses** and can unblock an address there, or with `GET /api/v1/admin/blocked-addresses` and `DELETE /api/v1/admin/blocked-addresses/{id}`. Unblocking also resets the address's count of failures and repeat blocks. Blocks and unblocks are recorded as `auth.address.blocked` and `auth.address.unblocked` audit events, and `aether_auth_address_blocks_total` counts blocks by protocol. `aether_auth_attempts_total` now also counts mail logins by protocol, with the result `success`, `failure` or `blocked`.
+
+On Kubernetes, set the two variables through `api.extraEnv`.
+
 ## Bootstrap administrator
 
 On a standalone installation, create the first platform administrator from the CLI:

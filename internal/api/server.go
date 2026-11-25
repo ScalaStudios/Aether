@@ -84,6 +84,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/spam-learn", s.learnSpam)
 	mux.HandleFunc("POST /internal/trusted-sender", s.trustedSender)
 	mux.HandleFunc("POST /internal/mail-events", s.receiveMailEvent)
+	mux.HandleFunc("POST /internal/auth-policy", s.authPolicy)
 	mux.HandleFunc("GET /mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("GET /.well-known/autoconfig/mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("/autodiscover/autodiscover.xml", s.mailAutodiscover)
@@ -346,6 +347,8 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/journal-rules/{ruleId}", s.deleteJournalRule)
 	authed("PUT /api/v1/admin/users/{id}/password", s.resetUserPassword)
 	authed("DELETE /api/v1/admin/users/{id}/two-factor", s.resetUserTwoFactor)
+	authed("GET /api/v1/admin/blocked-addresses", s.listBlockedAddresses)
+	authed("DELETE /api/v1/admin/blocked-addresses/{id}", s.unblockAddress)
 
 	return instrument(securityHeaders(mux))
 }

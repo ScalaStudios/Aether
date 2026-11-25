@@ -10,6 +10,7 @@ import { z } from "zod"
 
 import { AliasesTab } from "@/components/admin/aliases-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
+import { BlockedAddressesTab } from "@/components/admin/blocked-addresses-tab"
 import { BrandingTab } from "@/components/admin/branding-tab"
 import { ContactsTab } from "@/components/admin/contacts-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
@@ -104,7 +105,7 @@ export function AdminView() {
   const org = administered.find((o) => o.id === orgId) ?? administered[0]
   const reviewer = session.memberships.some((m) => m.orgId === org?.id && m.role !== "member")
   const tabs = org ? orgTabs.filter((t) => t.value !== "quarantine" || reviewer) : []
-  const active = platformAdmin && ["identity", "mail-queue", "routing"].includes(tab) ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
+  const active = platformAdmin && ["identity", "mail-queue", "routing", "blocked"].includes(tab) ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
 
   return (
     <PageContainer>
@@ -163,6 +164,7 @@ export function AdminView() {
             {platformAdmin && <TabsTrigger value="identity">Identity providers</TabsTrigger>}
             {platformAdmin && <TabsTrigger value="mail-queue">Mail queue</TabsTrigger>}
             {platformAdmin && <TabsTrigger value="routing">Outbound routing</TabsTrigger>}
+            {platformAdmin && <TabsTrigger value="blocked">Blocked addresses</TabsTrigger>}
           </TabsList>
           {org &&
             tabs.map(({ value, Component }) => (
@@ -181,6 +183,11 @@ export function AdminView() {
           {platformAdmin && (
             <TabsContent value="mail-queue">
               <MailQueueTab />
+            </TabsContent>
+          )}
+          {platformAdmin && (
+            <TabsContent value="blocked">
+              <BlockedAddressesTab />
             </TabsContent>
           )}
         </Tabs>

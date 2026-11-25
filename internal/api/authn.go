@@ -86,6 +86,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many sign-in attempts. Wait a minute and try again.")
 		return
 	}
+	if s.authBlocked(r.Context(), s.clientIP(r)) {
+		writeError(w, http.StatusForbidden, "address_blocked", "Too many failed sign-ins from your network. Try again later.")
+		return
+	}
 	var userID, hash, status string
 	err := s.db.QueryRow(r.Context(), `SELECT id, coalesce(password_hash, ''), status FROM users WHERE email = $1`, email).Scan(&userID, &hash, &status)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -95,6 +99,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if hash == "" {
 		authAttempts.WithLabelValues("password", "failure").Inc()
 		auth.BurnPasswordCheck(in.Password)
+		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
 		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", email, nil)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
 		return
@@ -102,6 +107,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ok, err := auth.VerifyPassword(hash, in.Password)
 	if err != nil || !ok {
 		authAttempts.WithLabelValues("password", "failure").Inc()
+		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
 		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", userID, nil)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
 		return

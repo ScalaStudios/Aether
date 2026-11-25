@@ -56,6 +56,11 @@ event_exporter mail_audit {
   transport_timeout = 5sec
 }
 AUDIT
+cat > /run/dovecot-secrets/policy.conf <<POLICY
+auth_policy_server_url = $(cat /run/dovecot-secrets/api-url)/internal/auth-policy
+auth_policy_server_api_header = X-API-Key: ${AETHER_DOVECOT_API_KEY}
+auth_policy_hash_nonce = $(openssl rand -hex 32)
+POLICY
 chgrp dovecot /run/dovecot-secrets/*
 chmod 0640 /run/dovecot-secrets/*
 

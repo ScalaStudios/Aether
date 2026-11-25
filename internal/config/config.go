@@ -4,8 +4,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -45,6 +47,8 @@ type Config struct {
 	OutboundSASLListen    string
 	MailDBPassword        string
 	CustomCSS             bool
+	AuthBlockThreshold    int
+	AuthBlockAllowNets    []netip.Prefix
 }
 
 func Load() (*Config, error) {
@@ -104,6 +108,24 @@ func Load() (*Config, error) {
 		errs = append(errs, errors.New("AETHER_PUBLIC_URL must be an absolute http(s) URL"))
 	}
 	c.PublicURL = u
+	if c.AuthBlockThreshold, err = strconv.Atoi(env("AETHER_AUTH_BLOCK_THRESHOLD", "10")); err != nil || c.AuthBlockThreshold < 0 {
+		errs = append(errs, errors.New("AETHER_AUTH_BLOCK_THRESHOLD must be a whole number, 0 to turn blocking off"))
+	}
+	for _, n := range strings.Split(env("AETHER_AUTH_BLOCK_ALLOW_NETS", "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"), ",") {
+		if n = strings.TrimSpace(n); n == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(n)
+		if err != nil {
+			addr, aerr := netip.ParseAddr(n)
+			if aerr != nil {
+				errs = append(errs, fmt.Errorf("AETHER_AUTH_BLOCK_ALLOW_NETS: %q is not an address or network", n))
+				continue
+			}
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		c.AuthBlockAllowNets = append(c.AuthBlockAllowNets, prefix.Masked())
+	}
 	key, err := base64.StdEncoding.DecodeString(os.Getenv("AETHER_SECRET_KEY"))
 	if err != nil || len(key) != 32 {
 		errs = append(errs, fmt.Errorf("AETHER_SECRET_KEY must be 32 bytes, base64 encoded (generate with: openssl rand -base64 32)"))
