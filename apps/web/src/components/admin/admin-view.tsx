@@ -71,7 +71,7 @@ interface OrgValues {
 
 interface OrgTabDef {
   value: string
-  label: (session: Session, orgId: string) => string
+  label: (session: Session, orgId: string, t: (key: string) => string) => string
   visible: (session: Session, orgId: string) => boolean
   Component: React.ComponentType<{ orgId: string }>
 }
@@ -82,27 +82,28 @@ function orgAdmin(session: Session, orgId: string) {
 }
 
 const orgTabs: OrgTabDef[] = [
-  { value: "domains", label: () => "Domains", visible: (s, id) => hasPerm(s, id, "domains:read"), Component: DomainsTab },
-  { value: "mailboxes", label: () => "Mailboxes", visible: (s, id) => hasPerm(s, id, "mailboxes:read"), Component: MailboxesTab },
+  { value: "general", label: (_s, _id, t) => t("admin.tabs.general"), visible: (s, id) => orgAdmin(s, id), Component: GeneralTab },
+  { value: "domains", label: (_s, _id, t) => t("admin.tabs.domains"), visible: (s, id) => hasPerm(s, id, "domains:read"), Component: DomainsTab },
+  { value: "mailboxes", label: (_s, _id, t) => t("admin.tabs.mailboxes"), visible: (s, id) => hasPerm(s, id, "mailboxes:read"), Component: MailboxesTab },
   { value: "imports", label: () => "Mail imports", visible: (s, id) => orgAdmin(s, id), Component: ImportMail },
   {
     value: "aliases",
-    label: (s, id) => (hasPerm(s, id, "aliases:read") ? "Aliases" : "Distribution lists"),
+    label: (s, id, t) => (hasPerm(s, id, "aliases:read") ? t("admin.tabs.aliases") : "Distribution lists"),
     visible: (s, id) => hasPerm(s, id, "aliases:read", "lists:read"),
     Component: AliasesTab,
   },
   { value: "senders", label: () => "Senders", visible: (s, id) => orgAdmin(s, id), Component: SendersTab },
   { value: "resources", label: () => "Rooms and equipment", visible: (s, id) => orgAdmin(s, id), Component: ResourcesTab },
   { value: "contacts", label: () => "Contacts", visible: (s, id) => orgAdmin(s, id), Component: ContactsTab },
-  { value: "members", label: () => "Members", visible: (s, id) => hasPerm(s, id, "members:read"), Component: MembersTab },
+  { value: "members", label: (_s, _id, t) => t("admin.tabs.members"), visible: (s, id) => hasPerm(s, id, "members:read"), Component: MembersTab },
   { value: "reports", label: () => "Reports", visible: (s, id) => orgAdmin(s, id), Component: ReportsTab },
   { value: "roles", label: () => "Roles", visible: (s, id) => hasPerm(s, id, "roles:read"), Component: RolesTab },
   { value: "forwarding", label: () => "Forwarding", visible: (s, id) => orgAdmin(s, id), Component: ForwardingTab },
   { value: "security", label: () => "Security", visible: (s, id) => orgAdmin(s, id), Component: SecurityTab },
   { value: "sending", label: () => "Sending", visible: (s, id) => orgAdmin(s, id), Component: SendingTab },
-  { value: "branding", label: () => "Branding", visible: (s, id) => hasPerm(s, id, "branding:read"), Component: BrandingTab },
+  { value: "branding", label: (_s, _id, t) => t("admin.tabs.branding"), visible: (s, id) => hasPerm(s, id, "branding:read"), Component: BrandingTab },
   { value: "privacy", label: () => "Privacy", visible: (s, id) => orgAdmin(s, id), Component: PrivacyTab },
-  { value: "signatures", label: () => "Signatures", visible: (s, id) => hasPerm(s, id, "signatures:read"), Component: SignaturesTab },
+  { value: "signatures", label: (_s, _id, t) => t("admin.tabs.signatures"), visible: (s, id) => hasPerm(s, id, "signatures:read"), Component: SignaturesTab },
   { value: "quarantine", label: () => "Quarantine", visible: (s, id) => orgAdmin(s, id), Component: QuarantineTab },
   { value: "spam", label: () => "Spam filter", visible: (s, id) => orgAdmin(s, id), Component: SpamFilterTab },
   { value: "mail-flow", label: () => "Mail flow", visible: (s, id) => orgAdmin(s, id), Component: MailFlowTab },
@@ -112,8 +113,8 @@ const orgTabs: OrgTabDef[] = [
   { value: "attachments", label: () => "Attachments", visible: (s, id) => orgAdmin(s, id), Component: AttachmentsTab },
   { value: "encryption", label: () => "Encryption", visible: (s, id) => orgAdmin(s, id), Component: EncryptionTab },
   { value: "limits", label: () => "Quotas and limits", visible: (s, id) => orgAdmin(s, id), Component: LimitsTab },
-  { value: "audit", label: () => "Audit log", visible: (s, id) => hasPerm(s, id, "audit:read"), Component: AuditTab },
-  { value: "integrations", label: () => "Integrations", visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read"), Component: IntegrationsTab },
+  { value: "audit", label: (_s, _id, t) => t("admin.tabs.audit"), visible: (s, id) => hasPerm(s, id, "audit:read"), Component: AuditTab },
+  { value: "integrations", label: (_s, _id, t) => t("admin.tabs.integrations"), visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read"), Component: IntegrationsTab },
 ]
 
 const reveal = (tab: HTMLElement | null) => tab?.scrollIntoView({ block: "nearest", inline: "nearest" })
@@ -248,9 +249,9 @@ export function AdminView() {
         {(tabs.length > 0 || platformAdmin) && (
           <Tabs value={active} onValueChange={(value) => open(org?.id, value)}>
             <TabsList>
-              {tabs.map((t) => (
-                <TabsTrigger key={t.value} value={t.value} ref={t.value === active ? reveal : undefined}>
-                  {org ? t.label(session, org.id) : t.value}
+              {tabs.map((tab) => (
+                <TabsTrigger key={tab.value} value={tab.value} ref={tab.value === active ? reveal : undefined}>
+                  {org ? tab.label(session, org.id, t) : tab.value}
                 </TabsTrigger>
               ))}
               {platformAdmin &&
