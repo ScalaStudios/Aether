@@ -187,6 +187,9 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 	if err != nil {
 		return "", nil, err
 	}
+	if _, err := s.db.Exec(ctx, `UPDATE mailboxes SET last_web_login_at = now() WHERE owner_user_id = $1 AND active`, userID); err != nil {
+		s.log.Warn("recording web sign-in timestamp failed", "user", userID, "err", err)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/", Expires: expires,
 		HttpOnly: true, Secure: s.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode,

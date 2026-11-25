@@ -167,11 +167,88 @@ export interface Mailbox {
   fromAddresses?: Address[]
   usedBytes?: number
   quotaWarningPercents?: number[]
+  storageBytes?: number
+  messageCount?: number
+  storageUpdatedAt?: string | null
+  lastWebLoginAt?: string | null
+  lastImapLoginAt?: string | null
+  lastSmtpLoginAt?: string | null
+  lastSignInAt?: string | null
+  sent30d?: number
+  received30d?: number
 }
 
 export interface QuotaWarnings {
   percents: number[]
   notifyAdmins: boolean
+}
+
+export interface ReportSummary {
+  totalMailboxes: number
+  activeMailboxes: number
+  inactiveMailboxes: number
+  totalStorageBytes: number
+  totalQuotaBytes: number
+  totalMessages: number
+  sentTotal: number
+  receivedTotal: number
+  sentBytesTotal: number
+  receivedBytesTotal: number
+}
+
+export interface ReportMailbox {
+  id: string
+  address: string
+  displayName: string
+  kind: MailboxKind
+  active: boolean
+  quotaBytes: number
+  storageBytes: number
+  quotaPercent: number | null
+  messageCount: number
+  storageUpdatedAt: string | null
+  lastWebLoginAt: string | null
+  lastImapLoginAt: string | null
+  lastSmtpLoginAt: string | null
+  lastSignInAt: string | null
+  sentCount: number
+  receivedCount: number
+  sentBytes: number
+  receivedBytes: number
+  createdAt: string
+}
+
+export interface ReportActivity {
+  id: string
+  address: string
+  displayName: string
+  kind: MailboxKind
+  active: boolean
+  sentCount: number
+  receivedCount: number
+  sentBytes: number
+  receivedBytes: number
+}
+
+export interface VolumePoint {
+  day: string
+  sentCount: number
+  receivedCount: number
+  sentBytes: number
+  receivedBytes: number
+}
+
+export interface OrgReport {
+  generatedAt: string
+  storageUpdatedAt: string | null
+  days: number
+  inactiveDays: number
+  summary: ReportSummary
+  inactiveMailboxes: ReportMailbox[]
+  largestMailboxes: ReportMailbox[]
+  topSenders: ReportActivity[]
+  topReceivers: ReportActivity[]
+  volumeSeries: VolumePoint[]
 }
 
 export type DelegateAccess = "read" | "full"

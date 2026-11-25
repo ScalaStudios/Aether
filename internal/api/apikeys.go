@@ -14,7 +14,7 @@ import (
 
 const apiKeyPrefix = "aether_"
 
-var apiKeyResources = []string{"domains", "mailboxes", "aliases", "members", "audit", "webhooks", "senders", "mailflow", "message-trace", "contacts", "suppressions"}
+var apiKeyResources = []string{"domains", "mailboxes", "aliases", "members", "audit", "webhooks", "senders", "mailflow", "message-trace", "contacts", "suppressions", "reports"}
 
 var apiKeyRoutes = map[string]string{
 	"GET /api/v1/organizations/{orgId}":                            "",
@@ -107,6 +107,9 @@ var apiKeyRoutes = map[string]string{
 	"POST /api/v1/mail-flow/held/{heldId}/approve":                  "mailflow",
 	"POST /api/v1/mail-flow/held/{heldId}/reject":                   "mailflow",
 	"POST /api/v1/organizations/{orgId}/bulk":                       "",
+	"GET /api/v1/organizations/{orgId}/reports":                     "reports",
+	"GET /api/v1/organizations/{orgId}/reports/{report}":            "reports",
+	"POST /api/v1/organizations/{orgId}/reports/refresh":            "reports",
 }
 
 type apiKeyIdentity struct {

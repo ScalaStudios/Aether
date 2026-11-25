@@ -39,6 +39,7 @@ const resources: { value: string; levels: Access[] }[] = [
   { value: "aliases", levels: ["", "read", "write"] },
   { value: "members", levels: ["", "read", "write"] },
   { value: "audit", levels: ["", "read"] },
+  { value: "reports", levels: ["", "read", "write"] },
   { value: "webhooks", levels: ["", "read", "write"] },
   { value: "contacts", levels: ["", "read", "write"] },
   { value: "message-trace", levels: ["", "read"] },

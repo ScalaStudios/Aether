@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Download, Ellipsis, Eye, EyeOff, HardDrive, Inbox, KeyRound, ListFilter, Plug, Pencil, Plus, ShieldCheck, RotateCcw, Shield, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Download, Ellipsis, Eye, EyeOff, HardDrive, Inbox, KeyRound, ListFilter, Plug, Pencil, Plus, ShieldCheck, RotateCcw, Shield, RefreshCw, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -10,6 +10,7 @@ import { z } from "zod"
 
 import { CsvImportDialog } from "@/components/admin/csv-import-dialog"
 import { DomainSelect } from "@/components/admin/domain-select"
+import { LastSignIn } from "@/components/admin/usage-cells"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
@@ -713,6 +714,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       refresh()
     },
   })
+  const refreshSizes = useMutation({
+    mutationFn: () => api<{ updated: number }>(`/organizations/${orgId}/reports/refresh`, { method: "POST" }),
+    onSuccess: (r) => {
+      toast.success(`Updated sizes for ${plural(r.updated, "mailbox")}`)
+      qc.invalidateQueries({ queryKey: ["mailboxes", orgId] })
+      qc.invalidateQueries({ queryKey: ["reports", orgId] })
+    },
+  })
 
   function pick(mailbox: Mailbox, kind: ImportKind) {
     importTarget.current = { mailbox, kind }
@@ -748,6 +757,12 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
               <Button variant="secondary" onClick={() => setImportingCsv(true)}>
                 <Upload aria-hidden />
                 Import CSV
+              </Button>
+            )}
+            {canSettings && (
+              <Button variant="secondary" onClick={() => refreshSizes.mutate()} loading={refreshSizes.isPending}>
+                <RefreshCw aria-hidden />
+                Refresh sizes
               </Button>
             )}
             {canSettings && (
@@ -789,6 +804,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                 <TableHead>Type</TableHead>
                 <TableHead>Display name</TableHead>
                 <TableHead>Storage</TableHead>
+                <TableHead>Last sign-in</TableHead>
+                <TableHead className="text-right">Mail (30 days)</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-36">
                   <span className="sr-only">Actions</span>
@@ -808,6 +825,21 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                   <TableCell>{m.displayName || "—"}</TableCell>
                   <TableCell>
                     <MailboxStorage mailbox={m} levels={warnings.data?.percents} />
+                  </TableCell>
+                  <TableCell>
+                    <LastSignIn
+                      kind={m.kind}
+                      lastSignInAt={m.lastSignInAt}
+                      lastWebLoginAt={m.lastWebLoginAt}
+                      lastImapLoginAt={m.lastImapLoginAt}
+                      lastSmtpLoginAt={m.lastSmtpLoginAt}
+                    />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span>{(m.sent30d ?? 0).toLocaleString()} sent</span>
+                      <span className="text-xs text-fg-tertiary">{(m.received30d ?? 0).toLocaleString()} received</span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-3">

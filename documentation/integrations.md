@@ -23,6 +23,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `webhooks:read`, `webhooks:write` | Managing webhooks and reading deliveries |
 | `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
 | `suppressions:read`, `suppressions:write` | Listing, adding, and removing suppressed addresses |
+| `reports:read`, `reports:write` | Reading organization reports and CSV exports (`GET /organizations/{orgId}/reports` and `/reports/{report}`), and refreshing cached mailbox sizes (`POST /organizations/{orgId}/reports/refresh`) |
 
 A `write` scope includes `read`. Keys cannot read mail, export a mailbox, use the platform administration endpoints, manage custom roles, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name. See [Roles and permissions](roles.md) for human administrator roles composed from these same scopes.
 

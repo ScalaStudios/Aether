@@ -120,6 +120,7 @@ func (s *Server) verifyMailToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.recordMailLogin(r.Context(), address, r.PostFormValue("service"))
 	w.WriteHeader(http.StatusNoContent)
 }
 

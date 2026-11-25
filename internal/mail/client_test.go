@@ -1,7 +1,11 @@
 package mail
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"slices"
 	"testing"
@@ -109,5 +113,42 @@ func TestCursorFollowsAnchor(t *testing.T) {
 	}
 	if _, err := pageStart(groups, "not a cursor"); !errors.Is(err, ErrInvalidCursor) {
 		t.Errorf("garbage cursor = %v, want ErrInvalidCursor", err)
+	}
+}
+
+func TestMailboxStorageSumsOwnFoldersOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/doveadm/v1" || r.Header.Get("Authorization") == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var req [][]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		resp := [][]any{
+			{"doveadmResponse", []map[string]any{
+				{"mailbox": "INBOX", "messages": "3", "vsize": "1500"},
+				{"mailbox": "Sent", "messages": 2, "vsize": 800},
+				{"mailbox": "Shared/team@example.com/INBOX", "messages": "99", "vsize": "999999"},
+			}, "alice@example.com"},
+			{"error", map[string]any{"exitCode": 67}, "empty@example.com"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c := &Client{doveadmURL: srv.URL, doveadmKey: "secret", http: srv.Client()}
+	got, err := c.MailboxStorage(context.Background(), []string{"alice@example.com", "empty@example.com"})
+	if err != nil {
+		t.Fatalf("MailboxStorage: %v", err)
+	}
+	if alice := got["alice@example.com"]; alice.StorageBytes != 2300 || alice.MessageCount != 5 {
+		t.Errorf("alice = %+v, want 2300 bytes / 5 messages", alice)
+	}
+	if empty, ok := got["empty@example.com"]; !ok || empty.StorageBytes != 0 || empty.MessageCount != 0 {
+		t.Errorf("empty = %+v (ok=%v), want 0/0", empty, ok)
 	}
 }

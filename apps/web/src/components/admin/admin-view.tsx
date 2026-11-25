@@ -36,6 +36,7 @@ import { OutboundRoutingTab } from "@/components/admin/outbound-routing-tab"
 import { SendingTab } from "@/components/admin/sending-tab"
 import { SenderWarningsTab } from "@/components/admin/sender-warnings-tab"
 import { PrivacyTab } from "@/components/admin/privacy-tab"
+import { ReportsTab } from "@/components/admin/reports-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { ImportMail } from "@/components/settings/import-mail"
@@ -91,6 +92,7 @@ const orgTabs: OrgTabDef[] = [
   { value: "resources", label: () => "Rooms and equipment", visible: (s, id) => orgAdmin(s, id), Component: ResourcesTab },
   { value: "contacts", label: () => "Contacts", visible: (s, id) => orgAdmin(s, id), Component: ContactsTab },
   { value: "members", label: () => "Members", visible: (s, id) => hasPerm(s, id, "members:read"), Component: MembersTab },
+  { value: "reports", label: () => "Reports", visible: (s, id) => orgAdmin(s, id), Component: ReportsTab },
   { value: "roles", label: () => "Roles", visible: (s, id) => hasPerm(s, id, "roles:read"), Component: RolesTab },
   { value: "forwarding", label: () => "Forwarding", visible: (s, id) => orgAdmin(s, id), Component: ForwardingTab },
   { value: "security", label: () => "Security", visible: (s, id) => orgAdmin(s, id), Component: SecurityTab },

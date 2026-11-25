@@ -1281,6 +1281,8 @@
           "membersDescription": "Members and their roles. Write also adds and removes members.",
           "audit": "Audit log",
           "auditDescription": "The organization’s audit log.",
+          "reports": "Reports",
+          "reportsDescription": "Mailbox sizes, last sign-in, inactive mailboxes, top senders and receivers, and mail volume reports. Write also refreshes sizes.",
           "webhooks": "Webhooks",
           "webhooksDescription": "Webhooks, their delivery history and test deliveries.",
           "contacts": "Contacts",

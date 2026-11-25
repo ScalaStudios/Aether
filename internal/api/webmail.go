@@ -47,6 +47,9 @@ func (s *Server) ownedMailbox(w http.ResponseWriter, r *http.Request, p *princip
 		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to this mailbox.")
 		return nil, false
 	}
+	if p.apiKey == nil && m.Kind == "user" && m.Access == "owner" {
+		s.touchWebLogin(r.Context(), m.ID)
+	}
 	return m, true
 }
 
@@ -63,6 +66,9 @@ func (s *Server) sendingMailbox(w http.ResponseWriter, r *http.Request, p *princ
 	if !m.SendAs && !m.SendOnBehalf {
 		writeError(w, http.StatusForbidden, "cannot_send", "You can read this mailbox but not send from it. Ask an administrator for Send as or Send on behalf.")
 		return nil, false
+	}
+	if p.apiKey == nil && m.Kind == "user" && m.Access == "owner" {
+		s.touchWebLogin(r.Context(), m.ID)
 	}
 	return m, true
 }

@@ -61,6 +61,20 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+type mailboxSummary struct {
+	mailbox
+	UsedBytes        int64      `json:"usedBytes"`
+	StorageBytes     int64      `json:"storageBytes"`
+	MessageCount     int64      `json:"messageCount"`
+	StorageUpdatedAt *time.Time `json:"storageUpdatedAt"`
+	LastWebLoginAt   *time.Time `json:"lastWebLoginAt"`
+	LastIMAPLoginAt  *time.Time `json:"lastImapLoginAt"`
+	LastSMTPLoginAt  *time.Time `json:"lastSmtpLoginAt"`
+	LastSignInAt     *time.Time `json:"lastSignInAt"`
+	Sent30d          int64      `json:"sent30d"`
+	Received30d      int64      `json:"received30d"`
+}
+
 func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *principal) {
 	orgID, ok := s.orgPerm(w, r, p, permMailboxesRead, permListsWrite, permSignaturesRead)
 	if !ok {
@@ -70,15 +84,33 @@ func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *princi
 	if !isScoped {
 		scoped = nil
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, used_bytes FROM mailboxes WHERE org_id = $1 AND ($2::text[] IS NULL OR domain_id::text = ANY($2)) ORDER BY address`, orgID, scoped)
+	rows, err := s.db.Query(r.Context(), `
+		SELECT `+mailboxColumns+`, used_bytes,
+		       storage_bytes, message_count, storage_updated_at,
+		       last_web_login_at, last_imap_login_at, last_smtp_login_at,
+		       CASE
+		           WHEN last_web_login_at IS NULL AND last_imap_login_at IS NULL AND last_smtp_login_at IS NULL THEN NULL
+		           ELSE greatest(
+		               coalesce(last_web_login_at, '-infinity'::timestamptz),
+		               coalesce(last_imap_login_at, '-infinity'::timestamptz),
+		               coalesce(last_smtp_login_at, '-infinity'::timestamptz)
+		           )
+		       END,
+		       coalesce(v.sent, 0)::bigint, coalesce(v.received, 0)::bigint
+		FROM mailboxes m
+		LEFT JOIN (
+			SELECT mailbox_id, sum(sent_count) AS sent, sum(received_count) AS received
+			FROM mailbox_daily_stats
+			WHERE org_id = $1 AND day >= (now() AT TIME ZONE 'UTC')::date - 29
+			GROUP BY mailbox_id
+		) v ON v.mailbox_id = m.id
+		WHERE m.org_id = $1 AND ($2::text[] IS NULL OR m.domain_id::text = ANY($2))
+		ORDER BY m.address`, orgID, scoped)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[struct {
-		mailbox
-		UsedBytes int64 `json:"usedBytes"`
-	}])
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[mailboxSummary])
 	if err != nil {
 		s.internalError(w, r, err)
 		return

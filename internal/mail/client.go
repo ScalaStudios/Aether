@@ -141,6 +141,111 @@ func (c *Client) Expunge(ctx context.Context, user string, query []string) error
 	return c.doveadmUnlessUnknownUser(ctx, c.bulk, "expunge", map[string]any{"user": user, "query": query})
 }
 
+type MailboxStorage struct {
+	Address      string
+	StorageBytes int64
+	MessageCount int64
+}
+
+type flexInt64 int64
+
+func (f *flexInt64) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+	}
+	if s == "" || s == "-" {
+		*f = 0
+		return nil
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*f = flexInt64(v)
+	return nil
+}
+
+const doveadmStorageBatch = 25
+
+func (c *Client) MailboxStorage(ctx context.Context, addresses []string) (map[string]MailboxStorage, error) {
+	out := make(map[string]MailboxStorage, len(addresses))
+	if len(addresses) == 0 {
+		return out, nil
+	}
+	for start := 0; start < len(addresses); start += doveadmStorageBatch {
+		batch := addresses[start:min(start+doveadmStorageBatch, len(addresses))]
+		cmds := make([][]any, 0, len(batch))
+		for _, addr := range batch {
+			cmds = append(cmds, []any{"mailboxStatus", map[string]any{"user": addr, "field": []string{"messages", "vsize"}, "mailboxMask": []string{"*"}}, addr})
+		}
+		body, err := json.Marshal(cmds)
+		if err != nil {
+			return out, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.doveadmURL+"/doveadm/v1", bytes.NewReader(body))
+		if err != nil {
+			return out, err
+		}
+		req.Header.Set("Authorization", "X-Dovecot-API "+base64.StdEncoding.EncodeToString([]byte(c.doveadmKey)))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return out, fmt.Errorf("doveadm mailboxStatus: %w", err)
+		}
+		var rows [][]json.RawMessage
+		decErr := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rows)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || decErr != nil {
+			return out, fmt.Errorf("doveadm mailboxStatus: unexpected response with HTTP status %d", resp.StatusCode)
+		}
+		for _, item := range rows {
+			if len(item) < 3 {
+				continue
+			}
+			var kind, tag string
+			json.Unmarshal(item[0], &kind)
+			json.Unmarshal(item[2], &tag)
+			switch kind {
+			case "doveadmResponse":
+				var folders []struct {
+					Mailbox  string    `json:"mailbox"`
+					Messages flexInt64 `json:"messages"`
+					Vsize    flexInt64 `json:"vsize"`
+				}
+				if err := json.Unmarshal(item[1], &folders); err != nil {
+					return out, fmt.Errorf("doveadm mailboxStatus decode %s: %w", tag, err)
+				}
+				var st MailboxStorage
+				st.Address = tag
+				for _, f := range folders {
+					if SharedFolder(f.Mailbox) {
+						continue
+					}
+					st.StorageBytes += int64(f.Vsize)
+					st.MessageCount += int64(f.Messages)
+				}
+				out[tag] = st
+			case "error":
+				var failure struct {
+					ExitCode int `json:"exitCode"`
+				}
+				json.Unmarshal(item[1], &failure)
+				if failure.ExitCode == 67 || failure.ExitCode == 68 {
+					out[tag] = MailboxStorage{Address: tag}
+					continue
+				}
+				return out, fmt.Errorf("doveadm mailboxStatus %s: %s", tag, item[1])
+			}
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) masterLogin(address string) string {
 	return address + "*" + c.masterUser
 }

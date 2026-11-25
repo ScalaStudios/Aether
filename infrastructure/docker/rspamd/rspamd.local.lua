@@ -1,3 +1,9 @@
+local lua_redis = require 'lua_redis'
+local rspamd_logger = require 'rspamd_logger'
+local ucl = require 'ucl'
+
+local stats_redis = lua_redis.parse_redis_server('aether_stats')
+
 rspamd_config:register_symbol({
   name = 'AETHER_HEADER_FROM_MISMATCH',
   type = 'prefilter',
@@ -19,9 +25,7 @@ rspamd_config:register_symbol({
 })
 
 local rspamd_http = require 'rspamd_http'
-local rspamd_logger = require 'rspamd_logger'
 local upstream_list = require 'rspamd_upstream_list'
-local ucl = require 'ucl'
 
 local quarantine_score = 10
 local quarantine_api
@@ -168,7 +172,6 @@ rspamd_config:register_symbol({
   end,
 })
 
-local lua_redis = require 'lua_redis'
 local aether_redis = lua_redis.parse_redis_server('aether')
 
 rspamd_config:register_symbol({
@@ -413,3 +416,48 @@ lua_dkim_tools.sign_using_redis = function(N, task, settings, selectors, sign_fu
   end
   pcall(sign_using_redis, N, task, ed25519, copied, sign_func, function() end)
 end
+
+rspamd_config:register_symbol({
+  name = 'AETHER_MAIL_STATS',
+  type = 'idempotent',
+  priority = 10,
+  callback = function(task)
+    if not stats_redis then
+      return
+    end
+    local action = task:get_metric_action()
+    if action ~= 'no action' and action ~= 'add header' and action ~= 'rewrite subject' then
+      return
+    end
+    local user = task:get_user() or ''
+    if user == 'aether-sieve-relay' then
+      user = ''
+    elseif user ~= '' then
+      user = (user:match('^([^%*]+)') or ''):lower()
+    end
+    local envelope = task:get_from('smtp')
+    local from_addr = (envelope and envelope[1] and envelope[1].addr or ''):lower()
+    local rcpts_raw = task:get_recipients('smtp') or {}
+    local rcpts = {}
+    for _, r in ipairs(rcpts_raw) do
+      if r.addr and r.addr ~= '' then
+        rcpts[#rcpts + 1] = r.addr:lower()
+      end
+    end
+    if user == '' and #rcpts == 0 then
+      return
+    end
+    local payload = ucl.to_format({
+      u = user,
+      f = from_addr,
+      r = rcpts,
+      s = task:get_size() or 0,
+      t = os.time(),
+    }, 'json-compact')
+    lua_redis.redis_make_request(task, stats_redis, nil, true, function(err)
+      if err then
+        rspamd_logger.errx(task, 'aether mail stats redis write failed: %s', err)
+      end
+    end, 'RPUSH', { 'aether:mail_events', payload })
+  end,
+})

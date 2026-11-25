@@ -30,6 +30,7 @@ tags:
   - name: mail-flow
   - name: message-trace
   - name: outbound-routing
+  - name: reports
 paths:
   /auth/providers:
     get:
@@ -1931,7 +1932,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "contacts:read", "contacts:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write", "suppressions:read", "suppressions:write"]
+                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "contacts:read", "contacts:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write", "suppressions:read", "suppressions:write", "reports:read", "reports:write"]
                 expiresAt: { type: string, format: date-time }
       responses:
         "201":
@@ -2328,6 +2329,64 @@ paths:
       responses:
         "204": { description: Accepted }
         "409": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/reports:
+    get:
+      tags: [reports]
+      summary: Organization mailbox and mail volume report
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+        - { name: inactiveDays, in: query, schema: { type: integer, minimum: 1, maximum: 3650, default: 30 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 25 } }
+      responses:
+        "200":
+          description: Organization usage and activity report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgReport" }
+  /organizations/{orgId}/reports/{report}:
+    get:
+      tags: [reports]
+      summary: Individual report section as JSON or CSV
+      description: "Returns JSON by default, or text/csv when format=csv or Accept: text/csv is requested."
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: report, in: path, required: true, schema: { type: string, enum: [mailboxes, inactive, largest, activity, volume] } }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv], default: json } }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+        - { name: inactiveDays, in: query, schema: { type: integer, minimum: 1, maximum: 3650, default: 30 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 10000 } }
+        - { name: sort, in: query, schema: { type: string, enum: [total, sent, received], default: total }, description: Only for the activity report. }
+      responses:
+        "200":
+          description: Report data in JSON or CSV
+          content:
+            application/json:
+              schema:
+                type: object
+            text/csv:
+              schema:
+                type: string
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/reports/refresh:
+    post:
+      tags: [reports]
+      summary: Refresh cached mailbox storage sizes from Dovecot
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: Sizes refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated, storageUpdatedAt]
+                properties:
+                  updated: { type: integer }
+                  storageUpdatedAt: { type: string, format: date-time }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /me/mailboxes:
     get:
       tags: [mail]
@@ -4849,7 +4908,7 @@ components:
     apiKey:
       type: http
       scheme: bearer
-      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, organization contacts, members, audit, webhooks, and mail flow rules with their held messages.suppressions. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
+      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, organization contacts, members, audit, webhooks, and mail flow rules with their held messages.suppressions.reports. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4858,13 +4917,13 @@ components:
     fromAddress: { name: fromAddress, in: query, schema: { type: string, format: email }, description: An authorized From address. Defaults to the mailbox address. }
     uid: { name: uid, in: path, required: true, schema: { type: integer } }
     folder: { name: folder, in: query, schema: { type: string, default: INBOX } }
-    traceSender: { name: sender, in: query, description: Part of the envelope sender address, schema: { type: string } }
-    traceRecipient: { name: recipient, in: query, description: Part of a recipient address, including the alias it was sent to, schema: { type: string } }
+    traceSender: { name: sender, in: query, description: "Part of the envelope sender address, schema: { type: string }" }
+    traceRecipient: { name: recipient, in: query, description: "Part of a recipient address, including the alias it was sent to, schema: { type: string }" }
     traceSubject: { name: subject, in: query, schema: { type: string } }
     traceMessageId: { name: messageId, in: query, schema: { type: string } }
     traceStatus: { name: status, in: query, schema: { $ref: "#/components/schemas/MessageTraceStatus" } }
-    traceFrom: { name: from, in: query, description: Received at or after this time, schema: { type: string, format: date-time } }
-    traceTo: { name: to, in: query, description: Received before this time, schema: { type: string, format: date-time } }
+    traceFrom: { name: from, in: query, description: "Received at or after this time, schema: { type: string, format: date-time }" }
+    traceTo: { name: to, in: query, description: "Received before this time, schema: { type: string, format: date-time }" }
   responses:
     ImportSchedules:
       description: Import schedules
@@ -5232,6 +5291,15 @@ components:
         mailboxId: { type: string, format: uuid, description: Active personal mailbox owned by the caller in this organization }
         quotaWarningPercents: { type: array, items: { type: integer }, description: "The organization's storage warning levels. Only in GET /me/mailboxes." }
         usedBytes: { type: integer, description: "Storage in use when Aether last measured it, every AETHER_QUOTA_CHECK_INTERVAL. Only in GET /organizations/{orgId}/mailboxes." }
+        storageBytes: { type: integer, description: "Cached storage used in bytes. Included in GET /organizations/{orgId}/mailboxes." }
+        messageCount: { type: integer, description: "Cached message count. Included in GET /organizations/{orgId}/mailboxes." }
+        storageUpdatedAt: { type: [string, "null"], format: date-time, description: When storage usage was last read from Dovecot. }
+        lastWebLoginAt: { type: [string, "null"], format: date-time, description: Most recent web sign-in or webmail access by the owner. }
+        lastImapLoginAt: { type: [string, "null"], format: date-time, description: Most recent IMAP sign-in. }
+        lastSmtpLoginAt: { type: [string, "null"], format: date-time, description: Most recent SMTP submission sign-in. }
+        lastSignInAt: { type: [string, "null"], format: date-time, description: Most recent sign-in across web, IMAP, and SMTP. }
+        sent30d: { type: integer, description: "Messages sent in the last 30 days. Included in GET /organizations/{orgId}/mailboxes." }
+        received30d: { type: integer, description: "Messages received in the last 30 days. Included in GET /organizations/{orgId}/mailboxes." }
     Alias:
       type: object
       required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt, hiddenFromDirectory]
@@ -6549,4 +6617,76 @@ components:
         undoneAt: { type: [string, "null"], format: date-time }
         reportedAt: { type: [string, "null"], format: date-time }
         createdAt: { type: string, format: date-time }
-
+    ReportSummary:
+      type: object
+      required: [totalMailboxes, activeMailboxes, inactiveMailboxes, totalStorageBytes, totalQuotaBytes, totalMessages, sentTotal, receivedTotal, sentBytesTotal, receivedBytesTotal]
+      properties:
+        totalMailboxes: { type: integer }
+        activeMailboxes: { type: integer }
+        inactiveMailboxes: { type: integer }
+        totalStorageBytes: { type: integer }
+        totalQuotaBytes: { type: integer }
+        totalMessages: { type: integer }
+        sentTotal: { type: integer }
+        receivedTotal: { type: integer }
+        sentBytesTotal: { type: integer }
+        receivedBytesTotal: { type: integer }
+    ReportMailbox:
+      type: object
+      required: [id, address, displayName, kind, active, quotaBytes, storageBytes, quotaPercent, messageCount, storageUpdatedAt, lastWebLoginAt, lastImapLoginAt, lastSmtpLoginAt, lastSignInAt, sentCount, receivedCount, sentBytes, receivedBytes, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        address: { type: string }
+        displayName: { type: string }
+        kind: { type: string, enum: [user, shared] }
+        active: { type: boolean }
+        quotaBytes: { type: integer }
+        storageBytes: { type: integer }
+        quotaPercent: { type: [number, "null"] }
+        messageCount: { type: integer }
+        storageUpdatedAt: { type: [string, "null"], format: date-time }
+        lastWebLoginAt: { type: [string, "null"], format: date-time }
+        lastImapLoginAt: { type: [string, "null"], format: date-time }
+        lastSmtpLoginAt: { type: [string, "null"], format: date-time }
+        lastSignInAt: { type: [string, "null"], format: date-time }
+        sentCount: { type: integer }
+        receivedCount: { type: integer }
+        sentBytes: { type: integer }
+        receivedBytes: { type: integer }
+        createdAt: { type: string, format: date-time }
+    ReportActivity:
+      type: object
+      required: [id, address, displayName, kind, active, sentCount, receivedCount, sentBytes, receivedBytes]
+      properties:
+        id: { type: string, format: uuid }
+        address: { type: string }
+        displayName: { type: string }
+        kind: { type: string, enum: [user, shared] }
+        active: { type: boolean }
+        sentCount: { type: integer }
+        receivedCount: { type: integer }
+        sentBytes: { type: integer }
+        receivedBytes: { type: integer }
+    VolumePoint:
+      type: object
+      required: [day, sentCount, receivedCount, sentBytes, receivedBytes]
+      properties:
+        day: { type: string, format: date }
+        sentCount: { type: integer }
+        receivedCount: { type: integer }
+        sentBytes: { type: integer }
+        receivedBytes: { type: integer }
+    OrgReport:
+      type: object
+      required: [generatedAt, storageUpdatedAt, days, inactiveDays, summary, inactiveMailboxes, largestMailboxes, topSenders, topReceivers, volumeSeries]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        storageUpdatedAt: { type: [string, "null"], format: date-time }
+        days: { type: integer }
+        inactiveDays: { type: integer }
+        summary: { $ref: "#/components/schemas/ReportSummary" }
+        inactiveMailboxes: { type: array, items: { $ref: "#/components/schemas/ReportMailbox" } }
+        largestMailboxes: { type: array, items: { $ref: "#/components/schemas/ReportMailbox" } }
+        topSenders: { type: array, items: { $ref: "#/components/schemas/ReportActivity" } }
+        topReceivers: { type: array, items: { $ref: "#/components/schemas/ReportActivity" } }
+        volumeSeries: { type: array, items: { $ref: "#/components/schemas/VolumePoint" } }
