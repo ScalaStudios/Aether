@@ -1558,6 +1558,28 @@ paths:
         "204": { description: Decided, and an approved message reached every member }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/bulk:
+    post:
+      tags: [mailboxes, aliases]
+      summary: Create up to 1,000 mailboxes, aliases and distribution lists in one request, with per-item results and optional dry-run validation
+      description: "Operations run in order so later lists may reference mailboxes created earlier in the same request in sendAs or owners. Set dryRun to true (or pass ?dryRun=true) to validate every item without creating anything or writing audit events. API keys need mailboxes:write for mailbox operations and aliases:write for alias and list operations."
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: dryRun, in: query, schema: { type: boolean }, description: "Validate every operation without making changes" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BulkRequest" }
+      responses:
+        "200":
+          description: Per-item validation or creation results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BulkResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/members:
     get:
       tags: [members]
@@ -5266,11 +5288,71 @@ components:
         allowedSenders: { type: array, items: { type: string }, description: Addresses or @domain entries }
         sentMailboxId: { type: string, description: A shared mailbox of this organization that keeps the copies of messages sent as the list from Aether Mail. An empty string files them in the Sent folder of the sender's mailbox. }
         sendAs: { type: array, items: { type: string, format: email }, description: Mailboxes of this organization that may send as the list }
-        owners: { type: array, items: { type: string, format: uuid }, description: Organization members who may change the list's destinations }
+        owners: { type: array, items: { type: string }, description: Organization members (user UUIDs or email addresses) who may change the list's destinations }
         moderated: { type: boolean, description: "Hold messages to the list until a moderator approves them. Needs at least one moderator or owner, and AETHER_SIEVE_RELAY_PASSWORD on the API." }
         moderators: { type: array, items: { type: string, format: uuid }, description: Organization members who approve held messages. When empty, the owners do. }
         moderationExempt: { type: array, items: { type: string }, description: "Addresses or @domain entries whose mail skips moderation. Moderators and owners always skip it." }
         hiddenFromDirectory: { type: boolean, description: Lists only. Leaves the list out of the directory, address suggestions and the CardDAV directory. It still receives mail. }
+    BulkOperation:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [mailbox, alias, list] }
+        address: { type: string, description: "Full address on one of this organization's domains, or @domain for a catch-all alias. May be used instead of domainId and localPart." }
+        domainId: { type: string, format: uuid }
+        localPart: { type: string }
+        displayName: { type: string }
+        kind: { type: string, enum: [user, shared, alias, list] }
+        quotaBytes: { type: integer, minimum: 0 }
+        password: { type: string, minLength: 12, description: "Optional local sign-in password for user mailboxes; leave empty for sign in with provider or shared mailboxes" }
+        active: { type: boolean, default: true }
+        name: { type: string, maxLength: 200 }
+        destinations: { type: array, items: { type: string, format: email } }
+        acceptFrom: { type: string, enum: [anyone, organization, members, allowlist] }
+        allowedSenders: { type: array, items: { type: string } }
+        sendAs: { type: array, items: { type: string, format: email } }
+        owners: { type: array, items: { type: string }, description: "Organization member user UUIDs or email addresses" }
+    BulkRequest:
+      type: object
+      required: [operations]
+      properties:
+        dryRun: { type: boolean, default: false }
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/BulkOperation" }
+    BulkResult:
+      type: object
+      required: [index, type, status]
+      properties:
+        index: { type: integer }
+        type: { type: string }
+        address: { type: string }
+        status: { type: string, enum: [valid, created, failed] }
+        mailbox: { $ref: "#/components/schemas/Mailbox" }
+        alias: { $ref: "#/components/schemas/Alias" }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+    BulkResponse:
+      type: object
+      required: [dryRun, summary, results]
+      properties:
+        dryRun: { type: boolean }
+        summary:
+          type: object
+          required: [total, succeeded, failed]
+          properties:
+            total: { type: integer }
+            succeeded: { type: integer }
+            failed: { type: integer }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/BulkResult" }
     ImportCounts:
       type: object
       properties:

@@ -8,6 +8,7 @@ import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { CsvImportDialog } from "@/components/admin/csv-import-dialog"
 import { DomainSelect } from "@/components/admin/domain-select"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
@@ -35,10 +36,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
+import { downloadCsv, exportMailboxesCsv } from "@/lib/csv"
 import { formatBytes, formatDateTime, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
 import { canReadDelegates, hasPerm } from "@/lib/permissions"
-import { mailboxesQuery, organizationsQuery } from "@/lib/queries"
+import { domainsQuery, mailboxesQuery, organizationsQuery } from "@/lib/queries"
 import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, Protocol, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
@@ -572,11 +574,13 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const canAudit = hasPerm(session, orgId, "audit:read")
 
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
+  const domains = useQuery(domainsQuery(orgId))
   const warnings = useQuery({ queryKey: ["quota-warnings", orgId], queryFn: () => api<QuotaWarnings>(`/organizations/${orgId}/quota-warnings`) })
   const [editingWarnings, setEditingWarnings] = useState(false)
   const [resizing, setResizing] = useState<Mailbox | null>(null)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Mailbox | null>(null)
+  const [importingCsv, setImportingCsv] = useState(false)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
   const [appPasswordsFor, setAppPasswordsFor] = useState<Mailbox | null>(null)
@@ -606,6 +610,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["mailboxes", orgId] })
     qc.invalidateQueries({ queryKey: ["my-mailboxes"] })
+    qc.invalidateQueries({ queryKey: ["members", orgId] })
   }
 
   const create = useMutation({
@@ -731,6 +736,20 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         description="User mailboxes have an owner account that signs in with the address. Shared mailboxes have members instead."
         actions={
           <>
+            <Button
+              variant="secondary"
+              disabled={!mailboxes.data?.length}
+              onClick={() => downloadCsv("mailboxes.csv", exportMailboxesCsv(mailboxes.data ?? []))}
+            >
+              <Download aria-hidden />
+              Export CSV
+            </Button>
+            {canWrite && (
+              <Button variant="secondary" onClick={() => setImportingCsv(true)}>
+                <Upload aria-hidden />
+                Import CSV
+              </Button>
+            )}
             {canSettings && (
               <Button
                 variant="secondary"
@@ -1104,6 +1123,14 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         confirmLabel={`Convert to ${converting?.kind === "shared" ? "user" : "shared"} mailbox`}
         pending={convert.isPending}
         onConfirm={() => converting && convert.mutate(converting)}
+      />
+      <CsvImportDialog
+        orgId={orgId}
+        kind="mailbox"
+        open={importingCsv}
+        onOpenChange={setImportingCsv}
+        defaultDomain={domains.data?.[0]?.name}
+        onCompleted={refresh}
       />
     </section>
   )

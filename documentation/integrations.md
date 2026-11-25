@@ -71,6 +71,32 @@ A signed-in person downloads their own mailbox from **Settings → Export mailbo
 
 `DELETE /api/v1/mailboxes/{mailboxId}` answers `204` when `graceDays` is omitted or `0`: the mailbox row is removed and its mail is deleted from the vmail volume. `graceDays` from 1 to 3650 answers `200` with `purgeAfter` set; the mailbox is closed and can be brought back with `POST /api/v1/mailboxes/{mailboxId}/restore` until that time. `onHold: true` (`PATCH` the mailbox) makes deletion close the mailbox and keep the mail. Activating a mailbox again also cancels a scheduled deletion.
 
+## Bulk creation and CSV import
+
+`POST /api/v1/organizations/{orgId}/bulk` accepts up to 1,000 `mailbox`, `alias` and `list` operations in one JSON request (up to 4 MB) and answers `200` with a summary and per-item results (`created` or `failed`, or `valid` / `failed` when `dryRun` is `true` or `?dryRun=true` is passed).
+
+- Each item may name an address on one of the organization's domains (`address`, including `@domain` for a catch-all alias) or pass `domainId` and `localPart`.
+- Operations run in order, so a distribution list later in the same request may reference a mailbox created earlier in `sendAs` or `owners`. List `owners` accept either organization member user IDs or email addresses.
+- Each created item writes the same `mailbox.create` or `alias.create` audit event as the single-item endpoints; dry runs make no changes and write no audit events.
+- API keys need `mailboxes:write` when the request contains mailbox operations and `aliases:write` when it contains alias or distribution list operations.
+
+```json
+{
+  "dryRun": true,
+  "operations": [
+    { "type": "mailbox", "address": "alice@example.com", "displayName": "Alice Smith", "quotaBytes": 2147483648 },
+    { "type": "alias", "address": "sales@example.com", "destinations": ["alice@example.com"] },
+    { "type": "list", "address": "staff@example.com", "name": "Staff", "destinations": ["alice@example.com"], "acceptFrom": "organization", "owners": ["alice@example.com"] }
+  ]
+}
+```
+
+In the admin console, **Administration → Mailboxes** and **Administration → Aliases** include **Import CSV** (with downloadable templates, dry-run preview and per-row validation, a created/failed report, and failed-row CSV export) and matching **Export CSV** for mailboxes, aliases and distribution lists:
+
+- **Mailboxes CSV:** `address,display_name,kind,quota_mb,password,active` (leave `password` empty for sign in with provider or shared mailboxes).
+- **Aliases CSV:** `address,destinations,active` (separate multiple destinations with `;`; use `@domain` for a catch-all).
+- **Distribution lists CSV:** `address,name,members,accept_from,allowed_senders,send_as,owners,active` (separate multiple addresses with `;`).
+
 ## Webhooks
 
 A webhook receives audit and mail delivery events for its organization that match its event list. Use `*` to receive all events. The audit log on the console shows the event names.

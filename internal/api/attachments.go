@@ -127,8 +127,9 @@ func (s *Server) saveAttachmentPolicy(w http.ResponseWriter, r *http.Request, p 
 		writeError(w, http.StatusUnprocessableEntity, "invalid_attachment_policy", "Keep the list of exempt senders to 500 entries.")
 		return
 	}
-	exempt, ok := parseAddressList(w, in.ExemptSenders, true)
-	if !ok {
+	exempt, fe := parseAddresses(in.ExemptSenders, true)
+	if fe != nil {
+		writeError(w, fe.Status, fe.Code, fe.Message)
 		return
 	}
 	in.ExemptSenders = exempt

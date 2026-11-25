@@ -106,6 +106,7 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/organizations/{orgId}/mail-flow/held":              "mailflow",
 	"POST /api/v1/mail-flow/held/{heldId}/approve":                  "mailflow",
 	"POST /api/v1/mail-flow/held/{heldId}/reject":                   "mailflow",
+	"POST /api/v1/organizations/{orgId}/bulk":                       "",
 }
 
 type apiKeyIdentity struct {

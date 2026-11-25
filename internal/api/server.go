@@ -282,6 +282,7 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/organizations/{orgId}/personal-alias-key", s.revokePersonalAliasKey)
 	authed("GET /api/v1/organizations/{orgId}/aliases", s.listAliases)
 	authed("POST /api/v1/organizations/{orgId}/aliases", s.createAlias)
+	authed("POST /api/v1/organizations/{orgId}/bulk", s.bulkImport)
 	authed("GET /api/v1/aliases/{aliasId}", s.getAlias)
 	authed("PATCH /api/v1/aliases/{aliasId}", s.updateAlias)
 	authed("DELETE /api/v1/aliases/{aliasId}", s.deleteAlias)

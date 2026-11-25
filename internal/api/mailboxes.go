@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
@@ -117,6 +118,159 @@ func (s *Server) orgDomain(r *http.Request, orgID, domainID string) (string, err
 	return name, err
 }
 
+type fieldError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+type mailboxCreateInput struct {
+	DomainID    string
+	LocalPart   string
+	DisplayName string
+	QuotaBytes  int64
+	Password    string
+	Kind        string
+	Active      bool
+	Resource    *resourceInput
+}
+
+func normalizeAndValidateMailbox(in *mailboxCreateInput) *fieldError {
+	in.LocalPart = strings.ToLower(strings.TrimSpace(in.LocalPart))
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
+	if in.Kind == "" {
+		in.Kind = "user"
+	}
+	switch {
+	case in.Kind != "user" && in.Kind != "shared" && in.Kind != "resource":
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_kind", "Kind must be user, shared, or resource."}
+	case in.Kind == "shared" && in.Password != "":
+		return &fieldError{http.StatusUnprocessableEntity, "shared_no_password", "A shared mailbox has no sign-in. Leave the password empty and add members instead."}
+	case in.Kind == "resource" && (in.Password != "" || in.Resource == nil):
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_resource", "A room or equipment has no sign-in. Leave the password empty and give its booking settings."}
+	case in.Kind != "resource" && in.Resource != nil:
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_resource", "Booking settings are only for rooms and equipment."}
+	case in.Kind == "resource" && (in.DisplayName == "" || len(in.DisplayName) > 200):
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_name", "Give the room or equipment a name of up to 200 characters."}
+	case !localPartPattern.MatchString(in.LocalPart):
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, or underscores for the address. A plus sign marks a tag, so it cannot be part of an address."}
+	case in.QuotaBytes < 0:
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_quota", "The quota cannot be negative."}
+	case in.Password != "" && len(in.Password) < 12:
+		return &fieldError{http.StatusUnprocessableEntity, "weak_password", "Use a password of at least 12 characters."}
+	}
+	return nil
+}
+
+func mailboxConflictError(code, address string) *fieldError {
+	switch code {
+	case "account_exists":
+		return &fieldError{http.StatusConflict, code, "An account with this address already has a password. Create the mailbox without a password; the account keeps its current sign-in."}
+	case "address_is_account":
+		return &fieldError{http.StatusConflict, code, "An account already signs in with this address. Convert that person's mailbox to shared instead, or choose another address."}
+	case "address_taken":
+		return &fieldError{http.StatusConflict, "address_taken", address + " is already in use by a mailbox or alias."}
+	}
+	return nil
+}
+
+func (s *Server) checkMailboxDryRun(ctx context.Context, p *principal, address, kind, password string) (*fieldError, error) {
+	var taken bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM aliases WHERE address = $1) OR EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, address).Scan(&taken); err != nil {
+		return nil, err
+	}
+	if taken {
+		return mailboxConflictError("address_taken", address), nil
+	}
+	var hasPassword, isAdmin bool
+	err := s.db.QueryRow(ctx, `SELECT password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&hasPassword, &isAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if kind != "user" {
+		return mailboxConflictError("address_is_account", address), nil
+	}
+	if password != "" && (hasPassword || isAdmin) && !p.User.IsPlatformAdmin {
+		return mailboxConflictError("account_exists", address), nil
+	}
+	return nil, nil
+}
+
+func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, domainName string, in mailboxCreateInput) (*mailbox, *fieldError, error) {
+	address := in.LocalPart + "@" + domainName
+	var m mailbox
+	var code string
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var aliasTaken bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, address).Scan(&aliasTaken); err != nil {
+			return err
+		}
+		if aliasTaken {
+			code = "address_taken"
+			return nil
+		}
+		var userID string
+		var hasPassword, isAdmin bool
+		err := tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &hasPassword, &isAdmin)
+		if in.Kind != "user" {
+			if err == nil {
+				code = "address_is_account"
+				return nil
+			}
+			if errors.Is(err, pgx.ErrNoRows) {
+				err = nil
+			}
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			var hash *string
+			if in.Password != "" {
+				h := auth.HashPassword(in.Password)
+				hash = &h
+			}
+			err = tx.QueryRow(ctx, `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id`, address, in.DisplayName, hash).Scan(&userID)
+		} else if err == nil && in.Password != "" {
+			if (hasPassword || isAdmin) && !p.User.IsPlatformAdmin {
+				code = "account_exists"
+				return nil
+			}
+			if _, err = tx.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, auth.HashPassword(in.Password)); err == nil {
+				_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		var owner *string
+		if in.Kind == "user" {
+			owner = &userID
+		}
+		err = tx.QueryRow(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, active, kind, protocols) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT mailbox_protocols FROM organizations WHERE id = $1)) RETURNING `+mailboxColumns,
+			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Active, in.Kind).
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
+		if err == nil && in.Kind == "resource" {
+			err = saveResource(ctx, tx, m.ID, in.Resource)
+		}
+		if err != nil || owner == nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, orgID, userID)
+		return err
+	})
+	if code != "" {
+		return nil, mailboxConflictError(code, address), nil
+	}
+	if isUniqueViolation(err) {
+		return nil, mailboxConflictError("address_taken", address), nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return &m, nil, nil
+}
+
 func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *principal) {
 	orgID, ok := s.orgPerm(w, r, p, permMailboxesWrite)
 	if !ok {
@@ -134,39 +288,22 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 	if !decode(w, r, 32<<10, &in) {
 		return
 	}
-	in.LocalPart = strings.ToLower(strings.TrimSpace(in.LocalPart))
-	in.DisplayName = strings.TrimSpace(in.DisplayName)
-	if in.Kind == "" {
-		in.Kind = "user"
+	req := mailboxCreateInput{
+		DomainID:    in.DomainID,
+		LocalPart:   in.LocalPart,
+		DisplayName: in.DisplayName,
+		QuotaBytes:  in.QuotaBytes,
+		Password:    in.Password,
+		Kind:        in.Kind,
+		Active:      true,
+		Resource:    in.Resource,
 	}
-	switch {
-	case in.Kind != "user" && in.Kind != "shared" && in.Kind != "resource":
-		writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "Kind must be user, shared, or resource.")
-		return
-	case in.Kind == "shared" && in.Password != "":
-		writeError(w, http.StatusUnprocessableEntity, "shared_no_password", "A shared mailbox has no sign-in. Leave the password empty and add members instead.")
-		return
-	case in.Kind == "resource" && (in.Password != "" || in.Resource == nil):
-		writeError(w, http.StatusUnprocessableEntity, "invalid_resource", "A room or equipment has no sign-in. Leave the password empty and give its booking settings.")
-		return
-	case in.Kind != "resource" && in.Resource != nil:
-		writeError(w, http.StatusUnprocessableEntity, "invalid_resource", "Booking settings are only for rooms and equipment.")
-		return
-	case in.Kind == "resource" && (in.DisplayName == "" || len(in.DisplayName) > 200):
-		writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Give the room or equipment a name of up to 200 characters.")
-		return
-	case !localPartPattern.MatchString(in.LocalPart):
-		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, or underscores for the address. A plus sign marks a tag, so it cannot be part of an address.")
-		return
-	case in.QuotaBytes < 0:
-		writeError(w, http.StatusUnprocessableEntity, "invalid_quota", "The quota cannot be negative.")
-		return
-	case in.Password != "" && len(in.Password) < 12:
-		writeError(w, http.StatusUnprocessableEntity, "weak_password", "Use a password of at least 12 characters.")
+	if ie := normalizeAndValidateMailbox(&req); ie != nil {
+		writeError(w, ie.Status, ie.Code, ie.Message)
 		return
 	}
-	domainName, err := s.orgDomain(r, orgID, in.DomainID)
-	if errors.Is(err, pgx.ErrNoRows) || !uuidPattern.MatchString(in.DomainID) {
+	domainName, err := s.orgDomain(r, orgID, req.DomainID)
+	if errors.Is(err, pgx.ErrNoRows) || !uuidPattern.MatchString(req.DomainID) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_domain", "Choose a domain that belongs to this organization.")
 		return
 	}
@@ -174,86 +311,23 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		s.internalError(w, r, err)
 		return
 	}
-	if in.Kind == "resource" && !s.validResource(r.Context(), w, r, orgID, in.Resource) {
+	if req.Kind == "resource" && !s.validResource(r.Context(), w, r, orgID, req.Resource) {
 		return
 	}
-	if !p.allowsDomain(orgID, in.DomainID) {
+	if !p.allowsDomain(orgID, req.DomainID) {
 		forbidden(w)
 		return
 	}
-	address := in.LocalPart + "@" + domainName
-	var m mailbox
-	var code string
-	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		var aliasTaken bool
-		if err := tx.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, address).Scan(&aliasTaken); err != nil {
-			return err
-		}
-		if aliasTaken {
-			code = "address_taken"
-			return nil
-		}
-		var userID string
-		var hasPassword, isAdmin bool
-		err := tx.QueryRow(r.Context(), `SELECT id, password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &hasPassword, &isAdmin)
-		if in.Kind != "user" {
-			if err == nil {
-				code = "address_is_account"
-				return nil
-			}
-			if errors.Is(err, pgx.ErrNoRows) {
-				err = nil
-			}
-		} else if errors.Is(err, pgx.ErrNoRows) {
-			var hash *string
-			if in.Password != "" {
-				h := auth.HashPassword(in.Password)
-				hash = &h
-			}
-			err = tx.QueryRow(r.Context(), `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id`, address, in.DisplayName, hash).Scan(&userID)
-		} else if err == nil && in.Password != "" {
-			if (hasPassword || isAdmin) && !p.User.IsPlatformAdmin {
-				code = "account_exists"
-				return nil
-			}
-			if _, err = tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, auth.HashPassword(in.Password)); err == nil {
-				_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, userID)
-			}
-		}
-		if err != nil {
-			return err
-		}
-		var owner *string
-		if in.Kind == "user" {
-			owner = &userID
-		}
-		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind, protocols) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT mailbox_protocols FROM organizations WHERE id = $1)) RETURNING `+mailboxColumns,
-			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Kind).
-			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
-		if err == nil && in.Kind == "resource" {
-			err = saveResource(r.Context(), tx, m.ID, in.Resource)
-		}
-		if err != nil || owner == nil {
-			return err
-		}
-		_, err = tx.Exec(r.Context(), `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, orgID, userID)
-		return err
-	})
-	switch {
-	case code == "account_exists":
-		writeError(w, http.StatusConflict, code, "An account with this address already has a password. Create the mailbox without a password; the account keeps its current sign-in.")
+	m, ie, err := s.createMailboxRecord(r.Context(), p, orgID, domainName, req)
+	if ie != nil {
+		writeError(w, ie.Status, ie.Code, ie.Message)
 		return
-	case code == "address_is_account":
-		writeError(w, http.StatusConflict, code, "An account already signs in with this address. Convert that person's mailbox to shared instead, or choose another address.")
-		return
-	case code == "address_taken" || isUniqueViolation(err):
-		writeError(w, http.StatusConflict, "address_taken", address+" is already in use by a mailbox or alias.")
-		return
-	case err != nil:
+	}
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &orgID, "mailbox.create", "mailbox", m.ID, map[string]any{"address": address, "kind": m.Kind})
+	s.audit(r.Context(), r, p, &orgID, "mailbox.create", "mailbox", m.ID, map[string]any{"address": m.Address, "kind": m.Kind})
 	writeJSON(w, http.StatusCreated, m)
 }
 

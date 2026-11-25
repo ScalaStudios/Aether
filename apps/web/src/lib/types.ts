@@ -267,6 +267,54 @@ export interface HeldMessage {
   expiresAt: string
 }
 
+export type BulkOperationType = "mailbox" | "alias" | "list"
+
+export interface BulkOperation {
+  type: BulkOperationType
+  address?: string
+  domainId?: string
+  localPart?: string
+  displayName?: string
+  kind?: MailboxKind
+  quotaBytes?: number
+  password?: string
+  active?: boolean
+  name?: string
+  destinations?: string[]
+  acceptFrom?: AcceptFrom
+  allowedSenders?: string[]
+  sendAs?: string[]
+  owners?: string[]
+}
+
+export interface BulkRequest {
+  dryRun?: boolean
+  operations: BulkOperation[]
+}
+
+export interface BulkResult {
+  index: number
+  type: string
+  address?: string
+  status: "valid" | "created" | "failed"
+  mailbox?: Mailbox
+  alias?: Alias
+  error?: {
+    code: string
+    message: string
+  }
+}
+
+export interface BulkResponse {
+  dryRun: boolean
+  summary: {
+    total: number
+    succeeded: number
+    failed: number
+  }
+  results: BulkResult[]
+}
+
 export interface Member {
   userId: string
   email: string

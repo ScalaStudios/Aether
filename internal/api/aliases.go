@@ -120,39 +120,100 @@ func (s *Server) myLists(w http.ResponseWriter, r *http.Request, p *principal) {
 	writeJSON(w, http.StatusOK, nonNil(out))
 }
 
-func parseAddressList(w http.ResponseWriter, list []string, allowDomains bool) ([]string, bool) {
+func parseAddresses(list []string, allowDomains bool) ([]string, *fieldError) {
 	out := make([]string, 0, len(list))
 	for _, d := range list {
 		d = strings.ToLower(strings.TrimSpace(d))
 		if allowDomains && strings.HasPrefix(d, "@") && domainPattern.MatchString(d[1:]) {
-			out = append(out, d)
+			if !slices.Contains(out, d) {
+				out = append(out, d)
+			}
 			continue
 		}
 		a, err := mail.ParseAddress(d)
 		if err != nil || a.Name != "" {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_address", d+" is not a valid email address.")
-			return nil, false
+			return nil, &fieldError{http.StatusUnprocessableEntity, "invalid_address", d + " is not a valid email address."}
 		}
-		if !slices.Contains(out, strings.ToLower(a.Address)) {
-			out = append(out, strings.ToLower(a.Address))
+		addr := strings.ToLower(a.Address)
+		if !slices.Contains(out, addr) {
+			out = append(out, addr)
 		}
 	}
-	return out, true
+	return out, nil
 }
 
-func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alias, in *aliasInput) bool {
+func (s *Server) resolveAliasOwners(ctx context.Context, orgID string, raw []string, extraMemberEmails map[string]bool) ([]string, *fieldError, error) {
+	if len(raw) == 0 {
+		return []string{}, nil, nil
+	}
+	var uuids, emails []string
+	for _, entry := range raw {
+		entry = strings.ToLower(strings.TrimSpace(entry))
+		switch {
+		case uuidPattern.MatchString(entry):
+			if !slices.Contains(uuids, entry) {
+				uuids = append(uuids, entry)
+			}
+		case strings.Contains(entry, "@"):
+			if !slices.Contains(emails, entry) {
+				emails = append(emails, entry)
+			}
+		default:
+			return nil, &fieldError{http.StatusUnprocessableEntity, "invalid_owners", "Owners must be members of this organization."}, nil
+		}
+	}
+	resolved := make([]string, 0, len(uuids)+len(emails))
+	if len(uuids) > 0 {
+		var count int
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM organization_members WHERE org_id = $1 AND user_id::text = ANY($2)`, orgID, uuids).Scan(&count); err != nil {
+			return nil, nil, err
+		}
+		if count != len(uuids) {
+			return nil, &fieldError{http.StatusUnprocessableEntity, "invalid_owners", "Owners must be members of this organization."}, nil
+		}
+		resolved = append(resolved, uuids...)
+	}
+	if len(emails) > 0 {
+		rows, err := s.db.Query(ctx, `SELECT u.email, u.id::text FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.org_id = $1 AND u.email = ANY($2)`, orgID, emails)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer rows.Close()
+		found := map[string]string{}
+		for rows.Next() {
+			var email, id string
+			if err := rows.Scan(&email, &id); err != nil {
+				return nil, nil, err
+			}
+			found[email] = id
+		}
+		if err := rows.Err(); err != nil {
+			return nil, nil, err
+		}
+		for _, email := range emails {
+			if id, ok := found[email]; ok {
+				resolved = append(resolved, id)
+			} else if extraMemberEmails[email] {
+				resolved = append(resolved, email)
+			} else {
+				return nil, &fieldError{http.StatusUnprocessableEntity, "invalid_owners", email + " is not a member of this organization."}, nil
+			}
+		}
+	}
+	return nonNil(slices.Compact(slices.Sorted(slices.Values(resolved)))), nil, nil
+}
+
+func (s *Server) applyAliasChanges(ctx context.Context, a *alias, in *aliasInput, extraMailboxes, extraMemberEmails map[string]bool) (*fieldError, error) {
 	if in.Kind != nil {
 		if *in.Kind != "alias" && *in.Kind != "list" {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "kind must be alias or list.")
-			return false
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_kind", "kind must be alias or list."}, nil
 		}
 		a.Kind = *in.Kind
 	}
 	if in.Name != nil {
 		a.Name = strings.TrimSpace(*in.Name)
 		if len(a.Name) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Keep the name under 200 characters.")
-			return false
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_name", "Keep the name under 200 characters."}, nil
 		}
 	}
 	if in.Active != nil {
@@ -161,48 +222,44 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 	if in.Hidden != nil {
 		a.Hidden = *in.Hidden
 	}
-	var ok bool
+	var ie *fieldError
 	if in.Destinations != nil {
-		if a.Destinations, ok = parseAddressList(w, *in.Destinations, false); !ok {
-			return false
+		if a.Destinations, ie = parseAddresses(*in.Destinations, false); ie != nil {
+			return ie, nil
 		}
 	}
-	add, ok := parseAddressList(w, in.AddDestinations, false)
-	if !ok {
-		return false
+	add, ie := parseAddresses(in.AddDestinations, false)
+	if ie != nil {
+		return ie, nil
 	}
 	for _, d := range add {
 		if !slices.Contains(a.Destinations, d) {
 			a.Destinations = append(a.Destinations, d)
 		}
 	}
-	remove, ok := parseAddressList(w, in.RemoveDestinations, false)
-	if !ok {
-		return false
+	remove, ie := parseAddresses(in.RemoveDestinations, false)
+	if ie != nil {
+		return ie, nil
 	}
 	a.Destinations = slices.DeleteFunc(a.Destinations, func(d string) bool { return slices.Contains(remove, d) })
 	if in.Groups != nil {
 		a.Groups = nonNil(slices.Compact(slices.Sorted(slices.Values(*in.Groups))))
 		var known int
-		if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM directory_groups WHERE id::text = ANY($1)`, a.Groups).Scan(&known); err != nil {
-			s.internalError(w, r, err)
-			return false
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM directory_groups WHERE id::text = ANY($1)`, a.Groups).Scan(&known); err != nil {
+			return nil, err
 		}
 		if known != len(a.Groups) {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_groups", "Choose groups provisioned by an identity provider.")
-			return false
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_groups", "Choose groups provisioned by an identity provider."}, nil
 		}
 	}
 	if in.MemberDomains != nil {
 		a.MemberDomains = nonNil(slices.Compact(slices.Sorted(slices.Values(*in.MemberDomains))))
 		var owned int
-		if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM domains WHERE org_id = $1 AND id::text = ANY($2)`, a.OrgID, a.MemberDomains).Scan(&owned); err != nil {
-			s.internalError(w, r, err)
-			return false
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM domains WHERE org_id = $1 AND id::text = ANY($2)`, a.OrgID, a.MemberDomains).Scan(&owned); err != nil {
+			return nil, err
 		}
 		if owned != len(a.MemberDomains) {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_member_domains", "Choose domains that belong to this organization.")
-			return false
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_member_domains", "Choose domains that belong to this organization."}, nil
 		}
 	}
 	limit := 100
@@ -210,37 +267,46 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 		limit = 5000
 	}
 	if len(a.Destinations) > limit {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", "Add no more than "+strconv.Itoa(limit)+" destinations.")
-		return false
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_destinations", "Add no more than " + strconv.Itoa(limit) + " destinations."}, nil
 	}
 	if len(a.Destinations) == 0 && (a.Kind == "alias" || len(a.Groups)+len(a.MemberDomains) == 0) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_destinations", "Add at least one destination.")
-		return false
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_destinations", "Add at least one destination."}, nil
 	}
 	if in.AcceptFrom != nil {
 		if !slices.Contains(acceptFromValues, *in.AcceptFrom) {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_accept_from", "acceptFrom must be anyone, organization, members or allowlist.")
-			return false
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_accept_from", "acceptFrom must be anyone, organization, members or allowlist."}, nil
 		}
 		a.AcceptFrom = *in.AcceptFrom
 	}
 	if in.AllowedSenders != nil {
-		if a.AllowedSenders, ok = parseAddressList(w, *in.AllowedSenders, true); !ok {
-			return false
+		if a.AllowedSenders, ie = parseAddresses(*in.AllowedSenders, true); ie != nil {
+			return ie, nil
+		}
+		if len(a.AllowedSenders) > 1000 {
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_allowed_senders", "Add no more than 1,000 allowed senders."}, nil
 		}
 	}
 	if in.SendAs != nil {
-		if a.SendAs, ok = parseAddressList(w, *in.SendAs, false); !ok {
-			return false
+		if a.SendAs, ie = parseAddresses(*in.SendAs, false); ie != nil {
+			return ie, nil
 		}
-		var foreign int
-		if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM unnest($1::text[]) x WHERE NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.address = x AND m.org_id = $2)`, a.SendAs, a.OrgID).Scan(&foreign); err != nil {
-			s.internalError(w, r, err)
-			return false
+		if len(a.SendAs) > 1000 {
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_send_as", "Add no more than 1,000 send-as addresses."}, nil
 		}
-		if foreign > 0 {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_send_as", "Only mailboxes in this organization can send as the list.")
-			return false
+		var toCheck []string
+		for _, addr := range a.SendAs {
+			if !extraMailboxes[addr] {
+				toCheck = append(toCheck, addr)
+			}
+		}
+		if len(toCheck) > 0 {
+			var foreign int
+			if err := s.db.QueryRow(ctx, `SELECT count(*) FROM unnest($1::text[]) x WHERE NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.address = x AND m.org_id = $2)`, toCheck, a.OrgID).Scan(&foreign); err != nil {
+				return nil, err
+			}
+			if foreign > 0 {
+				return &fieldError{http.StatusUnprocessableEntity, "invalid_send_as", "Only mailboxes in this organization can send as the list."}, nil
+			}
 		}
 	}
 	if in.SentMailboxID != nil {
@@ -252,65 +318,98 @@ func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alia
 	if a.SentMailboxID != "" {
 		var valid bool
 		if a.Kind == "list" && uuidPattern.MatchString(a.SentMailboxID) {
-			if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE id = $1 AND org_id = $2 AND kind = 'shared')`, a.SentMailboxID, a.OrgID).Scan(&valid); err != nil {
-				s.internalError(w, r, err)
-				return false
+			if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE id = $1 AND org_id = $2 AND kind = 'shared')`, a.SentMailboxID, a.OrgID).Scan(&valid); err != nil {
+				return nil, err
 			}
 		}
 		if !valid {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_sent_mailbox", "Choose a shared mailbox in this organization for the list's sent copies.")
-			return false
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_sent_mailbox", "Choose a shared mailbox in this organization for the list's sent copies."}, nil
 		}
 	}
 	if in.Owners != nil {
-		if a.Owners, ok = s.orgUsers(w, r, a.OrgID, *in.Owners, "invalid_owners", "Owners must be members of this organization."); !ok {
-			return false
+		owners, ie, err := s.resolveAliasOwners(ctx, a.OrgID, *in.Owners, extraMemberEmails)
+		if ie != nil || err != nil {
+			return ie, err
 		}
+		a.Owners = owners
 	}
 	if in.Moderated != nil {
 		a.Moderated = *in.Moderated
 	}
 	if in.Moderators != nil {
-		if a.Moderators, ok = s.orgUsers(w, r, a.OrgID, *in.Moderators, "invalid_moderators", "Moderators must be members of this organization."); !ok {
-			return false
+		ids := slices.Compact(append([]string{}, slices.Sorted(slices.Values(*in.Moderators))...))
+		var members int
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM organization_members WHERE org_id = $1 AND user_id::text = ANY($2)`, a.OrgID, ids).Scan(&members); err != nil {
+			return nil, err
 		}
+		if members != len(ids) {
+			return &fieldError{http.StatusUnprocessableEntity, "invalid_moderators", "Moderators must be members of this organization."}, nil
+		}
+		a.Moderators = ids
 	}
 	if in.ModerationExempt != nil {
-		if a.ModerationExempt, ok = parseAddressList(w, *in.ModerationExempt, true); !ok {
-			return false
+		if a.ModerationExempt, ie = parseAddresses(*in.ModerationExempt, true); ie != nil {
+			return ie, nil
 		}
 	}
 	if a.Kind == "list" && a.LocalPart == "" {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "A distribution list needs an address, not a catch-all.")
-		return false
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_local_part", "A distribution list needs an address, not a catch-all."}, nil
 	}
 	if a.Kind == "alias" && (a.AcceptFrom != "anyone" || len(a.AllowedSenders) > 0 || len(a.SendAs) > 0 || len(a.Owners) > 0 || len(a.Groups) > 0 || len(a.MemberDomains) > 0 || a.Moderated || len(a.Moderators) > 0 || len(a.ModerationExempt) > 0 || a.Hidden) {
-		writeError(w, http.StatusUnprocessableEntity, "list_only", "Sender restrictions, moderation, send-as, owners, groups, domain members and hiding from the directory are only available on distribution lists.")
-		return false
+		return &fieldError{http.StatusUnprocessableEntity, "list_only", "Sender restrictions, moderation, send-as, owners, groups, domain members and hiding from the directory are only available on distribution lists."}, nil
 	}
 	if a.Moderated && len(a.Moderators) == 0 && len(a.Owners) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_moderators", "Add a moderator or an owner to approve messages sent to the list.")
-		return false
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_moderators", "Add a moderator or an owner to approve messages sent to the list."}, nil
 	}
 	if a.Moderated && s.cfg.SieveRelayPassword == "" {
-		writeError(w, http.StatusUnprocessableEntity, "moderation_unavailable", "Moderation needs AETHER_SIEVE_RELAY_PASSWORD set on the API.")
+		return &fieldError{http.StatusUnprocessableEntity, "moderation_unavailable", "Moderation needs AETHER_SIEVE_RELAY_PASSWORD set on the API."}, nil
+	}
+	return nil, nil
+}
+
+func (s *Server) applyAliasInput(w http.ResponseWriter, r *http.Request, a *alias, in *aliasInput) bool {
+	ie, err := s.applyAliasChanges(r.Context(), a, in, nil, nil)
+	if ie != nil {
+		writeError(w, ie.Status, ie.Code, ie.Message)
+		return false
+	}
+	if err != nil {
+		s.internalError(w, r, err)
 		return false
 	}
 	return true
 }
 
-func (s *Server) orgUsers(w http.ResponseWriter, r *http.Request, orgID string, ids []string, code, message string) ([]string, bool) {
-	ids = slices.Compact(append([]string{}, slices.Sorted(slices.Values(ids))...))
-	var members int
-	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM organization_members WHERE org_id = $1 AND user_id::text = ANY($2)`, orgID, ids).Scan(&members); err != nil {
-		s.internalError(w, r, err)
-		return nil, false
+func (s *Server) checkAliasDryRun(ctx context.Context, address string) (*fieldError, error) {
+	var mailboxExists, aliasExists bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1), EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, address).Scan(&mailboxExists, &aliasExists); err != nil {
+		return nil, err
 	}
-	if members != len(ids) {
-		writeError(w, http.StatusUnprocessableEntity, code, message)
-		return nil, false
+	if mailboxExists {
+		return &fieldError{http.StatusConflict, "address_taken", address + " is already a mailbox."}, nil
 	}
-	return ids, true
+	if aliasExists {
+		return &fieldError{http.StatusConflict, "address_taken", address + " is already an alias."}, nil
+	}
+	return nil, nil
+}
+
+func (s *Server) createAliasRecord(ctx context.Context, a *alias) (*fieldError, error) {
+	var exists bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, a.Address).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return &fieldError{http.StatusConflict, "address_taken", a.Address + " is already a mailbox."}, nil
+	}
+	err := s.saveAlias(ctx, a, true)
+	if isUniqueViolation(err) {
+		return &fieldError{http.StatusConflict, "address_taken", a.Address + " is already an alias."}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
@@ -387,18 +486,9 @@ func (s *Server) createAlias(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	a.Address = in.LocalPart + "@" + domainName
-	var exists bool
-	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, a.Address).Scan(&exists); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if exists {
-		writeError(w, http.StatusConflict, "address_taken", a.Address+" is already a mailbox.")
-		return
-	}
-	err = s.saveAlias(r.Context(), a, true)
-	if isUniqueViolation(err) {
-		writeError(w, http.StatusConflict, "address_taken", a.Address+" is already an alias.")
+	ie, err := s.createAliasRecord(r.Context(), a)
+	if ie != nil {
+		writeError(w, ie.Status, ie.Code, ie.Message)
 		return
 	}
 	if err != nil {

@@ -2,12 +2,13 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Forward, ListTree, Pencil, Plus, Trash2, Users, VenetianMask } from "lucide-react"
+import { Download, Forward, ListTree, Pencil, Plus, Trash2, Upload, Users, VenetianMask } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
+import { CsvImportDialog } from "@/components/admin/csv-import-dialog"
 import { DomainSelect } from "@/components/admin/domain-select"
 import { PersonalAliasPolicyHeader } from "@/components/admin/personal-alias-policy"
 import { ConfirmDialog } from "@/components/confirm-dialog"
@@ -29,6 +30,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
 import { api, ApiError, errorMessage } from "@/lib/api"
+import { downloadCsv, exportAliasesCsv, exportListsCsv } from "@/lib/csv"
 import { plural } from "@/lib/format"
 import { hasPerm } from "@/lib/permissions"
 import { domainsQuery, mailboxesQuery, membersQuery } from "@/lib/queries"
@@ -161,6 +163,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
   const groups = useQuery(directoryGroupsQuery(orgId))
   const [editing, setEditing] = useState<Alias | Kind | null>(null)
   const [viewing, setViewing] = useState<Alias | null>(null)
+  const [importingCsv, setImportingCsv] = useState<Kind | null>(null)
   const [deleting, setDeleting] = useState<Alias | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: blank })
   const [kind, acceptFrom, moderated] = useWatch({ control: form.control, name: ["kind", "acceptFrom", "moderated"] })
@@ -177,6 +180,15 @@ export function AliasesTab({ orgId }: { orgId: string }) {
       const people = targetKind === "list" && canWriteLists ? await qc.ensureQueryData(membersQuery(orgId)) : []
       form.reset(toValues(target, people))
       setEditing(target)
+    } catch (error) {
+      toast.error(errorMessage(error))
+    }
+  }
+
+  async function exportLists() {
+    try {
+      const people = await qc.ensureQueryData(membersQuery(orgId))
+      downloadCsv("distribution-lists.csv", exportListsCsv(lists.data ?? [], people))
     } catch (error) {
       toast.error(errorMessage(error))
     }
@@ -262,12 +274,28 @@ export function AliasesTab({ orgId }: { orgId: string }) {
             title="Aliases"
             description="Forward mail for an address to up to 100 destinations. Every mailbox among them can send as the alias. A catch-all receives mail for addresses that have no mailbox or alias."
             actions={
-              canWriteAliases && (
-                <Button onClick={() => open("alias")}>
-                  <Plus aria-hidden />
-                  Create alias
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={!aliases.data?.length}
+                  onClick={() => downloadCsv("aliases.csv", exportAliasesCsv(aliases.data ?? []))}
+                >
+                  <Download aria-hidden />
+                  Export CSV
                 </Button>
-              )
+                {canWriteAliases && (
+                  <>
+                    <Button variant="secondary" onClick={() => setImportingCsv("alias")}>
+                      <Upload aria-hidden />
+                      Import CSV
+                    </Button>
+                    <Button onClick={() => open("alias")}>
+                      <Plus aria-hidden />
+                      Create alias
+                    </Button>
+                  </>
+                )}
+              </>
             }
           />
           <QueryView query={aliases} empty={<EmptyState icon={Forward} title="No aliases" description="Create an alias to forward an address without a separate mailbox." />}>
@@ -310,12 +338,24 @@ export function AliasesTab({ orgId }: { orgId: string }) {
           title="Distribution lists"
           description="One address for a group of up to 5,000 people, listed in the directory. Choose who can send to it, who can send as it, and who can change its members without being an administrator."
           actions={
-            canWriteLists && (
-              <Button variant={canReadAliases ? "secondary" : "default"} onClick={() => open("list")}>
-                <Plus aria-hidden />
-                Create list
+            <>
+              <Button variant="secondary" disabled={!lists.data?.length} onClick={() => void exportLists()}>
+                <Download aria-hidden />
+                Export CSV
               </Button>
-            )
+              {canWriteLists && (
+                <>
+                  <Button variant="secondary" onClick={() => setImportingCsv("list")}>
+                    <Upload aria-hidden />
+                    Import CSV
+                  </Button>
+                  <Button variant="secondary" onClick={() => open("list")}>
+                    <Plus aria-hidden />
+                    Create list
+                  </Button>
+                </>
+              )}
+            </>
           }
         />
         <QueryView query={lists} empty={<EmptyState icon={Users} title="No distribution lists" description="Create a list such as staff@ to reach a group, and decide who is allowed to write to it." />}>
@@ -618,6 +658,17 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         pending={remove.isPending}
         onConfirm={() => deleting && remove.mutate(deleting)}
       />
+
+      {importingCsv && (
+        <CsvImportDialog
+          orgId={orgId}
+          kind={importingCsv}
+          open
+          onOpenChange={(open) => !open && setImportingCsv(null)}
+          defaultDomain={domains.data?.[0]?.name}
+          onCompleted={() => qc.invalidateQueries({ queryKey: ["aliases", orgId] })}
+        />
+      )}
     </div>
   )
 }

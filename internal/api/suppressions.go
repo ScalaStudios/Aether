@@ -59,8 +59,9 @@ func (s *Server) createSuppression(w http.ResponseWriter, r *http.Request, p *pr
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	list, ok := parseAddressList(w, []string{in.Address}, false)
-	if !ok {
+	list, fe := parseAddresses([]string{in.Address}, false)
+	if fe != nil {
+		writeError(w, fe.Status, fe.Code, fe.Message)
 		return
 	}
 	if utf8.RuneCountInString(list[0]) > 320 {
