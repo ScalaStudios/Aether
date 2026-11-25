@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Ban, KeyRound, MonitorSmartphone, Pencil, Plus, RefreshCw, RotateCcw, ShieldOff, UserMinus, Users } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -123,15 +123,6 @@ export function MembersTab({ orgId }: { orgId: string }) {
     if (callerRole === "admin") return r !== "owner"
     return r !== "owner" && r !== "admin"
   })
-
-  const schema = useMemo(
-    () =>
-      z.object({
-        email: z.email(t("admin.members.emailInvalid")),
-        role: z.enum(["owner", "admin", "member"]),
-      }),
-    [t]
-  )
 
   const setStatus = useMutation({
     mutationFn: ({ member, status }: { member: Member; status: "active" | "suspended" }) =>
