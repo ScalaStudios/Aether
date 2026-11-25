@@ -179,7 +179,9 @@ func (s *Server) saveFeatures(w http.ResponseWriter, r *http.Request, p *princip
 		wake(s.kickWake)
 	}
 	if on, ok := in[featureMailImport]; ok && !on {
-		s.cancelOrgImports(orgID)
+		if err := s.cancelOrgImports(r.Context(), orgID); err != nil {
+			s.log.Warn("cancelling running mail imports failed", "org", orgID, "err", err)
+		}
 	}
 	if slices.Contains(changed, featureExternalForwarding) {
 		policy, err := s.forwardPolicy(r.Context(), orgID)

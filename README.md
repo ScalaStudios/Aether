@@ -231,6 +231,7 @@ The Go API is the only component that writes application data. It keeps organiza
 | `AETHER_REPORT_FROM` | `dmarc-reports@` the mail host's domain | The address those reports are sent from. It has to be on a verified domain that has a DKIM key |
 | `AETHER_REPORT_ORG_NAME` | the sending domain | The organization name written into the reports |
 | `AETHER_AUDIT_RETENTION_DAYS` | `0` | Days to keep audit events when an organization sets no retention of its own. `0` keeps them forever. See [Audit log](documentation/audit-log.md) for streaming to syslog or OpenTelemetry |
+| `AETHER_BACKUP_MX` | none | Backup MX hosts, comma-separated, that the MTA-STS policy lists next to `AETHER_MAIL_HOSTNAME`. See [High availability](documentation/high-availability.md#step-3-a-backup-mx) |
 | `AETHER_CUSTOM_CSS` | `true` | Organizations' custom CSS from **Administration → Branding**. Set it to `false` if a stylesheet breaks the sign-in page |
 | `AETHER_QUOTA_CHECK_INTERVAL` | `5m` | How often Aether measures mailbox sizes and sends storage warnings |
 | `AETHER_BACKUP_REPOSITORY`, `AETHER_BACKUP_PASSWORD` | none | A restic repository on S3-compatible storage for off-site backups, and its encryption password |
@@ -239,7 +240,7 @@ The Go API is the only component that writes application data. It keeps organiza
 
 ## Running in production
 
-- **One host.** Every service runs on one machine. That keeps Aether simple to run, but it is not highly available: while the host is down, webmail and IMAP are unavailable. Other mail servers queue mail for your domains and retry for several days, so a short outage does not usually lose incoming mail.
+- **One host.** Every service runs on one machine. That keeps Aether simple to run, but it is not highly available: while the host is down, webmail and IMAP are unavailable. Other mail servers queue mail for your domains and retry for several days, so a short outage does not usually lose incoming mail. [High availability](documentation/high-availability.md) covers running on more than one host.
 - **Back up four things.** The `pgdata` volume with `pg_dump`, the `vmail` volume with the mail, `.env` with `AETHER_SECRET_KEY`, and the mail certificate in the `tls` volume. `scripts/backup.sh` writes the first three to a dated directory, checks they can be read, and copies them to S3-compatible storage when a restic repository is set. `scripts/restore.sh` puts them back. The `rspamd` and `valkeydata` volumes rebuild themselves.
 - **Expect to work on deliverability.** Correct SPF, DKIM, DMARC and reverse DNS are necessary but do not guarantee the inbox. Gmail and Outlook also judge the sending address's history and volume. Start with a clean address and low volume, and read the DMARC report summaries before tightening the policy to `p=reject`.
 - **Use a trusted mail certificate.** Without one, the stack generates a self-signed certificate, mail apps warn about it, and MTA-STS cannot move to `enforce`. Behind your own reverse proxy, `scripts/sync-tls-cert.sh` copies its certificate to Postfix and Dovecot.
@@ -248,7 +249,7 @@ The Go API is the only component that writes application data. It keeps organiza
 
 ## Known limitations
 
-- Everything runs on one host. There is no clustering, and the Helm chart has not run on a real cluster.
+- Everything runs on one host by default. [High availability](documentation/high-availability.md) shows how to run the API and web app on several hosts, add a backup MX and a PostgreSQL replica, and move mailboxes to a standby; Dovecot, Valkey and the primary Postfix still run as one instance each, and the Helm chart has not run on a real cluster.
 - Exchange ActiveSync, EWS and MAPI are not implemented, so Outlook cannot connect as an Exchange or Microsoft 365 account.
 - Aether does not publish TLSA records for its own mail host. They need DNSSEC on the domain and a mail key that stays the same across certificate renewals.
 - Only iOS Mail, Calendar and Contacts have been tested against a production installation.
@@ -278,6 +279,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Translations](documentation/translations.md): built-in languages, per-person and organization defaults, server-generated emails, and contributing translations through Weblate or Crowdin.
 - [Audit log](documentation/audit-log.md): search, export, retention, and sending events to syslog or OpenTelemetry.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.
+- [High availability](documentation/high-availability.md): running Aether on more than one host, and what is and is not safe today.
 - [Third-party components](documentation/third-party.md): every bundled component and its license.
 - [API specification](api/openapi.yaml): the OpenAPI 3.1 document.
 

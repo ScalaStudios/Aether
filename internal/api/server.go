@@ -39,7 +39,6 @@ type Server struct {
 	resolve            resolver
 	webhookClient      *http.Client
 	auditOut           *audit.Dispatcher
-	imports            sync.Map
 	importSlots        chan struct{}
 	kickWake           chan struct{}
 	origin             string

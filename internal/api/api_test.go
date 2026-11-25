@@ -22,6 +22,7 @@ import (
 	"github.com/emersion/go-webdav"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/scalastudios/aether/internal/config"
 	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
 
@@ -267,5 +268,13 @@ func TestValidProtocols(t *testing.T) {
 		if got := validProtocols(tc.list); got != tc.want {
 			t.Errorf("validProtocols(%q) = %v, want %v", tc.list, got, tc.want)
 		}
+	}
+}
+
+func TestMTASTSPolicyListsBackupMX(t *testing.T) {
+	s := &Server{cfg: &config.Config{MTASTSMode: "enforce", MailHostname: "mail.example.com", BackupMX: []string{"mx2.example.com"}}}
+	want := "version: STSv1\r\nmode: enforce\r\nmx: mail.example.com\r\nmx: mx2.example.com\r\nmax_age: 604800\r\n"
+	if got := s.mtaSTSPolicy(); got != want {
+		t.Fatalf("policy = %q, want %q", got, want)
 	}
 }

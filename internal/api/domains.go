@@ -326,7 +326,11 @@ func (s *Server) mtaSTSPolicy() string {
 	if s.cfg.MTASTSMode == "enforce" {
 		maxAge = "604800"
 	}
-	return "version: STSv1\r\nmode: " + s.cfg.MTASTSMode + "\r\nmx: " + s.cfg.MailHostname + "\r\nmax_age: " + maxAge + "\r\n"
+	policy := "version: STSv1\r\nmode: " + s.cfg.MTASTSMode + "\r\nmx: " + s.cfg.MailHostname + "\r\n"
+	for _, mx := range s.cfg.BackupMX {
+		policy += "mx: " + mx + "\r\n"
+	}
+	return policy + "max_age: " + maxAge + "\r\n"
 }
 
 func (s *Server) mtaSTSPolicyID() string {

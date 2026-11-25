@@ -46,6 +46,7 @@ type Config struct {
 	TrustProxy            bool
 	AllowHTTPIssuers      bool
 	MTASTSMode            string
+	BackupMX              []string
 	WebhookAllowPrivate   bool
 	ReportListen          string
 	PolicyListen          string
@@ -116,6 +117,7 @@ func Load() (*Config, error) {
 		TrustProxy:            os.Getenv("AETHER_TRUST_PROXY") == "true",
 		AllowHTTPIssuers:      os.Getenv("AETHER_OIDC_ALLOW_HTTP") == "true",
 		MTASTSMode:            env("AETHER_MTA_STS_MODE", "testing"),
+		BackupMX:              strings.Fields(strings.ToLower(strings.ReplaceAll(os.Getenv("AETHER_BACKUP_MX"), ",", " "))),
 		WebhookAllowPrivate:   os.Getenv("AETHER_WEBHOOK_ALLOW_PRIVATE") == "true",
 		ReportListen:          env("AETHER_REPORT_LISTEN", ":2424"),
 		PolicyListen:          env("AETHER_POLICY_LISTEN", ":10040"),

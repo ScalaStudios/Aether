@@ -93,6 +93,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - **Administration → Reports** surfaces inactive user mailboxes (configurable inactivity threshold), largest mailboxes, top senders and receivers, and daily mail volume over time for a selectable date window (7–365 days), with JSON and CSV export endpoints under `/api/v1/organizations/{orgId}/reports` and `/reports/{report}` (`mailboxes`, `inactive`, `largest`, `activity`, `volume`) plus `POST /reports/refresh`.
   - API keys gained `reports:read` and `reports:write` scopes.
 - Alerts for administrators: built-in rules for the mail queue size and age, delivery failures, rate-limited senders, mail certificate expiry, ClamAV signature age, DNS check failures and DMARC failure rate per domain, the Dovecot rights and session kick backlogs, and disk use of `vmail` and `pgdata`. Alerts are sent by email from `AETHER_ALERT_FROM` and as `alert.firing`, `alert.acknowledged`, `alert.resolved` and `alert.test` webhook events, with per-rule thresholds, severity, cooldown, channels and recipients under `/api/v1/admin/alerts`. Platform administrators see firing, acknowledged and resolved alerts, acknowledge or resolve them, change the rules and send a test alert under **Administration → Alerts**; the tab shows the number of firing alerts and the Administration icon carries a dot. New settings: `AETHER_ALERT_EVAL_INTERVAL`, `AETHER_ALERT_FROM`, `AETHER_POSTFIX_EXPORTER_URL`, `AETHER_RSPAMD_METRICS_URL`, `AETHER_RSPAMD_METRICS_PASSWORD`, `AETHER_VMAIL_PATH`, `AETHER_PGDATA_PATH` and `AETHER_PGDATA_MAX_BYTES`; the API also reads `AETHER_CLAMAV_ADDR`. The `monitoring` profile loads matching Prometheus alerting rules from `infrastructure/monitoring/alerts.yml`. See [Installation](documentation/installation.md#alerts).
+- [High availability](documentation/high-availability.md): running the API and web app on several hosts behind a load balancer, a PostgreSQL replica, a backup MX, and mailbox storage that a standby can take over, with what is and is not safe today.
+- `AETHER_BACKUP_MX` lists backup MX hosts in the MTA-STS policy, so senders that enforce MTA-STS also deliver to them. Setting it changes the policy id, so update each domain's `_mta-sts` record.
+- Dovecot reads every `*.conf` file in `/etc/dovecot/local.d/` before its own configuration, for settings such as dsync replication.
+- Helm values `highAvailability.podDisruptionBudgets` and `highAvailability.spreadAcrossNodes`, both off by default, add PodDisruptionBudgets for the API and the web app and spread their replicas across nodes. `postgresql.externalHost` points Postfix and Dovecot at an external database.
 
 ### Changed
 
@@ -126,6 +130,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The organization signature template no longer contains the Scala Studios logo. Each organization sets its own.
 
 - The SPF check evaluates the record as a receiving server would, for every address of the mail host, following `include`, `redirect`, `a`, `mx`, `ip4`, `ip6` and `exists` within the limit of 10 DNS lookups. A record that authorizes the server through an `include` or an IP address now shows **OK**. Softfail, neutral and records that cannot be evaluated show **Not strict**, and only a `fail` shows **Mismatch**.
+- Mail imports can be cancelled from any API replica: the cancel request is stored in Valkey and the running import checks it every two seconds. Previously only the replica that started an import could cancel it.
+- Snoozed messages are claimed before they are woken, so two API replicas no longer move the same message back at once.
+- With `postgresql.enabled=false`, the Helm chart's Postfix and Dovecot still connected to `postgres`. Set `postgresql.externalHost` to the external database's host.
 
 ### Fixed
 

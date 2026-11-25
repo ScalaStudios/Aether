@@ -438,9 +438,11 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 
 func (s *Server) wakeSnoozed(ctx context.Context) {
 	rows, err := s.db.Query(ctx, `
-		SELECT s.id, m.address, s.uid_validity, s.uid, s.return_folder
-		FROM snoozed_messages s JOIN mailboxes m ON m.id = s.mailbox_id
-		WHERE s.until <= now() ORDER BY s.until LIMIT 50`)
+		UPDATE snoozed_messages s SET until = now() + interval '5 minutes'
+		FROM mailboxes m
+		WHERE s.id IN (SELECT id FROM snoozed_messages WHERE until <= now() ORDER BY until LIMIT 50 FOR UPDATE SKIP LOCKED)
+		  AND m.id = s.mailbox_id
+		RETURNING s.id, m.address, s.uid_validity, s.uid, s.return_folder`)
 	if err != nil {
 		s.log.Error("loading snoozed messages failed", "err", err)
 		return
@@ -460,7 +462,6 @@ func (s *Server) wakeSnoozed(ctx context.Context) {
 	for _, d := range items {
 		if err := s.mail.Wake(d.address, d.validity, d.uid, d.folder); err != nil {
 			s.log.Warn("waking snoozed message failed; retrying in five minutes", "err", err)
-			s.db.Exec(ctx, `UPDATE snoozed_messages SET until = now() + interval '5 minutes' WHERE id = $1`, d.id)
 			continue
 		}
 		s.db.Exec(ctx, `DELETE FROM snoozed_messages WHERE id = $1`, d.id)

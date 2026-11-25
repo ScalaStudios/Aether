@@ -42,6 +42,9 @@ spec:
             {{- include "aether.secretEnv" (dict "env" "AETHER_RELAY_PASSWORD" "key" "relayPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_POSTFIX_API_KEY" "key" "postfixApiKey" "optional" true "root" .) | nindent 12 }}
+            {{- with .Values.postgresql.externalHost }}
+            - { name: AETHER_DB_HOST, value: {{ . | quote }} }
+            {{- end }}
           ports:
             - { name: smtp, containerPort: 25 }
             - { name: submissions, containerPort: 465 }

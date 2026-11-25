@@ -130,10 +130,8 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-	s.imports.Store(job.ID, importRun{mailboxID: m.ID, orgID: m.OrgID, cancel: cancel})
 	go func() {
 		defer cancel()
-		defer s.imports.Delete(job.ID)
 		defer closeImportLock(conn)
 		s.runImport(ctx, job.ID, m.Address, src, nil, false)
 	}()
@@ -141,18 +139,45 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 	writeJSON(w, http.StatusAccepted, job)
 }
 
-type importRun struct {
-	mailboxID, orgID string
-	cancel           context.CancelFunc
+func importCancelKey(id string) string {
+	return "aether:import-cancel:" + id
 }
 
-func (s *Server) cancelOrgImports(orgID string) {
-	s.imports.Range(func(_, v any) bool {
-		if run := v.(importRun); run.orgID == orgID {
-			run.cancel()
+func (s *Server) requestImportCancel(ctx context.Context, ids ...string) error {
+	for _, id := range ids {
+		if err := s.kv.Set(ctx, importCancelKey(id), "1", 25*time.Hour).Err(); err != nil {
+			return err
 		}
-		return true
-	})
+	}
+	return nil
+}
+
+func (s *Server) watchImportCancel(ctx context.Context, cancel context.CancelFunc, id string, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if n, err := s.kv.Exists(ctx, importCancelKey(id)).Result(); err == nil && n > 0 {
+			cancel()
+			return
+		}
+	}
+}
+
+func (s *Server) cancelOrgImports(ctx context.Context, orgID string) error {
+	rows, err := s.db.Query(ctx, `SELECT i.id FROM mail_imports i JOIN mailboxes m ON m.id = i.mailbox_id WHERE m.org_id = $1 AND i.status = 'running'`, orgID)
+	if err != nil {
+		return err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	return s.requestImportCancel(ctx, ids...)
 }
 
 func (s *Server) lockImport(ctx context.Context, mailboxID string) (*pgx.Conn, error) {
@@ -187,6 +212,9 @@ func insertImportRun(ctx context.Context, conn *pgx.Conn, mailboxID string, user
 }
 
 func (s *Server) runImport(ctx context.Context, id, address string, src mail.ImportSource, sync *mail.ImportSync, recurring bool) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go s.watchImportCancel(ctx, cancel, id, 2*time.Second)
 	var latest mail.ImportProgress
 	var last time.Time
 	err := s.mail.Import(ctx, address, src, func(p mail.ImportProgress) {
@@ -243,11 +271,18 @@ func (s *Server) cancelImport(w http.ResponseWriter, r *http.Request, p *princip
 	if !ok {
 		return
 	}
-	v, live := s.imports.Load(id)
-	if !live || v.(importRun).mailboxID != m.ID {
+	var running bool
+	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM mail_imports WHERE id = $1 AND mailbox_id = $2 AND status = 'running')`, id, m.ID).Scan(&running); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if !running {
 		notFound(w)
 		return
 	}
-	v.(importRun).cancel()
+	if err := s.requestImportCancel(r.Context(), id); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -32,6 +32,9 @@ spec:
     spec:
       securityContext: {{- include "aether.podSecurity" . | nindent 8 }}
       terminationGracePeriodSeconds: 30
+      {{- with include "aether.spread" (dict "name" "api" "root" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -115,6 +118,9 @@ spec:
       labels: {{- include "aether.selector" (dict "name" "web" "root" .) | nindent 8 }}
     spec:
       securityContext: {{- include "aether.podSecurity" . | nindent 8 }}
+      {{- with include "aether.spread" (dict "name" "web" "root" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -128,3 +134,17 @@ spec:
             tcpSocket: { port: http }
           resources: {{- toYaml .Values.resources.web | nindent 12 }}
           securityContext: {{- include "aether.restrictedSecurity" . | nindent 12 }}
+{{- if .Values.highAvailability.podDisruptionBudgets }}
+{{- range $name := list "api" "web" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels: {{- include "aether.labels" $ | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {{- include "aether.selector" (dict "name" $name "root" $) | nindent 6 }}
+{{- end }}
+{{- end }}

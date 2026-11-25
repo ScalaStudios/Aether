@@ -36,6 +36,9 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 - { name: AETHER_TIKA_URL, value: "http://tika:9998/tika/" }
 {{- end }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) }}
+{{- with .Values.postgresql.externalHost }}
+- { name: AETHER_DB_HOST, value: {{ . | quote }} }
+{{- end }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_API_KEY" "key" "dovecotApiKey" "root" .) }}
 {{ include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) }}
@@ -78,6 +81,19 @@ storageClassName: {{ . }}
 resources:
   requests:
     storage: {{ .size }}
+{{- end -}}
+
+{{- define "aether.spread" -}}
+{{- if .root.Values.highAvailability.spreadAcrossNodes -}}
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels: {{- include "aether.selector" . | nindent 14 }}
+{{- end }}
 {{- end -}}
 
 {{- define "aether.allowFrom" -}}
