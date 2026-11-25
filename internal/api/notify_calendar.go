@@ -66,7 +66,7 @@ func (s *Server) deliverReminders(ctx context.Context) {
 	rows, err := s.db.Query(ctx, `
 		SELECT c.id, c.user_id, o.uid, o.name, o.data
 		FROM dav_objects o
-		JOIN dav_collections c ON c.id = o.collection_id AND c.kind = 'calendar'
+		JOIN dav_collections c ON c.id = o.collection_id AND c.kind = 'calendar' AND c.user_id IS NOT NULL
 		WHERE o.recurring OR (o.starts_at IS NOT NULL AND o.starts_at < now() + interval '8 days' AND coalesce(o.ends_at, o.starts_at + interval '1 day') > now() - interval '8 days')
 		ORDER BY o.starts_at NULLS LAST
 		LIMIT 2000`)
