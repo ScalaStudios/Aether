@@ -91,7 +91,7 @@ func TestSecurityNotifications(t *testing.T) {
 	w.admin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{
 		"domainId": w.domainID, "localPart": "secadmin", "displayName": "Security Admin", "password": "secadmin-integration-pw",
 	}, &secAdminMailbox, 201)
-	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": secAdminAddr, "role": "admin"}, nil, 200)
+	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": secAdminAddr, "role": "admin"}, nil, 204)
 	secAdmin := newClient(t)
 	secAdmin.login(secAdminAddr, "secadmin-integration-pw")
 

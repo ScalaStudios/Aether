@@ -4,7 +4,9 @@ package integration
 
 import (
 	"maps"
+	"net/http"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -102,7 +104,7 @@ func TestOrganizationFeatureSwitches(t *testing.T) {
 		"actions":    map[string]any{"forwardTo": []string{"bob@" + w.domain}},
 	}}, nil, 200)
 
-	if code := davStatus(t, alice, w.aliceAppPassword); code != 401 {
+	if code := davPropfind(t, alice, w.aliceAppPassword); code != 401 {
 		t.Errorf("DAV with an app password while app passwords are off = %d, want 401", code)
 	}
 	if c, err := imapLogin(t, alice, w.aliceAppPassword); err == nil {
@@ -129,7 +131,7 @@ func TestOrganizationFeatureSwitches(t *testing.T) {
 	w.admin.must("PUT", features, map[string]bool{"calendar": true, "dav": true, "appPasswords": true, "apiKeys": true, "webhooks": true, "mailImport": true, "externalForwarding": true}, nil, 200)
 	w.alice.must("GET", "/calendar/calendars", nil, nil, 200)
 	w.admin.must("GET", "/organizations/"+w.orgID+"/webhooks", nil, nil, 200)
-	if code := davStatus(t, alice, w.aliceAppPassword); code != 207 {
+	if code := davPropfind(t, alice, w.aliceAppPassword); code != 207 {
 		t.Errorf("DAV after switching back on = %d, want 207", code)
 	}
 	c, err := imapLogin(t, alice, w.aliceAppPassword)
@@ -149,7 +151,21 @@ func TestCalendarSwitchFollowsEveryOrganization(t *testing.T) {
 	if code := a.alice.do("GET", "/calendar/calendars", nil, nil); code != 403 {
 		t.Fatalf("calendar stayed on although another of the person's organizations turned it off: %d", code)
 	}
-	if code := davStatus(t, alice, a.aliceAppPassword); code != 404 {
+	if code := davPropfind(t, alice, a.aliceAppPassword); code != 404 {
 		t.Fatalf("DAV with calendars off in one organization = %d, want 404", code)
 	}
+}
+
+func davPropfind(t *testing.T, user, password string) int {
+	t.Helper()
+	req, _ := http.NewRequest("PROPFIND", env(t, "AETHER_TEST_API", "http://api:8080")+"/dav/", strings.NewReader(`<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>`))
+	req.SetBasicAuth(user, password)
+	req.Header.Set("Depth", "0")
+	req.Header.Set("Content-Type", "application/xml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PROPFIND: %v", err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
 }
