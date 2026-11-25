@@ -66,44 +66,52 @@ func NewClient(imapAddr, submissionAddr, sieveAddr, hostname, caFile, masterUser
 	}, nil
 }
 
-func (c *Client) KickSessions(ctx context.Context, user string) error {
-	return c.doveadm(ctx, c.http, "kick", map[string][]string{"mask": {user}})
-}
-
-func (c *Client) Expunge(ctx context.Context, user string, query []string) error {
-	return c.doveadm(ctx, c.bulk, "expunge", map[string]any{"user": user, "query": query})
-}
-
-func (c *Client) doveadm(ctx context.Context, client *http.Client, command string, params any) error {
-	body, err := json.Marshal([]any{[]any{command, params, command}})
+func (c *Client) doveadm(ctx context.Context, client *http.Client, cmd string, params any, limit int64) (string, json.RawMessage, int, error) {
+	body, err := json.Marshal([]any{[]any{cmd, params, cmd}})
 	if err != nil {
-		return err
+		return "", nil, 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.doveadmURL+"/doveadm/v1", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", nil, 0, err
 	}
 	req.Header.Set("Authorization", "X-Dovecot-API "+base64.StdEncoding.EncodeToString([]byte(c.doveadmKey)))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("doveadm %s: %w", command, err)
+		return "", nil, 0, fmt.Errorf("doveadm %s: %w", cmd, err)
 	}
 	defer resp.Body.Close()
 	var out [][]json.RawMessage
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil || len(out) != 1 || len(out[0]) < 2 {
-		return fmt.Errorf("doveadm %s: unexpected response with HTTP status %d", command, resp.StatusCode)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, limit)).Decode(&out); err != nil || len(out) != 1 || len(out[0]) < 2 {
+		return "", nil, resp.StatusCode, fmt.Errorf("doveadm %s: unexpected response with HTTP status %d", cmd, resp.StatusCode)
 	}
 	var kind string
+	json.Unmarshal(out[0][0], &kind)
+	return kind, out[0][1], resp.StatusCode, nil
+}
+
+func (c *Client) doveadmUnlessUnknownUser(ctx context.Context, client *http.Client, cmd string, params any) error {
+	kind, payload, status, err := c.doveadm(ctx, client, cmd, params, 64<<10)
+	if err != nil {
+		return err
+	}
 	var failure struct {
 		ExitCode int `json:"exitCode"`
 	}
-	json.Unmarshal(out[0][0], &kind)
-	json.Unmarshal(out[0][1], &failure)
-	if (kind == "doveadmResponse" && resp.StatusCode == http.StatusOK) || (kind == "error" && failure.ExitCode == 68) {
+	json.Unmarshal(payload, &failure)
+	if (kind == "doveadmResponse" && status == http.StatusOK) || (kind == "error" && failure.ExitCode == 68) {
 		return nil
 	}
-	return fmt.Errorf("doveadm %s: HTTP status %d: %s", command, resp.StatusCode, out[0][1])
+	return fmt.Errorf("doveadm %s: HTTP status %d: %s", cmd, status, payload)
+}
+
+func (c *Client) KickSessions(ctx context.Context, user string) error {
+	return c.doveadmUnlessUnknownUser(ctx, c.http, "kick", map[string][]string{"mask": {user}})
+}
+
+func (c *Client) Expunge(ctx context.Context, user string, query []string) error {
+	return c.doveadmUnlessUnknownUser(ctx, c.bulk, "expunge", map[string]any{"user": user, "query": query})
 }
 
 func (c *Client) masterLogin(address string) string {

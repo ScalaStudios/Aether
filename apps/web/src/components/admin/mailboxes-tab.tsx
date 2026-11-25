@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArrowRightLeft, CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Inbox, ListFilter, Plus, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -15,6 +15,7 @@ import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
+import { RecoverDialog } from "@/components/mail/recover-dialog"
 import { MailboxRules } from "@/components/settings/mail-rules"
 import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -30,7 +31,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes, plural } from "@/lib/format"
-import type { Delegate, DelegateAccess, ImportCounts, Mailbox } from "@/lib/types"
+import { organizationsQuery } from "@/lib/queries"
+import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -223,6 +225,57 @@ function DelegatesDialog({ mailbox, onOpenChange }: { mailbox: Mailbox | null; o
   )
 }
 
+function RetentionSetting({ orgId }: { orgId: string }) {
+  const qc = useQueryClient()
+  const current = useQuery({ ...organizationsQuery, select: (orgs) => orgs.find((o) => o.id === orgId)?.deletedItemRetentionDays }).data
+  const [days, setDays] = useState<string | null>(null)
+  const value = days ?? (current === undefined ? "" : String(current))
+  const valid = /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 30
+  const save = useMutation({
+    mutationFn: () => api<Organization>(`/organizations/${orgId}`, { method: "PATCH", body: { deletedItemRetentionDays: Number(value) } }),
+    onSuccess: (org) => {
+      toast.success(`Deleted messages are now kept for ${plural(org.deletedItemRetentionDays, "day")}`)
+      setDays(null)
+      qc.invalidateQueries({ queryKey: ["organizations"] })
+      qc.invalidateQueries({ queryKey: ["recoverable"] })
+    },
+  })
+
+  return (
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
+      <SectionHeader
+        title="Deleted item retention"
+        description="How long messages stay recoverable after they are permanently deleted, for example by emptying Trash. People restore them from the Trash menu in Aether Mail, and administrators from a mailbox's More actions menu."
+      />
+      <form
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (valid) save.mutate()
+        }}
+      >
+        <Field id="retention-days" label="Days" hint="From 1 to 30. Kept messages do not count towards the mailbox quota." error={value && !valid ? "Enter a whole number of days from 1 to 30." : undefined}>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Input
+              id="retention-days"
+              inputMode="numeric"
+              autoComplete="off"
+              className="sm:max-w-32"
+              value={value}
+              disabled={current === undefined}
+              aria-invalid={!!value && !valid}
+              onChange={(e) => setDays(e.target.value)}
+            />
+            <Button type="submit" variant="secondary" loading={save.isPending} disabled={!valid || Number(value) === current}>
+              Save retention
+            </Button>
+          </div>
+        </Field>
+      </form>
+    </section>
+  )
+}
+
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
   const mailboxes = useQuery({ queryKey: ["mailboxes", orgId], queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`) })
@@ -231,6 +284,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
   const [managing, setManaging] = useState<Mailbox | null>(null)
   const [converting, setConverting] = useState<Mailbox | null>(null)
+  const [recovering, setRecovering] = useState<Mailbox | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const importTarget = useRef<{ mailbox: Mailbox; kind: ImportKind } | null>(null)
   const form = useForm<Values>({
@@ -369,6 +423,10 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                               <ListFilter aria-hidden />
                               Mail rules and automatic replies
                             </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setRecovering(m)}>
+                              <ArchiveRestore aria-hidden />
+                              Recover deleted items…
+                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
                               <CalendarArrowUp aria-hidden />
                               Import calendar (.ics)
@@ -393,6 +451,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
           </Table>
         )}
       </QueryView>
+
+      <RetentionSetting orgId={orgId} />
 
       <FormDialog
         open={creating}
@@ -444,6 +504,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       </FormDialog>
 
       <DelegatesDialog mailbox={delegating} onOpenChange={(open) => !open && setDelegating(null)} />
+
+      <RecoverDialog mailbox={recovering} onOpenChange={(open) => !open && setRecovering(null)} />
 
       <input
         ref={fileInput}

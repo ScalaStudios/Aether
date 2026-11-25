@@ -182,6 +182,8 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/mailboxes/{mailboxId}/folders/empty", s.emptyFolder)
 	authed("POST /api/v1/mailboxes/{mailboxId}/folders/mark-read", s.markFolderRead)
 	authed("GET /api/v1/mailboxes/{mailboxId}/retention", s.getMailboxRetention)
+	authed("GET /api/v1/mailboxes/{mailboxId}/recoverable", s.listRecoverable)
+	authed("POST /api/v1/mailboxes/{mailboxId}/recoverable/restore", s.restoreRecoverable)
 	authed("GET /api/v1/mailboxes/{mailboxId}/messages", s.listMessages)
 	authed("GET /api/v1/mailboxes/{mailboxId}/messages/{uid}", s.getMessage)
 	authed("PATCH /api/v1/mailboxes/{mailboxId}/messages/{uid}", s.updateMessage)

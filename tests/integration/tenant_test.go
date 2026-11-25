@@ -22,6 +22,7 @@ func TestTenantIsolation(t *testing.T) {
 
 	denied := []struct{ method, path string }{
 		{"GET", "/organizations/" + b.orgID},
+		{"PATCH", "/organizations/" + b.orgID},
 		{"GET", "/organizations/" + b.orgID + "/domains"},
 		{"GET", "/organizations/" + b.orgID + "/mailboxes"},
 		{"GET", "/organizations/" + b.orgID + "/members"},
@@ -49,6 +50,8 @@ func TestTenantIsolation(t *testing.T) {
 		{"POST", "/organizations/" + b.orgID + "/retention-policies"},
 		{"PATCH", "/retention-policies/" + bPolicy.ID},
 		{"DELETE", "/retention-policies/" + bPolicy.ID},
+		{"GET", "/mailboxes/" + b.bobMailbox + "/recoverable"},
+		{"POST", "/mailboxes/" + b.bobMailbox + "/recoverable/restore"},
 	}
 	for _, d := range denied {
 		var body any

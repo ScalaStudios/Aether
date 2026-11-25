@@ -36,6 +36,7 @@ export interface Organization {
   slug: string
   createdAt: string
   spamLearning: boolean
+  deletedItemRetentionDays: number
 }
 
 export interface Domain {
@@ -293,6 +294,16 @@ export interface MessageSummary {
   hasAttachments: boolean
   size: number
   threadUids?: number[]
+}
+
+export interface RecoverableItem extends MessageSummary {
+  folder: string
+  deletedAt: string
+}
+
+export interface RecoverableList {
+  retentionDays: number
+  items: RecoverableItem[]
 }
 
 export interface MessagePage {

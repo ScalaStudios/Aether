@@ -102,6 +102,7 @@ var mailErrors = []struct {
 	{mailpkg.ErrProtectedFolder, http.StatusUnprocessableEntity, "protected_folder", "Inbox, Drafts, Sent, Archive, Junk, Trash, and Snoozed cannot be renamed, moved, or deleted."},
 	{mailpkg.ErrFolderHasChildren, http.StatusConflict, "folder_has_subfolders", "This folder has subfolders. Move or delete them first."},
 	{mailpkg.ErrFolderNotEmpty, http.StatusConflict, "folder_not_empty", "This folder still has messages. Choose a folder to move them to first."},
+	{mailpkg.ErrOverQuota, http.StatusInsufficientStorage, "over_quota", "The mailbox is full, so nothing was restored. Delete mail or ask an administrator for more space, then try again."},
 }
 
 func (s *Server) mailError(w http.ResponseWriter, r *http.Request, err error) {

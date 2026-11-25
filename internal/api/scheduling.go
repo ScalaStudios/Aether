@@ -247,6 +247,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 			s.cleanMailFlow(ctx)
 			cleaned = time.Now()
 		}
+		go s.purgeRecoverable(ctx)
 		select {
 		case <-ctx.Done():
 			return

@@ -1,12 +1,13 @@
 "use client"
 
 import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, PenSquare, ShieldAlert, Trash2, type LucideIcon } from "lucide-react"
+import { ArchiveRestore, CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, PenSquare, ShieldAlert, Trash2, type LucideIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
 
 import { FolderDialog, folderLeaf, type FolderAction } from "@/components/mail/folder-dialog"
+import { RecoverDialog } from "@/components/mail/recover-dialog"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -52,13 +53,14 @@ function FolderButton({
   )
 }
 
-function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead }: {
+function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead, onRecover }: {
   folder: Folder
   label: string
   open: boolean
   onOpenChange: (open: boolean) => void
   onAction: (kind: FolderAction["kind"]) => void
   onMarkRead: () => void
+  onRecover: () => void
 }) {
   const fixed = folder.specialUse !== "" || folder.name === snoozedFolder
   const permanent = folder.specialUse === "trash" || folder.specialUse === "junk"
@@ -100,6 +102,12 @@ function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead }:
           <Trash2 aria-hidden />
           {permanent ? `Empty ${folderLabel(folder)}…` : "Empty folder…"}
         </DropdownMenuItem>
+        {folder.specialUse === "trash" && (
+          <DropdownMenuItem onSelect={onRecover}>
+            <ArchiveRestore aria-hidden />
+            Recover deleted items…
+          </DropdownMenuItem>
+        )}
         {!fixed && (
           <>
             <DropdownMenuSeparator />
@@ -146,6 +154,7 @@ function MailboxFolders({
   const [action, setAction] = useState<FolderAction | null>(null)
   const [error, setError] = useState("")
   const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [recovering, setRecovering] = useState(false)
   const [dragging, setDragging] = useState<string | null>(null)
   const [dropOn, setDropOn] = useState<string | null>(null)
   const labelOf = (name: string) => folderLabel(folders.data?.find((f) => f.name === name) ?? { name, specialUse: "" })
@@ -246,6 +255,7 @@ function MailboxFolders({
               onOpenChange={(next) => setMenuFor(next ? f.name : null)}
               onAction={(kind) => start({ kind, folder: f })}
               onMarkRead={() => manage.mutate({ method: "POST", path: "/mark-read", folder: f.name, done: `Marked everything in ${label} as read` })}
+              onRecover={() => setRecovering(true)}
             />
           )}
         </div>
@@ -268,6 +278,7 @@ function MailboxFolders({
           onSubmit={(values) => submit(action, values)}
         />
       )}
+      <RecoverDialog mailbox={recovering ? mailbox : null} onOpenChange={setRecovering} />
     </div>
   )
 }

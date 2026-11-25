@@ -4,7 +4,7 @@ RUN apt-get update \
       dovecot-core dovecot-imapd dovecot-lmtpd dovecot-pgsql dovecot-sieve dovecot-managesieved msmtp openssl ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* /etc/dovecot/conf.d \
  && groupadd -g 5000 vmail && useradd -u 5000 -g vmail -d /var/vmail -s /usr/sbin/nologin vmail
-COPY dovecot.conf /etc/dovecot/dovecot.conf
+COPY dovecot.conf dovecot-acl /etc/dovecot/
 COPY sieve/ /etc/dovecot/sieve/
 COPY sieve-bin/ /usr/local/lib/aether-sieve/
 COPY entrypoint.sh tls-init.sh aether-token-check.sh /usr/local/bin/

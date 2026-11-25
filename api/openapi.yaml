@@ -158,6 +158,28 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Organization" }
         "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [organizations]
+      summary: Change organization settings
+      description: Administrators only. API keys cannot use this route.
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deletedItemRetentionDays: { type: integer, minimum: 1, maximum: 30, description: Days that permanently deleted messages stay recoverable }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /branding:
     get:
       tags: [branding]
@@ -1323,6 +1345,64 @@ paths:
       responses:
         "204": { description: Marked as read }
         "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/recoverable:
+    get:
+      tags: [mail]
+      summary: List permanently deleted messages that can still be restored
+      description: The 2,000 most recently deleted messages, newest first, for the owner, delegates and members, and organization administrators. An administrator's request is recorded as mailbox.recoverable.view. API keys cannot use this route.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [retentionDays, items]
+                properties:
+                  retentionDays: { type: integer }
+                  items: { type: array, items: { $ref: "#/components/schemas/RecoverableMessage" } }
+        "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/recoverable/restore:
+    post:
+      tags: [mail]
+      summary: Restore deleted messages to the folders they were deleted from
+      description: A message whose folder no longer exists goes to Inbox. Recorded as mailbox.messages.restore. Read-only members cannot restore, and API keys cannot use this route.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [folder, uid]
+                    properties:
+                      folder: { type: string }
+                      uid: { type: integer }
+      responses:
+        "200":
+          description: Restored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [restored]
+                properties:
+                  restored: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "507": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages:
     get:
       tags: [mail]
@@ -2255,12 +2335,13 @@ components:
               role: { type: string, enum: [owner, admin, member] }
     Organization:
       type: object
-      required: [id, name, slug, createdAt]
+      required: [id, name, slug, createdAt, deletedItemRetentionDays]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         slug: { type: string }
         createdAt: { type: string, format: date-time }
+        deletedItemRetentionDays: { type: integer, minimum: 1, maximum: 30 }
     ThemeColors:
       type: object
       description: "Colours that replace Aether's in one theme, as #rrggbb. Leave a key out to keep Aether's colour."
@@ -2609,6 +2690,14 @@ components:
         hasAttachments: { type: boolean }
         size: { type: integer }
         threadUids: { type: array, items: { type: integer }, description: Present when threads=true and the conversation has more than one message }
+    RecoverableMessage:
+      allOf:
+        - { $ref: "#/components/schemas/MessageSummary" }
+        - type: object
+          required: [folder, deletedAt]
+          properties:
+            folder: { type: string, description: The folder the message was deleted from }
+            deletedAt: { type: string, format: date-time }
     Message:
       allOf:
         - { $ref: "#/components/schemas/MessageSummary" }
