@@ -987,21 +987,31 @@ func (c *Client) Send(from Address, rcpts []string, raw []byte) error {
 	return sc.Quit()
 }
 
+func appendRaw(ic *imapclient.Client, folder string, flags []imap.Flag, raw []byte) error {
+	cmd := ic.Append(folder, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: time.Now()})
+	if _, err := cmd.Write(raw); err != nil {
+		return err
+	}
+	if err := cmd.Close(); err != nil {
+		return err
+	}
+	_, err := cmd.Wait()
+	return err
+}
+
 func (c *Client) SaveSent(address string, raw []byte) error {
 	return c.with(address, func(ic *imapclient.Client) error {
 		sent, err := c.specialFolder(ic, "sent")
 		if err != nil {
 			return err
 		}
-		cmd := ic.Append(sent, int64(len(raw)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagSeen}, Time: time.Now()})
-		if _, err := cmd.Write(raw); err != nil {
-			return err
-		}
-		if err := cmd.Close(); err != nil {
-			return err
-		}
-		_, err = cmd.Wait()
-		return err
+		return appendRaw(ic, sent, []imap.Flag{imap.FlagSeen}, raw)
+	})
+}
+
+func (c *Client) Deliver(address string, raw []byte) error {
+	return c.with(address, func(ic *imapclient.Client) error {
+		return appendRaw(ic, "INBOX", nil, raw)
 	})
 }
 

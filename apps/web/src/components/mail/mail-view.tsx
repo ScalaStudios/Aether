@@ -10,6 +10,8 @@ import { cn } from "cn"
 import { Composer } from "@/components/mail/composer"
 import { FolderPane } from "@/components/mail/folder-pane"
 import { MessageList } from "@/components/mail/message-list"
+import { QuarantineList } from "@/components/mail/quarantine-list"
+import { QuarantinePane } from "@/components/mail/quarantine-pane"
 import { ReadingPane } from "@/components/mail/reading-pane"
 import { ScheduledList } from "@/components/mail/scheduled-list"
 import { ShortcutsDialog } from "@/components/mail/shortcuts-dialog"
@@ -21,7 +23,7 @@ import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
 import { buildDraft, folderLabel, snoozedFolder, type ComposeMode, type Draft } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { Folder, Mailbox, Message, MessagePage, MessageSummary, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
+import type { Folder, Mailbox, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
 
@@ -66,6 +68,18 @@ export function MailView() {
   const [scheduledView, setScheduledView] = useState(false)
   const showScheduled = scheduledView && !!scheduled.data?.length
 
+  const quarantine = useInfiniteQuery({
+    queryKey: ["quarantine", mbx],
+    queryFn: ({ pageParam }) => api<QuarantinePage>(`/mailboxes/${mbx}/quarantine`, { query: { before: pageParam } }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: !!mailbox,
+    refetchInterval: POLL,
+  })
+  const held = quarantine.data?.pages.flatMap((p) => p.items) ?? []
+  const [quarantineView, setQuarantineView] = useState(false)
+  const [quarantineId, setQuarantineId] = useState<string | null>(null)
+
   const snoozed = useQuery({
     queryKey: ["snoozed", mbx],
     queryFn: () => api<SnoozedMessage[]>(`/mailboxes/${mbx}/snoozed`),
@@ -98,15 +112,29 @@ export function MailView() {
   const [helpOpen, setHelpOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
-  const composeTo = useSearchParams().get("compose")
+  const params = useSearchParams()
+  const composeTo = params.get("compose")
   const [composedTo, setComposedTo] = useState<string | null>(null)
   if (mailbox && composeTo !== composedTo) {
     setComposedTo(composeTo)
     if (composeTo && from) setCompose({ key: (compose?.key ?? 0) + 1, draft: { ...buildDraft("new", undefined, mailbox.address, folder), to: [{ address: composeTo }] } })
   }
+  const linked = params.get("quarantine")
+  const [linkedTo, setLinkedTo] = useState<string | null>(null)
+  if (mailboxes.data && linked !== linkedTo) {
+    setLinkedTo(linked)
+    const target = mailboxes.data.find((m) => m.id === linked)
+    if (target) {
+      if (target.kind !== "shared") setPrimaryId(target.id)
+      setMailboxId(target.id)
+      setQuarantineView(true)
+      setQuarantineId(params.get("item"))
+      setSelectedUid(null)
+    }
+  }
   useEffect(() => {
-    if (composeTo && composeTo === composedTo) router.replace("/mail", { scroll: false })
-  }, [composeTo, composedTo, router])
+    if ((composeTo && composeTo === composedTo) || (linked && linked === linkedTo)) router.replace("/mail", { scroll: false })
+  }, [composeTo, composedTo, linked, linkedTo, router])
 
   const message = useQuery({
     queryKey: ["message", mbx, folder, selectedUid],
@@ -225,6 +253,8 @@ export function MailView() {
     setMailboxId(id)
     setFolderName(name)
     setScheduledView(false)
+    setQuarantineView(false)
+    setQuarantineId(null)
     setSelectedUid(null)
     setShowFolders(false)
   }
@@ -232,6 +262,8 @@ export function MailView() {
   function selectMailbox(id: string) {
     setMailboxId(id)
     setScheduledView(false)
+    setQuarantineView(false)
+    setQuarantineId(null)
     setFolderName(null)
     setSelectedUid(null)
   }
@@ -240,6 +272,10 @@ export function MailView() {
   useEffect(() => {
     shortcuts.current = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || compose || helpOpen || isTyping(e.target)) return
+      if (quarantineView && !["c", "?", "/"].includes(e.key)) {
+        if (e.key === "Escape") setQuarantineId(null)
+        return
+      }
       const uid = selectedUid
       const actions: Record<string, () => void> = {
         c: () => startCompose("new"),
@@ -287,11 +323,17 @@ export function MailView() {
   }
 
   const reading = selectedUid !== null
+  const inspecting = quarantineView && quarantineId !== null
+
+  function afterQuarantine(id: string) {
+    const index = held.findIndex((i) => i.id === id)
+    setQuarantineId((held[index + 1] ?? held[index - 1])?.id ?? null)
+  }
 
   return (
     <div className="flex h-full min-h-0">
       <FolderPane
-        className={cn("w-full shrink-0 md:w-66 lg:flex", showFolders && !reading ? "flex" : "hidden")}
+        className={cn("w-full shrink-0 md:w-66 lg:flex", showFolders && !reading && !inspecting ? "flex" : "hidden")}
         own={own}
         primary={trees.find((t) => t.mailbox.id === primary?.id)}
         onPrimaryChange={(id) => {
@@ -305,13 +347,34 @@ export function MailView() {
         scheduledActive={showScheduled}
         onScheduled={() => {
           setScheduledView(true)
+          setQuarantineView(false)
+          setQuarantineId(null)
+          setSelectedUid(null)
+          setShowFolders(false)
+        }}
+        quarantine={quarantine.data?.pages[0]?.total}
+        quarantineActive={quarantineView}
+        onQuarantine={() => {
+          setQuarantineView(true)
+          setScheduledView(false)
           setSelectedUid(null)
           setShowFolders(false)
         }}
         onCompose={from ? () => startCompose("new") : undefined}
         onDropMessage={readOnly ? undefined : (uid, to, target) => remove.mutate({ uid, to, target: target === mbx ? undefined : mailboxes.data.find((m) => m.id === target) })}
       />
-      {showScheduled ? (
+      {quarantineView ? (
+        <QuarantineList
+          className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders || inspecting ? "hidden" : "flex")}
+          mailboxId={mbx}
+          query={quarantine}
+          items={held}
+          selectedId={quarantineId}
+          readOnly={readOnly}
+          onOpen={setQuarantineId}
+          onShowFolders={() => setShowFolders(true)}
+        />
+      ) : showScheduled ? (
         <ScheduledList
           className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders ? "hidden" : "flex")}
           messages={scheduled.data ?? []}
@@ -340,25 +403,36 @@ export function MailView() {
           draggable={!readOnly}
         />
       )}
-      <ReadingPane
-        className={cn("min-w-0 flex-1 md:flex", reading ? "flex" : "hidden")}
-        mailboxId={mbx}
-        folder={folder}
-        mailboxes={mailboxes.data.filter((m) => m.id !== mbx && m.access !== "read")}
-        query={message}
-        selected={selectedUid !== null}
-        earlier={summaries.find((m) => m.uid === selectedUid)?.threadUids?.slice(1) ?? []}
-        onBack={() => setSelectedUid(null)}
-        onReply={from ? startCompose : undefined}
-        onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}
-        onMove={(to, target) => selectedUid !== null && remove.mutate({ uid: selectedUid, to, target })}
-        onCopy={(to, target) => selectedUid !== null && copy.mutate({ uid: selectedUid, to, target })}
-        onDelete={() => selectedUid !== null && remove.mutate({ uid: selectedUid })}
-        onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
-        onUnsnooze={folder === snoozedFolder ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
-        deleting={remove.isPending}
-        readOnly={readOnly}
-      />
+      {quarantineView ? (
+        <QuarantinePane
+          className={cn("min-w-0 flex-1 md:flex", inspecting ? "flex" : "hidden")}
+          mailboxId={mbx}
+          itemId={quarantineId}
+          readOnly={readOnly}
+          onBack={() => setQuarantineId(null)}
+          onDone={afterQuarantine}
+        />
+      ) : (
+        <ReadingPane
+          className={cn("min-w-0 flex-1 md:flex", reading ? "flex" : "hidden")}
+          mailboxId={mbx}
+          folder={folder}
+          mailboxes={mailboxes.data.filter((m) => m.id !== mbx && m.access !== "read")}
+          query={message}
+          selected={selectedUid !== null}
+          earlier={summaries.find((m) => m.uid === selectedUid)?.threadUids?.slice(1) ?? []}
+          onBack={() => setSelectedUid(null)}
+          onReply={from ? startCompose : undefined}
+          onFlags={(flags) => selectedUid !== null && setFlags.mutate({ uid: selectedUid, flags })}
+          onMove={(to, target) => selectedUid !== null && remove.mutate({ uid: selectedUid, to, target })}
+          onCopy={(to, target) => selectedUid !== null && copy.mutate({ uid: selectedUid, to, target })}
+          onDelete={() => selectedUid !== null && remove.mutate({ uid: selectedUid })}
+          onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
+          onUnsnooze={folder === snoozedFolder ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
+          deleting={remove.isPending}
+          readOnly={readOnly}
+        />
+      )}
       {compose && from && (
         <Composer
           key={compose.key}

@@ -240,6 +240,8 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		}
 		s.wakeSnoozed(ctx)
 		s.deliverWebhooks(ctx)
+		s.sweepQuarantine(ctx)
+		s.sendQuarantineDigests(ctx)
 		select {
 		case <-ctx.Done():
 			return

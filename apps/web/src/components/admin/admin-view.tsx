@@ -16,6 +16,7 @@ import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
 import { MembersTab } from "@/components/admin/members-tab"
+import { QuarantineTab } from "@/components/admin/quarantine-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
@@ -45,6 +46,7 @@ const orgTabs = [
   { value: "members", label: "Members", Component: MembersTab },
   { value: "branding", label: "Branding", Component: BrandingTab },
   { value: "signatures", label: "Signatures", Component: SignaturesTab },
+  { value: "quarantine", label: "Quarantine", Component: QuarantineTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]
@@ -76,7 +78,8 @@ export function AdminView() {
     (o) => platformAdmin || session.memberships.some((m) => m.orgId === o.id && m.role !== "member")
   )
   const org = administered.find((o) => o.id === orgId) ?? administered[0]
-  const tabs = org ? orgTabs : []
+  const reviewer = session.memberships.some((m) => m.orgId === org?.id && m.role !== "member")
+  const tabs = org ? orgTabs.filter((t) => t.value !== "quarantine" || reviewer) : []
   const active = tab === "identity" && platformAdmin ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
 
   return (

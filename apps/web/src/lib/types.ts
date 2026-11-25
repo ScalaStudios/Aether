@@ -503,3 +503,61 @@ export interface SignatureTemplate {
   logoWidth: number
   updatedAt?: string
 }
+
+export type QuarantineCategory = "spam" | "high_confidence_spam" | "phishing" | "malware"
+
+export type QuarantineAccess = "release" | "request" | "none"
+
+export type QuarantineStatus = "held" | "requested" | "released"
+
+export interface QuarantineItem {
+  id: string
+  mailboxId: string
+  mailbox: string
+  recipient: string
+  category: QuarantineCategory
+  access: QuarantineAccess
+  status: QuarantineStatus
+  from: Address
+  subject: string
+  score: number
+  size: number
+  receivedAt: string
+  expiresAt: string
+  requestedAt?: string | null
+  releasedAt?: string | null
+  releasedBy?: string | null
+}
+
+export interface QuarantineSymbol {
+  name: string
+  score: number
+  options?: string[]
+}
+
+export interface QuarantinePreview extends QuarantineItem {
+  message: Message
+  symbols: QuarantineSymbol[]
+  canAllowSender: boolean
+}
+
+export interface QuarantinePage {
+  items: QuarantineItem[]
+  nextCursor: string | null
+  total?: number
+  retentionDays?: number
+  requested?: number
+}
+
+export type QuarantineDigest = "off" | "daily" | "weekly"
+
+export interface QuarantinePolicy {
+  access: Record<QuarantineCategory, QuarantineAccess>
+  retentionDays: number
+  digest: QuarantineDigest
+}
+
+export interface AllowedSender {
+  sender: string
+  createdAt: string
+}

@@ -31,7 +31,7 @@ import { folderIcons, folderLabel, messageDocument, type ComposeMode } from "@/l
 import { foldersQuery } from "@/lib/queries"
 import type { Address, Folder, Mailbox, Message } from "@/lib/types"
 
-function AddressLine({ label, addresses }: { label: string; addresses: Address[] }) {
+export function AddressLine({ label, addresses }: { label: string; addresses: Address[] }) {
   if (!addresses.length) return null
   return (
     <div className="flex gap-2 text-sm">

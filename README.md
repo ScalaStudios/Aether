@@ -36,7 +36,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 | Area | What Aether includes |
 | --- | --- |
 | **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. A mailbox can only send as itself, as aliases that point to it, as distribution lists that allow it and as shared mailboxes its owner may send as, checked on both the envelope and the From header. |
-| **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, spam filed into Junk, DKIM signing with a 2048-bit RSA key per domain, ARC signing, outbound rate limits and optional ClamAV virus scanning. |
+| **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, likely spam filed into Junk, a quarantine for spam, phishing and malware with release by people and administrators and digest emails, DKIM signing with a 2048-bit RSA key per domain, ARC signing, outbound rate limits and optional ClamAV virus scanning. |
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
 | **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
 | **Webmail** | Aether Mail: folders, conversations, server-side search, rich-text compose with signatures and inline images, attachments, drafts, scheduled send, snooze, keyboard shortcuts, and HTML mail rendered with remote content blocked. |
@@ -75,7 +75,7 @@ Not built yet: Exchange ActiveSync. See [Known limitations](#known-limitations).
 <img src=".github/assets/workflow.svg" alt="A message reaching a mailbox: Postfix accepts it, Rspamd scores it and checks its DKIM signature, Dovecot stores it over LMTP, the mailbox's Sieve rules run, and it appears in Aether Mail and in IMAP clients" width="100%">
 
 - **Postfix** accepts a message on port 25 only for a domain that Aether has verified, and only for an address that exists as a mailbox or an alias. It looks both up in PostgreSQL.
-- **Rspamd** runs as a milter while the SMTP session is still open. It checks SPF, DKIM and DMARC, queries DNS blocklists and scores the message, so mail that should be rejected is refused before Postfix accepts it.
+- **Rspamd** runs as a milter while the SMTP session is still open. It checks SPF, DKIM and DMARC, queries DNS blocklists and scores the message. Mail it would reject, and mail that scores 10 or more, is handed to the API's [quarantine](documentation/quarantine.md) instead of the mailbox.
 - **Dovecot** receives the message from Postfix over LMTP and stores it in the mailbox as Maildir. A global Sieve script files spam into Junk.
 - **Sieve** then runs the mailbox's own rules and automatic replies, which the API compiles from what people set in Aether Mail. Forwarded mail and automatic replies go back out through Postfix.
 - **Clients** see the message straight away: Aether Mail reads the mailbox over IMAP through the API, and phones and desktop apps connect to Dovecot directly.
@@ -251,6 +251,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Installation](documentation/installation.md): requirements, a production install, running behind a reverse proxy, outbound relays, MTA-STS, DANE, monitoring, antivirus, upgrades, and backups with restore.
 - [Authentication](documentation/authentication.md): local accounts, Halo, other OpenID Connect providers, app passwords, and setting up mail, calendar and contacts apps.
 - [Shared mailboxes](documentation/shared-mailboxes.md): team addresses with members, access levels, Send as and Send on behalf, and what they need from Dovecot.
+- [Quarantine](documentation/quarantine.md): what is held, who may release it, digests, and how Rspamd hands mail to the API.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

@@ -6,7 +6,12 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 )
 
-var htmlPolicy = func() *bluemonday.Policy {
+var (
+	htmlPolicy    = newHTMLPolicy(true)
+	previewPolicy = newHTMLPolicy(false)
+)
+
+func newHTMLPolicy(links bool) *bluemonday.Policy {
 	p := bluemonday.UGCPolicy()
 	p.AllowDataURIImages()
 	p.AllowTables()
@@ -22,6 +27,12 @@ var htmlPolicy = func() *bluemonday.Policy {
 		"width", "max-width", "min-width", "height", "max-height", "display",
 	).Globally()
 	p.AllowURLSchemes("mailto", "http", "https")
+	if !links {
+		for _, scheme := range []string{"mailto", "http", "https"} {
+			p.AllowURLSchemeWithCustomPolicy(scheme, func(*url.URL) bool { return false })
+		}
+		p.AllowRelativeURLs(false)
+	}
 	p.RequireNoReferrerOnLinks(true)
 	p.AddTargetBlankToFullyQualifiedLinks(true)
 	p.RewriteSrc(func(u *url.URL) {
@@ -30,8 +41,12 @@ var htmlPolicy = func() *bluemonday.Policy {
 		}
 	})
 	return p
-}()
+}
 
 func SanitizeHTML(html string) string {
 	return htmlPolicy.Sanitize(html)
+}
+
+func SanitizePreviewHTML(html string) string {
+	return previewPolicy.Sanitize(html)
 }

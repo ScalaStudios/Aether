@@ -1,7 +1,7 @@
 import { CircleAlert, CircleCheck, CircleMinus, CircleX, Info, type LucideIcon } from "lucide-react"
 import { cn } from "cn"
 
-type Tone = "success" | "warning" | "danger" | "info" | "neutral"
+export type Tone = "success" | "warning" | "danger" | "info" | "neutral"
 
 const tones: Record<Tone, { icon: LucideIcon; className: string }> = {
   success: { icon: CircleCheck, className: "text-success bg-success/12" },

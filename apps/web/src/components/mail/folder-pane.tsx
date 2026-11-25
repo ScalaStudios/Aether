@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, PenSquare, Trash2, type LucideIcon } from "lucide-react"
+import { CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, PenSquare, ShieldAlert, Trash2, type LucideIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
@@ -125,6 +125,9 @@ function MailboxFolders({
   scheduled = 0,
   scheduledActive = false,
   onScheduled,
+  quarantine = 0,
+  quarantineActive = false,
+  onQuarantine,
 }: {
   mailbox: Mailbox
   folders: UseQueryResult<Folder[]>
@@ -134,6 +137,9 @@ function MailboxFolders({
   scheduled?: number
   scheduledActive?: boolean
   onScheduled?: () => void
+  quarantine?: number
+  quarantineActive?: boolean
+  onQuarantine?: () => void
 }) {
   const qc = useQueryClient()
   const editable = mailbox.access !== "read"
@@ -221,7 +227,7 @@ function MailboxFolders({
             label={label}
             count={f.unread}
             countLabel="unread"
-            active={!scheduledActive && f.name === folder}
+            active={!scheduledActive && !quarantineActive && f.name === folder}
             depth={depth}
             className={cn(editable && "max-md:pr-14")}
             draggable={editable && f.specialUse === "" && f.name !== snoozedFolder}
@@ -247,6 +253,7 @@ function MailboxFolders({
       {scheduled > 0 && onScheduled && (
         <FolderButton icon={CalendarClock} label="Scheduled" count={scheduled} countLabel="scheduled" active={scheduledActive} onClick={onScheduled} />
       )}
+      {onQuarantine && <FolderButton icon={ShieldAlert} label="Quarantine" count={quarantine} countLabel="held" active={quarantineActive} onClick={onQuarantine} />}
       {editable && (
         <FolderButton icon={FolderPlus} label="New folder" count={0} countLabel="" active={false} className="text-fg-tertiary" onClick={() => start({ kind: "create" })} />
       )}
@@ -276,6 +283,9 @@ export function FolderPane({
   scheduled = 0,
   scheduledActive = false,
   onScheduled,
+  quarantine = 0,
+  quarantineActive = false,
+  onQuarantine,
   onCompose,
   onDropMessage,
 }: {
@@ -289,6 +299,9 @@ export function FolderPane({
   scheduled?: number
   scheduledActive?: boolean
   onScheduled?: () => void
+  quarantine?: number
+  quarantineActive?: boolean
+  onQuarantine?: () => void
   onCompose?: () => void
   onDropMessage?: (uid: number, folder: Folder, mailboxId: string) => void
 }) {
@@ -307,6 +320,9 @@ export function FolderPane({
         scheduled={current ? scheduled : 0}
         scheduledActive={current && scheduledActive}
         onScheduled={onScheduled}
+        quarantine={current ? quarantine : 0}
+        quarantineActive={current && quarantineActive}
+        onQuarantine={current ? onQuarantine : undefined}
       />
     )
   }

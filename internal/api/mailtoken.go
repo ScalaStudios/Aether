@@ -39,8 +39,13 @@ func (i *introspection) audiences() []string {
 	return nil
 }
 
+func internalCaller(r *http.Request) bool {
+	ap, err := netip.ParseAddrPort(r.RemoteAddr)
+	return err == nil && !publicAddress(ap.Addr())
+}
+
 func (s *Server) verifyMailToken(w http.ResponseWriter, r *http.Request) {
-	if ap, err := netip.ParseAddrPort(r.RemoteAddr); err != nil || publicAddress(ap.Addr()) {
+	if !internalCaller(r) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
