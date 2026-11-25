@@ -54,7 +54,7 @@ func TestResolveBulkAddress(t *testing.T) {
 }
 
 func TestNormalizeAndValidateMailbox(t *testing.T) {
-	in := mailboxCreateInput{LocalPart: " Alice.Test ", DisplayName: " Alice ", QuotaBytes: 1024, Password: "a-very-long-password"}
+	in := mailboxCreateInput{LocalPart: " Alice.Test ", DisplayName: " Alice ", QuotaBytes: new(int64(1024)), Password: "a-very-long-password"}
 	if ie := normalizeAndValidateMailbox(&in); ie != nil {
 		t.Fatalf("valid user mailbox rejected: %+v", ie)
 	}
@@ -76,7 +76,7 @@ func TestNormalizeAndValidateMailbox(t *testing.T) {
 		{"shared password", mailboxCreateInput{LocalPart: "a", Kind: "shared", Password: "a-very-long-password"}, "shared_no_password"},
 		{"empty local", mailboxCreateInput{LocalPart: ""}, "invalid_local_part"},
 		{"wildcard local", mailboxCreateInput{LocalPart: "a*b"}, "invalid_local_part"},
-		{"negative quota", mailboxCreateInput{LocalPart: "a", QuotaBytes: -1}, "invalid_quota"},
+		{"negative quota", mailboxCreateInput{LocalPart: "a", QuotaBytes: new(int64(-1))}, "invalid_quota"},
 		{"weak password", mailboxCreateInput{LocalPart: "a", Password: "short"}, "weak_password"},
 	}
 	for _, c := range cases {

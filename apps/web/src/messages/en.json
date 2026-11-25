@@ -106,6 +106,7 @@
       "email_unverified": "Your identity provider has not verified your email address. Verify it there, then try again.",
       "not_provisioned": "Your account does not have access to Aether yet. Ask your administrator to add you.",
       "account_disabled": "This account is suspended. Contact your administrator.",
+      "limit_reached": "Your organization has reached its mailbox or storage limit, so a mailbox could not be created for you. Ask your administrator.",
       "shared_mailbox": "This address is a shared mailbox and cannot sign in. Sign in with your own account; the shared mailbox appears in your sidebar once an administrator adds you.",
       "fallback": "Sign-in failed ({code}). Try again, or contact your administrator."
     }
@@ -1272,9 +1273,9 @@
         },
         "resources": {
           "domains": "Domains",
-          "domainsDescription": "Domains, DNS records, verification and DMARC reports.",
+          "domainsDescription": "Domains, DNS records, verification, DMARC reports and each domain’s default quota.",
           "mailboxes": "Mailboxes",
-          "mailboxesDescription": "Mailboxes, delegates, mail rules, automatic replies and signatures. Write also imports calendars and contacts for the mailbox owner.",
+          "mailboxesDescription": "Mailboxes, the organization’s default quota, delegates, mail rules, automatic replies and signatures. Write also imports calendars and contacts for the mailbox owner.",
           "aliases": "Aliases",
           "aliasesDescription": "Aliases and distribution lists, with their members, sender restrictions and owners.",
           "members": "Members",

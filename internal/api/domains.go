@@ -143,6 +143,9 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	var id string
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if err := s.checkDomainLimit(r.Context(), tx, orgID); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(r.Context(), `INSERT INTO domains (org_id, name, verification_token, verified_at, alias_of, alias_send_as) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
 			orgID, name, secrets.Token(20), verifiedAt, in.AliasOf, in.AliasSendAs).Scan(&id); err != nil {
 			return err
@@ -150,6 +153,9 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		_, err := s.insertDKIMKey(r.Context(), tx, id, selector, "active", key)
 		return err
 	})
+	if writeLimitError(w, err) {
+		return
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		writeError(w, http.StatusConflict, "domain_taken", "This domain is already registered on this server.")

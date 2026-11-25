@@ -238,6 +238,11 @@ func (s *Server) scimCreateUser(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusBadRequest, "invalidValue", "This address belongs to a shared mailbox and cannot sign in.")
 		return
 	}
+	var limit *limitError
+	if errors.As(err, &limit) {
+		scimError(w, http.StatusBadRequest, "invalidValue", limit.message)
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -283,7 +288,7 @@ func (s *Server) scimReplaceUser(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		return s.scimLink(r.Context(), tx, p, u.ID, email, in.ExternalID)
+		return ignoreLimit(s.scimLink(r.Context(), tx, p, u.ID, email, in.ExternalID))
 	})
 	if errors.Is(err, errSharedAddress) {
 		scimError(w, http.StatusBadRequest, "invalidValue", "This address belongs to a shared mailbox and cannot sign in.")

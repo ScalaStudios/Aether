@@ -67,6 +67,18 @@ export async function api<T = void>(
   return (text ? JSON.parse(text) : undefined) as T
 }
 
+const limited: Record<string, string> = {
+  mailbox_limit_reached: "mailbox",
+  alias_limit_reached: "alias",
+  list_limit_reached: "distribution list",
+  domain_limit_reached: "domain",
+}
+
+export function limitMessage(error: unknown) {
+  const noun = error instanceof ApiError ? limited[error.code] : undefined
+  return noun && `This organization has reached its ${noun} limit. Delete one you no longer need, or ask a platform administrator to raise the limit under Quotas and limits.`
+}
+
 export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : tActive("common.genericError")
 }

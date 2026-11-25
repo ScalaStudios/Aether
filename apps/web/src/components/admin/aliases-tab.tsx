@@ -29,7 +29,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
-import { api, ApiError, errorMessage } from "@/lib/api"
+import { api, ApiError, errorMessage, limitMessage } from "@/lib/api"
 import { downloadCsv, exportAliasesCsv, exportListsCsv } from "@/lib/csv"
 import { plural } from "@/lib/format"
 import { hasPerm } from "@/lib/permissions"
@@ -236,8 +236,10 @@ export function AliasesTab({ orgId }: { orgId: string }) {
       setEditing(null)
     },
     onError: (error) => {
+      const limit = limitMessage(error)
       const field = error instanceof ApiError ? fieldErrors[error.code] : undefined
-      if (field) form.setError(field, { message: error.message })
+      if (limit) form.setError("root", { message: limit })
+      else if (field) form.setError(field, { message: error.message })
       else toast.error(errorMessage(error))
     },
   })
@@ -451,6 +453,7 @@ export function AliasesTab({ orgId }: { orgId: string }) {
         description={existing ? <span className="font-mono">{label(existing)}</span> : kindHints[kind]}
         submitLabel={`${existing ? "Save" : "Create"} ${kind === "list" ? "list" : "alias"}`}
         pending={save.isPending}
+        error={errors.root?.message}
         onSubmit={form.handleSubmit((v) => save.mutate(v))}
       >
         {existing?.localPart && canWriteAliases && (

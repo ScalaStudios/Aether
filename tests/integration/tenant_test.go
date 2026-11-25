@@ -72,6 +72,11 @@ func TestTenantIsolation(t *testing.T) {
 		{"GET", "/organizations/" + b.orgID + "/audit/export"},
 		{"GET", "/organizations/" + b.orgID + "/audit/retention"},
 		{"PUT", "/organizations/" + b.orgID + "/audit/retention"},
+		{"GET", "/organizations/" + b.orgID + "/limits"},
+		{"GET", "/organizations/" + b.orgID + "/defaults"},
+		{"PUT", "/organizations/" + b.orgID + "/defaults"},
+		{"GET", "/domains/" + b.domainID + "/defaults"},
+		{"PUT", "/domains/" + b.domainID + "/defaults"},
 		{"GET", "/domains/" + b.domainID},
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},
@@ -159,6 +164,9 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("POST", "/organizations", map[string]string{"name": "x", "slug": "x-" + randomSuffix()}, nil); got != 403 {
 		t.Errorf("org admin created an organization: %d", got)
+	}
+	if got := orgAdmin.do("PUT", "/organizations/"+a.orgID+"/limits", map[string]int64{"maxMailboxes": 1000}, nil); got != 403 {
+		t.Errorf("org admin raised its own limits: %d", got)
 	}
 	if got := orgAdmin.do("GET", "/admin/identity-providers", nil, nil); got != 403 {
 		t.Errorf("org admin listed identity providers: %d", got)

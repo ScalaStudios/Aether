@@ -33,6 +33,7 @@ const knownLoginErrors = new Set([
   "email_unverified",
   "not_provisioned",
   "account_disabled",
+  "limit_reached",
   "shared_mailbox",
 ])
 

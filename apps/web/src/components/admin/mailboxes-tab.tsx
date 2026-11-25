@@ -36,13 +36,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { useSession } from "@/hooks/use-session"
-import { api, ApiError, errorMessage } from "@/lib/api"
+import { api, ApiError, errorMessage, limitMessage } from "@/lib/api"
 import { downloadCsv, exportMailboxesCsv } from "@/lib/csv"
-import { formatBytes, formatDateTime, plural } from "@/lib/format"
+import { formatBytes, formatDateTime, megabytes, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
 import { canReadDelegates, hasPerm } from "@/lib/permissions"
-import { domainsQuery, mailboxesQuery, organizationsQuery } from "@/lib/queries"
-import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, Protocol, QuotaWarnings } from "@/lib/types"
+import { domainDefaultsQuery, domainsQuery, limitsQuery, mailboxesQuery, organizationsQuery } from "@/lib/queries"
+import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, OrganizationLimits, Protocol, QuotaDefault, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -81,6 +81,21 @@ const kinds = [
   { value: "user" as const, label: "User mailbox" },
   { value: "shared" as const, label: "Shared mailbox" },
 ]
+
+const storageErrors = ["quota_required", "storage_limit_reached"]
+
+function storageRoom(l: OrganizationLimits, current?: number) {
+  const room = formatBytes(Math.max(l.maxStorageBytes - l.usage.storageBytes, 0) + (current ?? 0))
+  const limit = formatBytes(l.maxStorageBytes)
+  return current === undefined ? `${room} of this organization's ${limit} storage limit is left.` : `Up to ${room} fits in this organization's ${limit} storage limit.`
+}
+
+function quotaHint(l: OrganizationLimits | undefined, defaults: QuotaDefault | undefined) {
+  const room = l?.maxStorageBytes ? ` ${storageRoom(l)}` : ""
+  if (!defaults) return `Leave empty to use the default quota.${room}`
+  if (defaults.effectiveQuotaBytes) return `Leave empty to use the default, ${formatBytes(defaults.effectiveQuotaBytes)}${room ? "." : ", or enter 0 for no quota."}${room}`
+  return room ? `Every mailbox needs a quota.${room}` : "Leave empty for no quota."
+}
 
 const delegateSchema = z.object({
   email: z.email("Enter a valid email address."),
@@ -378,38 +393,6 @@ function ProtocolsDialog({
   )
 }
 
-const quotaSchema = z.object({ quotaMb: z.string().trim().regex(/^\d*$/, "Enter a whole number of megabytes.") })
-
-function QuotaDialog({ mailbox, onClose }: { mailbox: Mailbox; onClose: () => void }) {
-  const qc = useQueryClient()
-  const form = useForm({ resolver: zodResolver(quotaSchema), defaultValues: { quotaMb: mailbox.quotaBytes ? String(Math.round(mailbox.quotaBytes / MB)) : "" } })
-  const save = useMutation({
-    mutationFn: ({ quotaMb }: z.infer<typeof quotaSchema>) => api<Mailbox>(`/mailboxes/${mailbox.id}`, { method: "PATCH", body: { quotaBytes: Number(quotaMb) * MB } }),
-    onSuccess: (m) => {
-      toast.success(m.quotaBytes ? `${m.address} can now store ${formatBytes(m.quotaBytes)}` : `${m.address} has no storage limit`)
-      qc.invalidateQueries({ queryKey: ["mailboxes", m.orgId] })
-      qc.invalidateQueries({ queryKey: ["my-mailboxes"] })
-      onClose()
-    },
-  })
-
-  return (
-    <FormDialog
-      open
-      onOpenChange={(open) => !open && onClose()}
-      title="Change quota"
-      description={mailbox.address}
-      submitLabel="Save quota"
-      pending={save.isPending}
-      onSubmit={form.handleSubmit((v) => save.mutate(v))}
-    >
-      <Field id="quota-mb" label="Quota in MB" hint={`Uses ${formatBytes(mailbox.usedBytes ?? 0)} now. Leave empty for no limit.`} error={form.formState.errors.quotaMb?.message}>
-        <Input id="quota-mb" inputMode="numeric" autoComplete="off" aria-invalid={!!form.formState.errors.quotaMb} {...form.register("quotaMb")} />
-      </Field>
-    </FormDialog>
-  )
-}
-
 const warningLevel = z.string().trim().regex(/^([5-9]\d)?$/, "Enter a whole number from 50 to 99, or leave it empty.")
 
 const warningsSchema = z
@@ -562,6 +545,70 @@ function AppPasswordsDialog({ mailbox, canRevoke, onOpenChange }: { mailbox: Mai
   )
 }
 
+function QuotaDialog({
+  mailbox,
+  limits,
+  quotaError,
+  onSaved,
+  onClose,
+}: {
+  mailbox: Mailbox
+  limits?: OrganizationLimits
+  quotaError: (error: ApiError, current: number) => Promise<string>
+  onSaved: () => void
+  onClose: () => void
+}) {
+  const saved = mailbox.quotaBytes ? megabytes(mailbox.quotaBytes) : ""
+  const [value, setValue] = useState(saved)
+  const [error, setError] = useState("")
+
+  const save = useMutation({
+    mutationFn: () => api<Mailbox>(`/mailboxes/${mailbox.id}`, { method: "PATCH", body: { quotaBytes: Number(value) * MB } }),
+    meta: { silent: true },
+    onSuccess: (m) => {
+      toast.success(m.quotaBytes ? `${m.address} now has a quota of ${formatBytes(m.quotaBytes)}` : `${m.address} now has no quota`)
+      onSaved()
+      onClose()
+    },
+    onError: async (e) => {
+      if (e instanceof ApiError && storageErrors.includes(e.code)) setError(await quotaError(e, mailbox.quotaBytes))
+      else toast.error(errorMessage(e))
+    },
+  })
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title="Change quota"
+      description={<span className="font-mono">{mailbox.address}</span>}
+      submitLabel="Save quota"
+      pending={save.isPending}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!/^\d*$/.test(value)) return setError("Enter a whole number of megabytes.")
+        if (value === saved) return onClose()
+        save.mutate()
+      }}
+    >
+      <Field id="quota-mb" label="Quota in MB" hint={`Uses ${formatBytes(mailbox.usedBytes ?? 0)} now. ${limits?.maxStorageBytes ? `Every mailbox needs a quota. ${storageRoom(limits, mailbox.quotaBytes)}` : "Leave empty for no quota."}`} error={error}>
+        <Input
+          id="quota-mb"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={9}
+          value={value}
+          aria-invalid={!!error}
+          onChange={(e) => {
+            setValue(e.target.value.trim())
+            setError("")
+          }}
+        />
+      </Field>
+    </FormDialog>
+  )
+}
+
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
   const session = useSession().data
@@ -576,6 +623,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
 
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
   const domains = useQuery(domainsQuery(orgId))
+  const limits = useQuery(limitsQuery(orgId))
   const warnings = useQuery({ queryKey: ["quota-warnings", orgId], queryFn: () => api<QuotaWarnings>(`/organizations/${orgId}/quota-warnings`) })
   const [editingWarnings, setEditingWarnings] = useState(false)
   const [resizing, setResizing] = useState<Mailbox | null>(null)
@@ -606,12 +654,21 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
     defaultValues: { displayName: "", quotaMb: "" },
   })
   const errors = form.formState.errors
-  const kind = useWatch({ control: form.control, name: "kind" })
+  const [kind, domainId] = useWatch({ control: form.control, name: ["kind", "domainId"] })
+  const defaults = useQuery({ ...domainDefaultsQuery(domainId), enabled: !!domainId })
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["mailboxes", orgId] })
     qc.invalidateQueries({ queryKey: ["my-mailboxes"] })
     qc.invalidateQueries({ queryKey: ["members", orgId] })
+    qc.invalidateQueries({ queryKey: ["limits", orgId] })
+  }
+
+  async function quotaError(error: ApiError, current?: number, defaultBytes = 0) {
+    if (error.code === "quota_required") return "Enter a quota. Every mailbox needs one while this organization has a storage limit."
+    const { data } = await limits.refetch()
+    if (!data) return error.message
+    return `${defaultBytes ? `The default quota, ${formatBytes(defaultBytes)}, does not fit` : "That does not fit"}. ${storageRoom(data, current)}`
   }
 
   const create = useMutation({
@@ -625,11 +682,19 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
           quotaBytes: quotaMb ? Number(quotaMb) * MB : undefined,
         },
       }),
+    meta: { silent: true },
     onSuccess: (m) => {
       toast.success(`Created ${m.address}`)
       refresh()
       setCreating(false)
       form.reset()
+    },
+    onError: async (error, v) => {
+      const limit = limitMessage(error)
+      if (limit) form.setError("root", { message: limit })
+      else if (error instanceof ApiError && storageErrors.includes(error.code)) {
+        form.setError("quotaMb", { message: await quotaError(error, undefined, v.quotaMb ? 0 : defaults.data?.effectiveQuotaBytes) })
+      } else toast.error(errorMessage(error))
     },
   })
   const update = useMutation({
@@ -996,6 +1061,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         description={kind === "shared" ? "A shared mailbox has no sign-in. Add members after creating it." : "Aether creates or links an owner account with the mailbox address."}
         submitLabel="Create mailbox"
         pending={create.isPending}
+        error={errors.root?.message}
         onSubmit={form.handleSubmit((v) => create.mutate(v))}
       >
         <Controller
@@ -1030,7 +1096,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <Input id="mb-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} {...form.register("password")} />
           </Field>
         )}
-        <Field id="mb-quota" label="Quota in MB" hint="Leave empty for no limit." error={errors.quotaMb?.message}>
+        <Field id="mb-quota" label="Quota in MB" hint={quotaHint(limits.data, defaults.data)} error={errors.quotaMb?.message}>
           <Input id="mb-quota" inputMode="numeric" autoComplete="off" aria-invalid={!!errors.quotaMb} {...form.register("quotaMb")} />
         </Field>
       </FormDialog>
@@ -1056,7 +1122,6 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
 
       <DelegatesDialog mailbox={delegating} canManage={canManageDelegates} onOpenChange={(open) => !open && setDelegating(null)} />
       <AppPasswordsDialog mailbox={appPasswordsFor} canRevoke={canRevokeAppPasswords} onOpenChange={(open) => !open && setAppPasswordsFor(null)} />
-      {resizing && <QuotaDialog mailbox={resizing} onClose={() => setResizing(null)} />}
       {editingWarnings && warnings.data && <QuotaWarningsDialog orgId={orgId} warnings={warnings.data} onClose={() => setEditingWarnings(false)} />}
 
       <RecoverDialog mailbox={recovering} onOpenChange={(open) => !open && setRecovering(null)} />
@@ -1080,6 +1145,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         onOpenChange={setEditingDefaults}
         onSave={(protocols) => saveDefaults.mutate(protocols)}
       />
+
+      {resizing && <QuotaDialog key={resizing.id} mailbox={resizing} limits={limits.data} quotaError={quotaError} onSaved={refresh} onClose={() => setResizing(null)} />}
 
       <input
         ref={fileInput}

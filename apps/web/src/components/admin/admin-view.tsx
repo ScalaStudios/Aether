@@ -111,7 +111,7 @@ const orgTabs: OrgTabDef[] = [
   { value: "sender-warnings", label: () => "Sender warnings", visible: (s, id) => orgAdmin(s, id), Component: SenderWarningsTab },
   { value: "attachments", label: () => "Attachments", visible: (s, id) => orgAdmin(s, id), Component: AttachmentsTab },
   { value: "encryption", label: () => "Encryption", visible: (s, id) => orgAdmin(s, id), Component: EncryptionTab },
-  { value: "limits", label: () => "Limits", visible: (s, id) => orgAdmin(s, id), Component: LimitsTab },
+  { value: "limits", label: () => "Quotas and limits", visible: (s, id) => orgAdmin(s, id), Component: LimitsTab },
   { value: "audit", label: () => "Audit log", visible: (s, id) => hasPerm(s, id, "audit:read"), Component: AuditTab },
   { value: "integrations", label: () => "Integrations", visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read"), Component: IntegrationsTab },
 ]

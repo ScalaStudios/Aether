@@ -14,7 +14,8 @@ A key belongs to one organization and acts as an administrator of that organizat
 
 | Scope | Allows |
 | --- | --- |
-| `domains:read`, `domains:write` | Listing, adding, verifying, and removing domains, and DNS status |
+| `domains:read`, `domains:write` | Listing, adding, verifying, and removing domains, DNS status, and each domain's default quota |
+| `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, converting, and removing mailboxes, the organization's default quota, and managing mailbox delegates or members, mail rules, automatic replies, signatures, and calendar and contacts imports (see below) |
 | `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, converting, and removing mailboxes, and managing their delegates or members, mail rules, automatic replies, signatures, calendar and contacts imports, and recurring mail imports (see below) |
 | `aliases:read`, `aliases:write` | Listing, creating, changing, and removing aliases and distribution lists |
 | `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
@@ -25,7 +26,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `suppressions:read`, `suppressions:write` | Listing, adding, and removing suppressed addresses |
 | `reports:read`, `reports:write` | Reading organization reports and CSV exports (`GET /organizations/{orgId}/reports` and `/reports/{report}`), and refreshing cached mailbox sizes (`POST /organizations/{orgId}/reports/refresh`) |
 
-A `write` scope includes `read`. Keys cannot read mail, export a mailbox, use the platform administration endpoints, manage custom roles, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name. See [Roles and permissions](roles.md) for human administrator roles composed from these same scopes.
+Any key can read its organization's limits and use with `GET /api/v1/organizations/{orgId}/limits`. Only a platform administrator can change limits. A `write` scope includes `read`. Keys cannot read mail, export a mailbox, use the platform administration endpoints, manage custom roles, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name. See [Roles and permissions](roles.md) for human administrator roles composed from these same scopes.
 
 To revoke a key, use `DELETE /api/v1/api-keys/{keyId}`. Revocation takes effect immediately.
 

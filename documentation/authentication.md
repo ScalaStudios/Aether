@@ -37,7 +37,7 @@ Halo does not publish role or tenant claims, so Aether maps Halo groups to Aethe
 2. Enter the issuer URL. Aether fetches the discovery document and shows whether PKCE S256 and the `groups` claim are available.
 3. Enter the client ID and client secret. The secret is encrypted at rest.
 4. Optionally configure provisioning:
-   - **Auto-provision:** creates an Aether account on first sign-in. If the user's verified email belongs to a verified Aether domain, it also creates that mailbox and adds the user to the domain's organization. An address containing `*` or `?` is never provisioned; that sign-in fails with `not_provisioned`.
+   - **Auto-provision:** creates an Aether account on first sign-in. If the user's verified email belongs to a verified Aether domain, it also creates that mailbox and adds the user to the domain's organization. An address containing `*` or `?` is never provisioned; that sign-in fails with `not_provisioned`. The new mailbox gets the domain's or organization's default quota. If the organization is at its mailbox or storage limit, the sign-in fails with `limit_reached` and no account is created.
    - **Administrator group:** members of this Halo group become platform administrators.
    - **Group mappings:** members of a Halo group get the mapped role (any built-in role such as `owner`, `admin`, `domain_admin`, `helpdesk`, `list_admin`, `auditor` or `member`, or a custom organization role) with optional domain scopes in an organization. See [Roles and permissions](roles.md).
 
@@ -85,7 +85,7 @@ What each request does:
 
 | Request | Effect in Aether |
 | --- | --- |
-| `POST /Users` | Creates the account with the email address in `userName` (or the primary email). If the address is on a verified domain and no mailbox exists, creates the mailbox and adds the person to that domain's organization. `externalId` is linked as the person's subject at this provider, so they can sign in at once. An existing account with the same address returns `409`, and Halo then finds it with a filter and updates it. A `userName` that is not an email address or contains `*` or `?` returns `400 invalidValue`. |
+| `POST /Users` | Creates the account with the email address in `userName` (or the primary email). If the address is on a verified domain and no mailbox exists, creates the mailbox and adds the person to that domain's organization. `externalId` is linked as the person's subject at this provider, so they can sign in at once. An existing account with the same address returns `409`, and Halo then finds it with a filter and updates it. A `userName` that is not an email address or contains `*` or `?` returns `400 invalidValue`. The mailbox gets the default quota. If the organization is at its mailbox or storage limit, nothing is created and the request returns `400 invalidValue` with the reason in `detail`. |
 | `GET /Users?filter=userName eq "…"` | Finds an account by address. Only `userName eq` filters are supported. |
 | `PUT /Users/{id}` | Updates the display name, links `externalId`, and applies `active`. The email address cannot change over SCIM, and a `userName` containing `*` or `?` returns `400 invalidValue` here too. |
 | `PATCH /Users/{id}` | Applies `replace` operations on `active` and `displayName`. |

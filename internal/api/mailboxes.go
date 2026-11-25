@@ -160,7 +160,7 @@ type mailboxCreateInput struct {
 	DomainID    string
 	LocalPart   string
 	DisplayName string
-	QuotaBytes  int64
+	QuotaBytes  *int64
 	Password    string
 	Kind        string
 	Active      bool
@@ -187,7 +187,7 @@ func normalizeAndValidateMailbox(in *mailboxCreateInput) *fieldError {
 		return &fieldError{http.StatusUnprocessableEntity, "invalid_name", "Give the room or equipment a name of up to 200 characters."}
 	case !localPartPattern.MatchString(in.LocalPart):
 		return &fieldError{http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, or underscores for the address. A plus sign marks a tag, so it cannot be part of an address."}
-	case in.QuotaBytes < 0:
+	case in.QuotaBytes != nil && *in.QuotaBytes < 0:
 		return &fieldError{http.StatusUnprocessableEntity, "invalid_quota", "The quota cannot be negative."}
 	case in.Password != "" && len(in.Password) < 12:
 		return &fieldError{http.StatusUnprocessableEntity, "weak_password", "Use a password of at least 12 characters."}
@@ -237,6 +237,10 @@ func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, d
 	var m mailbox
 	var code string
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		quotaBytes, err := s.reserveMailbox(ctx, tx, orgID, in.DomainID, in.QuotaBytes)
+		if err != nil {
+			return err
+		}
 		var aliasTaken bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, address).Scan(&aliasTaken); err != nil {
 			return err
@@ -247,7 +251,7 @@ func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, d
 		}
 		var userID string
 		var hasPassword, isAdmin bool
-		err := tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &hasPassword, &isAdmin)
+		err = tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &hasPassword, &isAdmin)
 		if in.Kind != "user" {
 			if err == nil {
 				code = "address_is_account"
@@ -280,7 +284,7 @@ func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, d
 			owner = &userID
 		}
 		err = tx.QueryRow(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, active, kind, protocols) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT mailbox_protocols FROM organizations WHERE id = $1)) RETURNING `+mailboxColumns,
-			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Active, in.Kind).
+			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, quotaBytes, in.Active, in.Kind).
 			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 		if err == nil && in.Kind == "resource" {
 			err = saveResource(ctx, tx, m.ID, in.Resource)
@@ -291,6 +295,10 @@ func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, d
 		_, err = tx.Exec(ctx, `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`, orgID, userID)
 		return err
 	})
+	var le *limitError
+	if errors.As(err, &le) {
+		return nil, &fieldError{http.StatusConflict, le.code, le.message}, nil
+	}
 	if code != "" {
 		return nil, mailboxConflictError(code, address), nil
 	}
@@ -312,7 +320,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		DomainID    string         `json:"domainId"`
 		LocalPart   string         `json:"localPart"`
 		DisplayName string         `json:"displayName"`
-		QuotaBytes  int64          `json:"quotaBytes"`
+		QuotaBytes  *int64         `json:"quotaBytes"`
 		Password    string         `json:"password"`
 		Kind        string         `json:"kind"`
 		Resource    *resourceInput `json:"resource"`
@@ -430,6 +438,11 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		if err := tx.QueryRow(r.Context(), `SELECT protocols FROM mailboxes WHERE id = $1 FOR UPDATE`, m.ID).Scan(&before); err != nil {
 			return err
 		}
+		if in.QuotaBytes != nil {
+			if err := s.checkQuotaChange(r.Context(), tx, m.OrgID, m.ID, *in.QuotaBytes); err != nil {
+				return err
+			}
+		}
 		err := tx.QueryRow(r.Context(), `
 			UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active), hidden_from_directory = coalesce($5, hidden_from_directory), protocols = coalesce($6, protocols),
 				retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END,
@@ -465,6 +478,9 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 		return queueKicks(r.Context(), tx, kick)
 	})
+	if writeLimitError(w, err) {
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return

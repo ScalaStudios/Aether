@@ -231,6 +231,63 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/limits:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [organizations]
+      summary: The organization's limits and what it uses against each (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationLimits" }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [organizations]
+      summary: Replace the organization's limits (platform administrators)
+      description: "0 means no limit. Lowering a limit below current use is allowed; it only stops new mailboxes, aliases, lists or domains, and quota raises, until use is under it again. Recorded in the audit log as organization.limits.update."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Limits" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationLimits" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/defaults:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [organizations]
+      summary: The default quota for new mailboxes in the organization (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaDefault" }
+    put:
+      tags: [organizations]
+      summary: Set or clear the organization's default quota
+      description: "Applies to mailboxes created afterwards without a quotaBytes, including mailboxes created by SCIM and OIDC sign-in. A domain's own default takes precedence. Recorded in the audit log as organization.defaults.update."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuotaDefaultInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaDefault" }
+        "422": { $ref: "#/components/responses/Error" }
   /branding:
     get:
       tags: [branding]
@@ -802,6 +859,7 @@ paths:
     post:
       tags: [domains]
       summary: Add a domain. Domains added by platform administrators are verified immediately; others must pass DNS verification.
+      description: Refused with 409 domain_limit_reached at the organization's domain limit.
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -886,6 +944,33 @@ paths:
               schema: { $ref: "#/components/schemas/Domain" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /domains/{domainId}/defaults:
+    parameters: [{ $ref: "#/components/parameters/domainId" }]
+    get:
+      tags: [domains]
+      summary: The default quota for new mailboxes on the domain
+      responses:
+        "200":
+          description: "quotaBytes is the domain's own default, or null when it inherits the organization's. effectiveQuotaBytes is what a new mailbox on the domain gets."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaDefault" }
+    put:
+      tags: [domains]
+      summary: Set the domain's default quota, or null to inherit the organization's
+      description: Recorded in the audit log as domain.defaults.update.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuotaDefaultInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaDefault" }
         "422": { $ref: "#/components/responses/Error" }
   /domains/{domainId}/dns:
     get:
@@ -997,7 +1082,7 @@ paths:
     post:
       tags: [mailboxes]
       summary: Create a mailbox. A user mailbox gets a user account with the mailbox address, created or linked, as its owner. A shared mailbox gets no account.
-      description: A shared mailbox has no sign-in, so a password is refused with 422 shared_no_password, and an address an account already signs in with is refused with 409 address_is_account. Add members to a shared mailbox through its delegates.
+      description: "A shared mailbox has no sign-in, so a password is refused with 422 shared_no_password, and an address an account already signs in with is refused with 409 address_is_account. Add members to a shared mailbox through its delegates. Without quotaBytes the mailbox gets the domain's default quota, else the organization's, else 0 (no quota). Refused with 409 mailbox_limit_reached at the organization's mailbox limit; under a storage limit, 409 quota_required for a quota of 0 and 409 storage_limit_reached when the quota does not fit."
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -1010,7 +1095,7 @@ paths:
                 domainId: { type: string, format: uuid }
                 localPart: { type: string, pattern: "^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$", description: "A plus sign marks a tag on an existing address, so new addresses cannot contain one" }
                 displayName: { type: string }
-                quotaBytes: { type: integer, minimum: 0 }
+                quotaBytes: { type: integer, minimum: 0, description: "Omit to use the default quota. 0 means no quota." }
                 password: { type: string, minLength: 12, description: Optional web sign-in password for the owner account. Not allowed for shared mailboxes. }
                 kind: { type: string, enum: [user, shared], default: user }
       responses:
@@ -1025,7 +1110,7 @@ paths:
     patch:
       tags: [mailboxes]
       summary: Change a mailbox's display name, quota, active state, directory visibility, protocols or hold
-      description: Removing imap or sieve from protocols ends the IMAP and ManageSieve sessions signed in as the address; removing imap from a shared mailbox also removes its members' rights from its folders in Dovecot and ends their sessions. App passwords stay valid and work again when the protocol is turned back on. Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them.
+      description: Removing imap or sieve from protocols ends the IMAP and ManageSieve sessions signed in as the address; removing imap from a shared mailbox also removes its members' rights from its folders in Dovecot and ends their sessions. App passwords stay valid and work again when the protocol is turned back on. Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them. Raising quotaBytes, or setting it to 0, under an organization storage limit is refused with 409 storage_limit_reached or quota_required when it does not fit; lowering it is always allowed.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -1387,6 +1472,7 @@ paths:
     post:
       tags: [aliases]
       summary: Create an alias or distribution list. An empty localPart creates the domain catch-all.
+      description: Refused with 409 alias_limit_reached or list_limit_reached at the organization's alias or list limit.
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -1420,7 +1506,7 @@ paths:
     patch:
       tags: [aliases]
       summary: Change an alias or list in place
-      description: Only the fields sent are changed. List owners who are not organization admins may only send destinations, addDestinations and removeDestinations. For a personal alias, the owner or administrator may send only active, note and expiresAt. Send null to clear expiry. Changes write an alias.update audit event.
+      description: Only the fields sent are changed. List owners who are not organization admins may only send destinations, addDestinations and removeDestinations. For a personal alias, the owner or administrator may send only active, note and expiresAt. Send null to clear expiry. Changes write an alias.update audit event.values. Changing kind is refused with 409 alias_limit_reached or list_limit_reached when the organization is at the limit for the new kind.
       parameters: [{ name: aliasId, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1441,6 +1527,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Alias" }
+        "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [aliases]
@@ -4680,7 +4767,7 @@ paths:
       parameters: [{ name: slug, in: path, required: true, schema: { type: string } }]
       responses:
         "201": { description: SCIM User }
-        "400": { description: "userName is not an email address, contains * or ?, or is a shared mailbox address (scimType invalidValue)" }
+        "400": { description: "userName is not an email address, contains * or ?, is a shared mailbox address, or the mailbox would exceed the organization's mailbox or storage limit (scimType invalidValue)" }
         "409": { description: An account with this userName exists }
   /scim/{slug}/Users/{id}:
     get:
@@ -5545,6 +5632,43 @@ components:
         purpose: { type: string, enum: [verification, mx, spf, dkim, dmarc, mta-sts-host, mta-sts, tls-rpt, autoconfig, autodiscover, srv-imaps, srv-submissions] }
         status: { type: string, enum: [ok, warning, missing, mismatch, error] }
         found: { type: array, items: { type: string } }
+    Limits:
+      type: object
+      description: 0 means no limit. PUT replaces all five, so send every field.
+      required: [maxMailboxes, maxAliases, maxLists, maxDomains, maxStorageBytes]
+      properties:
+        maxMailboxes: { type: integer, minimum: 0 }
+        maxAliases: { type: integer, minimum: 0 }
+        maxLists: { type: integer, minimum: 0, description: Distribution lists }
+        maxDomains: { type: integer, minimum: 0 }
+        maxStorageBytes: { type: integer, minimum: 0, description: "The most the quotas of all the organization's mailboxes may add up to. While it is set, every new mailbox needs a quota above 0." }
+    OrganizationLimits:
+      allOf:
+        - { $ref: "#/components/schemas/Limits" }
+        - type: object
+          required: [maxMailboxes, maxAliases, maxLists, maxDomains, maxStorageBytes, usage]
+          properties:
+            usage:
+              type: object
+              required: [mailboxes, aliases, lists, domains, storageBytes, mailboxesWithoutQuota]
+              properties:
+                mailboxes: { type: integer }
+                aliases: { type: integer }
+                lists: { type: integer }
+                domains: { type: integer }
+                storageBytes: { type: integer, description: The sum of all mailbox quotas }
+                mailboxesWithoutQuota: { type: integer, description: Mailboxes with a quota of 0. They are not counted in storageBytes. }
+    QuotaDefault:
+      type: object
+      required: [quotaBytes, effectiveQuotaBytes]
+      properties:
+        quotaBytes: { type: [integer, "null"], description: The default set at this level, or null when none is set }
+        effectiveQuotaBytes: { type: integer, description: The quota a new mailbox gets, after inheritance }
+    QuotaDefaultInput:
+      type: object
+      required: [quotaBytes]
+      properties:
+        quotaBytes: { type: [integer, "null"], minimum: 0 }
     Mailbox:
       type: object
       required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt, kind, hiddenFromDirectory, protocols]

@@ -23,13 +23,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
-import { api, errorMessage } from "@/lib/api"
-import { formatDate, formatPercent, plural } from "@/lib/format"
+import { api, errorMessage, limitMessage } from "@/lib/api"
+import { formatBytes, formatDate, formatPercent, MB, megabytes, plural } from "@/lib/format"
 import { hasPerm, isDomainScoped } from "@/lib/permissions"
-import { domainsQuery, mailboxesQuery } from "@/lib/queries"
-import type { DMARCSource, DMARCSummary, DNSRecord, DNSStatus, Domain } from "@/lib/types"
+import { domainDefaultsQuery, domainsQuery, mailboxesQuery, organizationDefaultsQuery } from "@/lib/queries"
+import type { DMARCSource, DMARCSummary, DNSRecord, DNSStatus, Domain, QuotaDefault } from "@/lib/types"
 
 const schema = z.object({
   name: z
@@ -68,6 +69,11 @@ const purposes: Record<DNSRecord["purpose"], string> = {
 
 const periods = [7, 30, 90].map((days) => ({ value: days, label: `${days} days` }))
 
+const quotaSources = [
+  { value: "inherit" as const, label: "Organization default" },
+  { value: "custom" as const, label: "Custom" },
+]
+
 function aligned(s: DMARCSource) {
   return Math.max(s.dkimAligned, s.spfAligned)
 }
@@ -99,11 +105,17 @@ export function DomainsTab({ orgId }: { orgId: string }) {
   const add = useMutation({
     mutationFn: ({ aliasOf, ...values }: Values) =>
       api<Domain>(`/organizations/${orgId}/domains`, { method: "POST", body: aliasOf === "none" ? { name: values.name } : { ...values, aliasOf } }),
+    meta: { silent: true },
     onSuccess: (domain) => {
       qc.invalidateQueries({ queryKey: ["domains", orgId] })
       setAdding(false)
       form.reset()
       setOpenId(domain.id)
+    },
+    onError: (error) => {
+      const limit = limitMessage(error)
+      if (limit) form.setError("root", { message: limit })
+      else toast.error(errorMessage(error))
     },
   })
 
@@ -171,6 +183,7 @@ export function DomainsTab({ orgId }: { orgId: string }) {
         description="After adding it, publish the DNS records Aether lists for it."
         submitLabel="Add domain"
         pending={add.isPending}
+        error={form.formState.errors.root?.message}
         onSubmit={form.handleSubmit((v) => add.mutate(v))}
       >
         <Field id="domain-name" label="Domain name" error={form.formState.errors.name?.message}>
@@ -286,6 +299,7 @@ function DomainDialog({ domainId, orgId, canWrite, onClose }: { domainId: string
             <Button variant="secondary" onClick={() => setCoexistence(true)}>Configure coexistence</Button>
           </div>
         )}
+        <DefaultQuota domainId={domainId} orgId={orgId} domainName={d?.name ?? "this domain"} />
         <QueryView query={dns} isEmpty={(data) => data.records.length === 0} empty={<p className="text-fg-secondary">No DNS records are required for this domain.</p>}>
           {(data) => (
             <ul className="flex flex-col gap-3">
@@ -441,6 +455,102 @@ function CoexistenceDialog({ domain, onClose }: { domain: Domain; onClose: () =>
         </>
       )}
       {save.isError && <p role="alert" className="text-sm text-danger">{errorMessage(save.error)}</p>}
+    </FormDialog>
+  )
+}
+
+function DefaultQuota({ domainId, orgId, domainName }: { domainId: string; orgId: string; domainName: string }) {
+  const defaults = useQuery(domainDefaultsQuery(domainId))
+  const [editing, setEditing] = useState(false)
+  const d = defaults.data
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-4">
+      <div className="flex flex-col gap-1">
+        <span className="font-semibold">Default quota for new mailboxes</span>
+        {d ? (
+          <span className="text-sm text-fg-secondary">
+            {d.effectiveQuotaBytes ? formatBytes(d.effectiveQuotaBytes) : "No quota"} · {d.quotaBytes === null ? "Organization default" : "Set for this domain"}
+          </span>
+        ) : defaults.isError ? (
+          <span role="alert" className="text-sm text-danger">
+            {errorMessage(defaults.error)}
+          </span>
+        ) : (
+          <Skeleton className="h-5 w-40" />
+        )}
+      </div>
+      <Button variant="secondary" size="sm" disabled={!d} onClick={() => setEditing(true)}>
+        Change
+      </Button>
+      {editing && d && <DefaultQuotaDialog domainId={domainId} orgId={orgId} domainName={domainName} defaults={d} onClose={() => setEditing(false)} />}
+    </div>
+  )
+}
+
+function DefaultQuotaDialog({ domainId, orgId, domainName, defaults, onClose }: { domainId: string; orgId: string; domainName: string; defaults: QuotaDefault; onClose: () => void }) {
+  const qc = useQueryClient()
+  const organization = useQuery(organizationDefaultsQuery(orgId)).data
+  const saved = megabytes(defaults.quotaBytes)
+  const [source, setSource] = useState(defaults.quotaBytes === null ? "inherit" : "custom")
+  const [value, setValue] = useState(saved)
+  const [error, setError] = useState("")
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<QuotaDefault>(`/domains/${domainId}/defaults`, {
+        method: "PUT",
+        body: { quotaBytes: source === "inherit" ? null : value === saved ? defaults.quotaBytes : Number(value) * MB },
+      }),
+    onSuccess: (d) => {
+      qc.setQueryData(domainDefaultsQuery(domainId).queryKey, d)
+      toast.success(`Default quota for ${domainName} saved`)
+      onClose()
+    },
+  })
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title={`Default quota for ${domainName}`}
+      description="The quota a new mailbox on this domain gets when it is created without one. Existing mailboxes keep the quota they have."
+      submitLabel="Save default"
+      pending={save.isPending}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (source === "custom" && !/^\d+$/.test(value)) return setError("Enter a whole number of megabytes, or 0 for no quota.")
+        save.mutate()
+      }}
+    >
+      <fieldset className="flex flex-col items-start gap-2">
+        <legend className="mb-2 text-label text-fg-secondary">New mailboxes get</legend>
+        <SegmentedControl label="New mailboxes get" options={quotaSources} value={source} onChange={setSource} />
+      </fieldset>
+      {source === "inherit" ? (
+        <p className="text-sm text-fg-tertiary">
+          {!organization
+            ? "The organization's default quota."
+            : organization.effectiveQuotaBytes
+              ? `The organization's default quota, ${formatBytes(organization.effectiveQuotaBytes)}.`
+              : "No quota, because the organization has no default quota."}
+        </p>
+      ) : (
+        <Field id="domain-quota" label="Quota in MB" hint="Enter 0 for no quota on this domain, whatever the organization's default is." error={error}>
+          <Input
+            id="domain-quota"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={9}
+            value={value}
+            aria-invalid={!!error}
+            onChange={(e) => {
+              setValue(e.target.value.trim())
+              setError("")
+            }}
+          />
+        </Field>
+      )}
     </FormDialog>
   )
 }

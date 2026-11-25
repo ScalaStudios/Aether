@@ -6,6 +6,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { OrganizationLimits } from "@/components/admin/organization-limits"
 import { Field } from "@/components/field"
 import { SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
@@ -34,14 +35,17 @@ function toBytes(value: string, unit: number) {
 export function LimitsTab({ orgId }: { orgId: string }) {
   const limits = useQuery({ queryKey: ["transfer-limits", orgId], queryFn: () => api<TransferLimits>(`/organizations/${orgId}/transfer-limits`) })
   return (
-    <QueryView query={limits} skeleton={<RowsSkeleton rows={4} />}>
-      {(data) => (
-        <div className="flex flex-col gap-6">
-          <LimitsForm orgId={orgId} limits={data} />
-          <StoredFiles orgId={orgId} />
-        </div>
-      )}
-    </QueryView>
+    <div className="flex flex-col gap-6">
+      <OrganizationLimits orgId={orgId} />
+      <QueryView query={limits} skeleton={<RowsSkeleton rows={4} />}>
+        {(data) => (
+          <div className="flex flex-col gap-6">
+            <LimitsForm orgId={orgId} limits={data} />
+            <StoredFiles orgId={orgId} />
+          </div>
+        )}
+      </QueryView>
+    </div>
   )
 }
 

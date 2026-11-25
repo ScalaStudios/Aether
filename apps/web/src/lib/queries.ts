@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 
 import { api } from "@/lib/api"
-import type { AlertList, AlertRule, Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Label, Mailbox, Member, Organization, PersonalAliasPolicy, SavedSearch, OrgRole, SignatureSettings } from "@/lib/types"
+import type { AlertList, AlertRule, Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Label, Mailbox, Member, Organization, PersonalAliasPolicy, SavedSearch, OrgRole, OrganizationLimits, QuotaDefault, SignatureSettings } from "@/lib/types"
 
 export const myMailboxesQuery = queryOptions({
   queryKey: ["my-mailboxes"],
@@ -13,6 +13,18 @@ export const organizationsQuery = queryOptions({
   queryFn: () => api<Organization[]>("/organizations"),
 })
 
+export const limitsQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["limits", orgId],
+    queryFn: () => api<OrganizationLimits>(`/organizations/${orgId}/limits`),
+  })
+
+export const organizationDefaultsQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["defaults", orgId],
+    queryFn: () => api<QuotaDefault>(`/organizations/${orgId}/defaults`),
+  })
+
 export const domainsQuery = (orgId: string) =>
   queryOptions({
     queryKey: ["domains", orgId],
@@ -23,6 +35,12 @@ export const mailboxesQuery = (orgId: string) =>
   queryOptions({
     queryKey: ["mailboxes", orgId],
     queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`),
+  })
+
+export const domainDefaultsQuery = (domainId: string) =>
+  queryOptions({
+    queryKey: ["domain-defaults", domainId],
+    queryFn: () => api<QuotaDefault>(`/domains/${domainId}/defaults`),
   })
 
 export const membersQuery = (orgId: string) =>

@@ -402,7 +402,11 @@ func (s *Server) createAliasRecord(ctx context.Context, a *alias) (*fieldError, 
 	if exists {
 		return &fieldError{http.StatusConflict, "address_taken", a.Address + " is already a mailbox."}, nil
 	}
-	err := s.saveAlias(ctx, a, true)
+	err := s.saveAlias(ctx, a, true, false)
+	var le *limitError
+	if errors.As(err, &le) {
+		return &fieldError{http.StatusConflict, le.code, le.message}, nil
+	}
 	if isUniqueViolation(err) {
 		return &fieldError{http.StatusConflict, "address_taken", a.Address + " is already an alias."}, nil
 	}
@@ -412,12 +416,17 @@ func (s *Server) createAliasRecord(ctx context.Context, a *alias) (*fieldError, 
 	return nil, nil
 }
 
-func (s *Server) saveAlias(ctx context.Context, a *alias, create bool) error {
+func (s *Server) saveAlias(ctx context.Context, a *alias, create, kindChanged bool) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if create || kindChanged {
+		if err := s.checkAliasLimit(ctx, tx, a.OrgID, a.Kind); err != nil {
+			return err
+		}
+	}
 	if create {
 		err = tx.QueryRow(ctx, `INSERT INTO aliases (org_id, domain_id, local_part, address, destinations, active, kind, name, accept_from, allowed_senders, send_as, member_domains, moderated, moderation_exempt, hidden_from_directory, sent_mailbox_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, nullif($16, '')::uuid) RETURNING id`,
@@ -561,7 +570,10 @@ func (s *Server) updateAlias(w http.ResponseWriter, r *http.Request, p *principa
 	if !s.applyAliasInput(w, r, a, &in) {
 		return
 	}
-	if err := s.saveAlias(r.Context(), a, false); err != nil {
+	if err := s.saveAlias(r.Context(), a, false, before.Kind != a.Kind); err != nil {
+		if writeLimitError(w, err) {
+			return
+		}
 		s.internalError(w, r, err)
 		return
 	}

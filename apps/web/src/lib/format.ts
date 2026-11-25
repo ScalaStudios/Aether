@@ -5,6 +5,12 @@ export function formatAddress(a: Address) {
   return a.name ? `${a.name} <${a.address}>` : a.address
 }
 
+export const MB = 1024 * 1024
+
+export function megabytes(bytes: number | null) {
+  return bytes === null ? "" : String(Math.round(bytes / MB))
+}
+
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} ${tActive("common.units.B")}`
   const units = ["KB", "MB", "GB", "TB"] as const

@@ -113,6 +113,11 @@ var apiKeyRoutes = map[string]string{
 	"GET /api/v1/organizations/{orgId}/audit/export":                "audit",
 	"GET /api/v1/organizations/{orgId}/audit/retention":             "audit",
 	"PUT /api/v1/organizations/{orgId}/audit/retention":             "audit",
+	"GET /api/v1/organizations/{orgId}/limits":                      "",
+	"GET /api/v1/organizations/{orgId}/defaults":                    "mailboxes",
+	"PUT /api/v1/organizations/{orgId}/defaults":                    "mailboxes",
+	"GET /api/v1/domains/{domainId}/defaults":                       "domains",
+	"PUT /api/v1/domains/{domainId}/defaults":                       "domains",
 }
 
 type apiKeyIdentity struct {

@@ -22,7 +22,7 @@ type bulkOperation struct {
 	LocalPart      string   `json:"localPart"`
 	DisplayName    string   `json:"displayName"`
 	Kind           string   `json:"kind"`
-	QuotaBytes     int64    `json:"quotaBytes"`
+	QuotaBytes     *int64   `json:"quotaBytes"`
 	Password       string   `json:"password"`
 	Active         *bool    `json:"active"`
 	Name           string   `json:"name"`

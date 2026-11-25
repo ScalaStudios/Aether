@@ -96,6 +96,27 @@ export interface Organization {
   mailboxProtocols: Protocol[]
 }
 
+export interface OrganizationLimits {
+  maxMailboxes: number
+  maxAliases: number
+  maxLists: number
+  maxDomains: number
+  maxStorageBytes: number
+  usage: {
+    mailboxes: number
+    aliases: number
+    lists: number
+    domains: number
+    storageBytes: number
+    mailboxesWithoutQuota: number
+  }
+}
+
+export interface QuotaDefault {
+  quotaBytes: number | null
+  effectiveQuotaBytes: number
+}
+
 export interface Domain {
   id: string
   orgId: string

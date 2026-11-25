@@ -263,6 +263,7 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 	email := strings.ToLower(strings.TrimSpace(c.Email))
 	verified := c.EmailVerified != nil && *c.EmailVerified
 	var userID, status string
+	var created bool
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT u.id, u.status FROM user_identities i JOIN users u ON u.id = i.user_id WHERE i.provider_id = $1 AND i.subject = $2`, p.ID, c.Subject).Scan(&userID, &status)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -274,7 +275,7 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 				if !p.AutoProvision || strings.ContainsAny(email, "*?") {
 					return nil
 				}
-				status = "active"
+				status, created = "active", true
 				err = tx.QueryRow(ctx, `INSERT INTO users (email, display_name) VALUES ($1, $2) RETURNING id`, email, firstNonEmpty(c.Name, c.PreferredUsername)).Scan(&userID)
 			}
 			if err != nil {
@@ -306,12 +307,20 @@ func (s *Server) resolveOIDCUser(ctx context.Context, p *providerRow, c *idClaim
 			return err
 		}
 		if verified && email != "" {
-			return s.linkMailboxForIdentity(ctx, tx, userID, email, p.AutoProvision)
+			err := s.linkMailboxForIdentity(ctx, tx, userID, email, p.AutoProvision)
+			if created {
+				return err
+			}
+			return ignoreLimit(err)
 		}
 		return nil
 	})
 	if errors.Is(err, errSharedAddress) {
 		return "", "shared_mailbox", nil
+	}
+	var limit *limitError
+	if errors.As(err, &limit) {
+		return "", "limit_reached", nil
 	}
 	if err != nil {
 		return "", "", err
@@ -505,8 +514,12 @@ func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, 
 		if err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, owner_user_id, protocols)
-			SELECT $1, $2, $3, $4, $5, (SELECT mailbox_protocols FROM organizations WHERE id = $1) WHERE NOT EXISTS (SELECT 1 FROM aliases WHERE address = $4 AND personal_owner_id IS NOT NULL)`, orgID, domainID, local, email, userID)
+		quota, err := s.reserveMailbox(ctx, tx, orgID, domainID, nil)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, owner_user_id, protocols, quota_bytes)
+			SELECT $1, $2, $3, $4, $5, (SELECT mailbox_protocols FROM organizations WHERE id = $1), $6 WHERE NOT EXISTS (SELECT 1 FROM aliases WHERE address = $4 AND personal_owner_id IS NOT NULL)`, orgID, domainID, local, email, userID, quota)
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}

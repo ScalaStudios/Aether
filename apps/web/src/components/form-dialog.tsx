@@ -2,6 +2,7 @@
 
 import { cn } from "cn"
 
+import { Notice } from "@/components/notice"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useI18n } from "@/lib/i18n"
@@ -14,6 +15,7 @@ export function FormDialog({
   submitLabel,
   cancelLabel,
   pending,
+  error,
   onSubmit,
   wide,
   footer,
@@ -27,6 +29,7 @@ export function FormDialog({
   submitLabel: string
   cancelLabel?: string
   pending?: boolean
+  error?: string
   onSubmit: React.FormEventHandler<HTMLFormElement>
   wide?: boolean
   footer?: React.ReactNode
@@ -43,7 +46,10 @@ export function FormDialog({
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-6">
-          <div className="flex flex-col gap-4">{children}</div>
+          <div className="flex flex-col gap-4">
+            {children}
+            {error && <Notice tone="danger">{error}</Notice>}
+          </div>
           <DialogFooter>
             {leading && <div className="flex flex-col sm:mr-auto sm:flex-row">{leading}</div>}
             {footer ?? (
