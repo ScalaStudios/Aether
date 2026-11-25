@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -148,7 +149,7 @@ func TestSecurityNotifications(t *testing.T) {
 		{
 			"name": "Internal copy", "enabled": true, "match": "all",
 			"conditions": []map[string]string{{"field": "subject", "contains": "internal"}},
-			"actions":    map[string]any{"forward": bob, "keep": true},
+			"actions":    map[string]any{"forwardTo": []string{bob}, "keepCopy": true},
 		},
 	}, nil, 200)
 	if n := findSecurityNotification(w.alice, "external_forwarding_rule"); n != nil {
@@ -159,12 +160,12 @@ func TestSecurityNotifications(t *testing.T) {
 		{
 			"name": "Internal copy", "enabled": true, "match": "all",
 			"conditions": []map[string]string{{"field": "subject", "contains": "internal"}},
-			"actions":    map[string]any{"forward": bob, "keep": true},
+			"actions":    map[string]any{"forwardTo": []string{bob}, "keepCopy": true},
 		},
 		{
 			"name": "Exfil", "enabled": true, "match": "all",
 			"conditions": []map[string]string{{"field": "subject", "contains": "invoice"}},
-			"actions":    map[string]any{"forward": "outsider@external.example", "keep": true},
+			"actions":    map[string]any{"forwardTo": []string{"outsider@external.example"}, "keepCopy": true},
 		},
 	}, nil, 200)
 	var fwdNotif *securityNotificationItem
@@ -182,12 +183,12 @@ func TestSecurityNotifications(t *testing.T) {
 	var rulesAfter []struct {
 		Name    string `json:"name"`
 		Actions struct {
-			Forward string `json:"forward"`
+			ForwardTo []string `json:"forwardTo"`
 		} `json:"actions"`
 	}
 	w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/rules", nil, &rulesAfter, 200)
 	for _, r := range rulesAfter {
-		if r.Actions.Forward == "outsider@external.example" {
+		if slices.Contains(r.Actions.ForwardTo, "outsider@external.example") {
 			t.Fatalf("external forwarding rule still present after undo: %+v", rulesAfter)
 		}
 	}
