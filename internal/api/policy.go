@@ -46,9 +46,15 @@ func (s *Server) policyConn(conn net.Conn) {
 				s.log.Warn("sender list check failed; accepting", "err", err)
 				action = "DUNNO"
 			}
-		} else if action, err = s.listPolicy(ctx, attrs["recipient"], attrs["sender"], attrs["sasl_username"]); err != nil {
-			s.log.Warn("list policy check failed", "err", err)
-			action = "DEFER_IF_PERMIT 4.3.0 Try again later"
+		} else {
+			check := s.listPolicy
+			if attrs["sasl_username"] == "aether-sieve-relay" {
+				check = s.forwardingPolicyCheck
+			}
+			if action, err = check(ctx, attrs["recipient"], attrs["sender"], attrs["sasl_username"]); err != nil {
+				s.log.Warn("policy check failed", "err", err)
+				action = "DEFER_IF_PERMIT 4.3.0 Try again later"
+			}
 		}
 		cancel()
 		if _, err := conn.Write([]byte("action=" + action + "\n\n")); err != nil {
@@ -97,4 +103,25 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 		return "DUNNO", nil
 	}
 	return "REJECT 5.7.1 " + local + "@" + domain + " does not accept mail from this sender", nil
+}
+
+func (s *Server) forwardingPolicyCheck(ctx context.Context, recipient, sender, _ string) (string, error) {
+	local, domain, ok := strings.Cut(strings.ToLower(sender), "@")
+	if !ok {
+		return "DUNNO", nil
+	}
+	base, _, _ := strings.Cut(local, "+")
+	var orgID string
+	err := s.db.QueryRow(ctx, `SELECT org_id FROM mailboxes WHERE address IN ($1, $2) ORDER BY address = $1 DESC LIMIT 1`, local+"@"+domain, base+"@"+domain).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "DUNNO", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	policy, err := s.forwardPolicy(ctx, orgID)
+	if err != nil || policy.Allows(recipient) {
+		return "DUNNO", err
+	}
+	return "REJECT 5.7.1 Your organization does not allow automatic forwarding to " + recipient, nil
 }

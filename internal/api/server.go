@@ -108,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/held-messages/{heldId}/approve", s.approveHeld)
 	authed("POST /api/v1/held-messages/{heldId}/reject", s.rejectHeld)
 	authed("GET /api/v1/me/held-messages", s.myHeld)
+	authed("GET /api/v1/organizations/{orgId}/forwarding", s.getForwarding)
+	authed("PUT /api/v1/organizations/{orgId}/forwarding", s.saveForwarding)
 	authed("GET /api/v1/organizations/{orgId}/members", s.listMembers)
 	authed("POST /api/v1/organizations/{orgId}/members", s.setMember)
 	authed("DELETE /api/v1/organizations/{orgId}/members/{userId}", s.removeMember)

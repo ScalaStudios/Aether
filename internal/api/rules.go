@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -28,26 +29,32 @@ func (s *Server) loadSieveSettings(ctx context.Context, mailboxID string) ([]mai
 	return rules, reply, json.Unmarshal(rawReply, &reply)
 }
 
-func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, rules []mailpkg.Rule, reply mailpkg.AutoReply, response any) {
+func (s *Server) installSieve(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, rules []mailpkg.Rule, reply mailpkg.AutoReply, response any) bool {
 	rawRules, _ := json.Marshal(nonNil(rules))
 	rawReply, _ := json.Marshal(reply)
-	err := pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+	forward, err := s.forwardPolicy(r.Context(), m.OrgID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return false
+	}
+	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
 		_, err := tx.Exec(r.Context(), `
 			INSERT INTO mailbox_rules (mailbox_id, rules, auto_reply) VALUES ($1, $2, $3)
 			ON CONFLICT (mailbox_id) DO UPDATE SET rules = EXCLUDED.rules, auto_reply = EXCLUDED.auto_reply, updated_at = now()`, m.ID, rawRules, rawReply)
 		if err != nil {
 			return err
 		}
-		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address))
+		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address, forward))
 	})
 	if err != nil {
 		mailBackendErrs.Inc()
 		s.log.Error("installing mail rules failed", "mailbox", m.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "rules_not_saved", "The settings could not be installed on the mail server. Nothing was changed; try again.")
-		return
+		return false
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.rules.update", "mailbox", m.ID, map[string]any{"rules": len(rules), "autoReply": reply.Enabled})
 	writeJSON(w, http.StatusOK, response)
+	return true
 }
 
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -85,6 +92,11 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 	for _, f := range folders {
 		known[f.Name] = true
 	}
+	forward, err := s.forwardPolicy(r.Context(), m.OrgID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	for _, rule := range rules {
 		if err := rule.Validate(); err != nil {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_rule", rule.Name+": "+err.Error())
@@ -94,13 +106,44 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 			writeError(w, http.StatusUnprocessableEntity, "invalid_rule", rule.Name+": the folder "+rule.Actions.MoveTo+" does not exist.")
 			return
 		}
+		for _, addr := range rule.Actions.ForwardTo {
+			if !forward.Allows(addr) {
+				writeError(w, http.StatusUnprocessableEntity, "forwarding_blocked", rule.Name+": your organization does not allow forwarding to "+addr+".")
+				return
+			}
+		}
 	}
-	_, reply, err := s.loadSieveSettings(r.Context(), m.ID)
+	before, reply, err := s.loadSieveSettings(r.Context(), m.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.installSieve(w, r, p, m, rules, reply, nonNil(rules))
+	if !s.installSieve(w, r, p, m, rules, reply, nonNil(rules)) {
+		return
+	}
+	old, next := forwardDestinations(before), forwardDestinations(rules)
+	for addr, rule := range next {
+		if _, ok := old[addr]; !ok {
+			s.audit(r.Context(), r, p, &m.OrgID, "rule.forwarding.add", "mailbox", m.ID, map[string]any{"address": addr, "rule": rule, "external": forward.External(addr)})
+		}
+	}
+	for addr, rule := range old {
+		if _, ok := next[addr]; !ok {
+			s.audit(r.Context(), r, p, &m.OrgID, "rule.forwarding.remove", "mailbox", m.ID, map[string]any{"address": addr, "rule": rule, "external": forward.External(addr)})
+		}
+	}
+}
+
+func forwardDestinations(rules []mailpkg.Rule) map[string]string {
+	out := map[string]string{}
+	for _, rule := range rules {
+		for _, addr := range rule.Actions.ForwardTo {
+			if _, ok := out[strings.ToLower(addr)]; !ok {
+				out[strings.ToLower(addr)] = rule.Name
+			}
+		}
+	}
+	return out
 }
 
 func (s *Server) autoReplyMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {

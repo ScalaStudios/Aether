@@ -12,6 +12,7 @@ import { AliasesTab } from "@/components/admin/aliases-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
 import { BrandingTab } from "@/components/admin/branding-tab"
 import { DomainsTab } from "@/components/admin/domains-tab"
+import { ForwardingTab } from "@/components/admin/forwarding-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
@@ -48,6 +49,7 @@ const orgTabs = [
   { value: "aliases", label: "Aliases", Component: AliasesTab },
   { value: "senders", label: "Senders", Component: SendersTab },
   { value: "members", label: "Members", Component: MembersTab },
+  { value: "forwarding", label: "Forwarding", Component: ForwardingTab },
   { value: "branding", label: "Branding", Component: BrandingTab },
   { value: "signatures", label: "Signatures", Component: SignaturesTab },
   { value: "quarantine", label: "Quarantine", Component: QuarantineTab },

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/mail"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -29,6 +30,30 @@ type RuleActions struct {
 	ForwardTo []string `json:"forwardTo,omitempty"`
 	KeepCopy  bool     `json:"keepCopy,omitempty"`
 	Stop      bool     `json:"stop,omitempty"`
+}
+
+type ForwardPolicy struct {
+	Mode       string   `json:"mode"`
+	Domains    []string `json:"domains"`
+	OrgDomains []string `json:"-"`
+}
+
+func (p ForwardPolicy) External(address string) bool {
+	return !slices.Contains(p.OrgDomains, addressDomain(address))
+}
+
+func (p ForwardPolicy) Allows(address string) bool {
+	switch {
+	case p.Mode == "" || p.Mode == "allowed" || !p.External(address):
+		return true
+	case p.Mode == "domains":
+		return slices.Contains(p.Domains, addressDomain(address))
+	}
+	return false
+}
+
+func addressDomain(address string) string {
+	return strings.ToLower(address[strings.LastIndex(address, "@")+1:])
 }
 
 type AutoReply struct {
@@ -150,7 +175,7 @@ func (r Rule) Validate() error {
 	return nil
 }
 
-func CompileSieve(rules []Rule, reply AutoReply, address string) string {
+func CompileSieve(rules []Rule, reply AutoReply, address string, forward ForwardPolicy) string {
 	var b strings.Builder
 	b.WriteString(`require ["fileinto", "imap4flags", "mailbox", "copy", "vacation", "date", "relational", "body"];` + "\n")
 	if reply.Enabled {
@@ -192,6 +217,9 @@ func CompileSieve(rules []Rule, reply AutoReply, address string) string {
 			b.WriteString("  addflag \"\\\\Flagged\";\n")
 		}
 		for _, addr := range r.Actions.ForwardTo {
+			if !forward.Allows(addr) {
+				continue
+			}
 			if r.Actions.KeepCopy || r.Actions.MoveTo != "" {
 				fmt.Fprintf(&b, "  redirect :copy %s;\n", sieveString(addr))
 			} else {

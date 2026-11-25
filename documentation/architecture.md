@@ -94,6 +94,18 @@ The filter learns from people's actions in every mail app through Dovecot's `ima
 
 Both internal endpoints answer only callers on private addresses, and the reverse proxy does not route `/internal/`.
 
+### Forwarding to outside addresses
+
+Each organization chooses whether mail rules may forward outside it, under **Administration → Forwarding** or with `GET` and `PUT /api/v1/organizations/{orgId}/forwarding` (`{"mode": "allowed" | "domains" | "blocked", "domains": [...]}`). Addresses on the organization's own domains are always allowed. In `domains` mode only exact matches of the listed domains are allowed; a subdomain needs its own entry. The default is `allowed`.
+
+The policy is enforced in three places:
+
+- **Saving rules.** The API refuses a rule that forwards to a blocked address with `422 forwarding_blocked`.
+- **Sieve.** Blocked destinations are left out of the compiled script. Changing the policy recompiles the script of every active mailbox with a rule that forwards outside the organization. A rule that only forwarded to blocked addresses then keeps the message in the mailbox.
+- **Postfix.** The sieve relay port asks the API's policy service (port 10040) about each recipient. Mail whose envelope sender is a hosted mailbox and whose recipient that mailbox's organization does not allow is rejected with `5.7.1`, so a stale script cannot forward either. Mail with an empty envelope sender, such as automatic replies, is not checked.
+
+Every saved rule change records `rule.forwarding.add` or `rule.forwarding.remove` per destination in the audit log and webhooks, with `address`, `rule` and `external`. Policy changes record `forwarding.policy.update`. The Forwarding tab lists every rule that forwards outside the organization, and whether the policy lets it run.
+
 ## Calendar and contacts
 
 Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events and cards are stored as iCalendar and vCard text in `dav_objects`, together with a few extracted columns: UID, ETag, summary, email addresses, start and end time, and whether the event repeats. Those columns serve the web app's JSON API and recipient suggestions without parsing every object. Sharing is a row in `calendar_shares` that grants a user or every member of an organization read or write access to one collection. A shared calendar appears in the other person's calendar home as `shared-<collection id>`, and writes to a read-only share are refused with 403.

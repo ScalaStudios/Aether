@@ -45,6 +45,8 @@ var apiKeyRoutes = map[string]string{
 	"PUT /api/v1/mailboxes/{mailboxId}/signatures":            "mailboxes",
 	"POST /api/v1/mailboxes/{mailboxId}/calendar/import":      "mailboxes",
 	"POST /api/v1/mailboxes/{mailboxId}/contacts/import":      "mailboxes",
+	"GET /api/v1/organizations/{orgId}/forwarding":            "mailboxes",
+	"PUT /api/v1/organizations/{orgId}/forwarding":            "mailboxes",
 	"GET /api/v1/organizations/{orgId}/aliases":               "aliases",
 	"POST /api/v1/organizations/{orgId}/aliases":              "aliases",
 	"GET /api/v1/aliases/{aliasId}":                           "aliases",

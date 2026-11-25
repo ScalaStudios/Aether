@@ -184,10 +184,14 @@ func (s *Server) renameRuleFolders(ctx context.Context, m *ownedMailbox, from, t
 	if err != nil {
 		return err
 	}
+	forward, err := s.forwardPolicy(ctx, m.OrgID)
+	if err != nil {
+		return err
+	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE mailbox_rules SET rules = $2, updated_at = now() WHERE mailbox_id = $1`, m.ID, raw); err != nil {
 			return err
 		}
-		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address))
+		return s.mail.PutSieve(m.Address, mailpkg.CompileSieve(rules, reply, m.Address, forward))
 	})
 }

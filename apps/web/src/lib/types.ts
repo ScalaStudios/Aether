@@ -136,6 +136,14 @@ export interface Member {
   status: string
 }
 
+export type ForwardingMode = "allowed" | "domains" | "blocked"
+
+export interface Forwarding {
+  mode: ForwardingMode
+  domains: string[]
+  forwarders: { mailboxId: string; address: string; rule: string; enabled: boolean; to: string; allowed: boolean }[]
+}
+
 export interface AuditEvent {
   id: number
   createdAt: string
