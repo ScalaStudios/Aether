@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -49,6 +50,7 @@ type Config struct {
 	CustomCSS             bool
 	AuthBlockThreshold    int
 	AuthBlockAllowNets    []netip.Prefix
+	QuotaCheckInterval    time.Duration
 }
 
 func Load() (*Config, error) {
@@ -100,6 +102,11 @@ func Load() (*Config, error) {
 	if c.DovecotAPIKey == "" {
 		errs = append(errs, errors.New("AETHER_DOVECOT_API_KEY is required"))
 	}
+	interval, err := time.ParseDuration(env("AETHER_QUOTA_CHECK_INTERVAL", "5m"))
+	if err != nil || interval < 10*time.Second {
+		errs = append(errs, errors.New("AETHER_QUOTA_CHECK_INTERVAL must be a duration of at least 10s, for example 5m"))
+	}
+	c.QuotaCheckInterval = interval
 	if c.MTASTSMode != "testing" && c.MTASTSMode != "enforce" {
 		errs = append(errs, errors.New("AETHER_MTA_STS_MODE must be testing or enforce"))
 	}

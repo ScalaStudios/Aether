@@ -48,14 +48,6 @@ func validProtocols(list []string) bool {
 	return list != nil
 }
 
-func collectMailboxes(rows pgx.Rows, err error) ([]mailbox, error) {
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[mailbox])
-	return nonNil(out), err
-}
-
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -71,19 +63,28 @@ func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *princi
 	if !ok {
 		return
 	}
-	out, err := collectMailboxes(s.db.Query(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes WHERE org_id = $1 ORDER BY address`, orgID))
+	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, used_bytes FROM mailboxes WHERE org_id = $1 ORDER BY address`, orgID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[struct {
+		mailbox
+		UsedBytes int64 `json:"usedBytes"`
+	}])
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(out))
 }
 
 func (s *Server) myMailboxes(w http.ResponseWriter, r *http.Request, p *principal) {
 	rows, err := s.db.Query(r.Context(), `SELECT `+mailboxColumns+`, `+mailboxAccessLevel("$1")+`, `+mailboxSendAs("$1")+`, `+mailboxSendOnBehalf("$1")+`,
 		(SELECT coalesce(jsonb_agg(jsonb_build_object('address', i.address, 'name', i.display_name) ORDER BY (i.address = m.address) DESC, i.address), '[]')
 			FROM (`+sendableAddresses("$1")+`) i
-			WHERE EXISTS (SELECT 1 FROM mail_users mu WHERE mu.id = m.id) AND (`+mailboxSendAs("$1")+` OR `+mailboxSendOnBehalf("$1")+`))
+			WHERE EXISTS (SELECT 1 FROM mail_users mu WHERE mu.id = m.id) AND (`+mailboxSendAs("$1")+` OR `+mailboxSendOnBehalf("$1")+`)),
+		(SELECT o.quota_warning_percents FROM organizations o WHERE o.id = m.org_id)
 		FROM mailboxes m WHERE m.active AND `+mailboxAccess("$1")+` ORDER BY coalesce(m.owner_user_id = $1, false) DESC, address`, p.User.ID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -95,6 +96,7 @@ func (s *Server) myMailboxes(w http.ResponseWriter, r *http.Request, p *principa
 		SendAs        bool              `json:"sendAs"`
 		SendOnBehalf  bool              `json:"sendOnBehalf"`
 		FromAddresses []mailpkg.Address `json:"fromAddresses"`
+		WarnAt        []int16           `json:"quotaWarningPercents"`
 	}])
 	if err != nil {
 		s.internalError(w, r, err)

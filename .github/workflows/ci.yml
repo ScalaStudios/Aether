@@ -48,6 +48,7 @@ jobs:
     env:
       AETHER_TEST_ADMIN_EMAIL: admin@aether.test
       AETHER_TEST_ADMIN_PASSWORD: ci-admin-password-123
+      AETHER_QUOTA_CHECK_INTERVAL: 10s
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/setup.sh dev

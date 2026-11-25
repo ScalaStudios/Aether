@@ -48,6 +48,16 @@ export function folderTree(folders: Folder[]) {
   return out
 }
 
+export type StorageTier = "ok" | "warning" | "critical" | "full"
+
+export function storageTier(used: number, quota: number, levels: number[] = []): StorageTier {
+  const percent = quota ? (used / quota) * 100 : 0
+  if (percent >= 100) return "full"
+  if (levels.length > 1 && percent >= Math.max(...levels)) return "critical"
+  if (percent >= Math.min(...levels)) return "warning"
+  return "ok"
+}
+
 export type MessageSort = "date" | "from" | "to" | "subject" | "size"
 export type QuickFilter = "unread" | "flagged" | "hasAttachments"
 

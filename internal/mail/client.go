@@ -93,6 +93,30 @@ func (c *Client) doveadm(ctx context.Context, client *http.Client, cmd string, p
 	return kind, out[0][1], resp.StatusCode, nil
 }
 
+func (c *Client) doveadmBatch(ctx context.Context, commands []any) (int, [][]json.RawMessage, error) {
+	body, err := json.Marshal(commands)
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.doveadmURL+"/doveadm/v1", bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "X-Dovecot-API "+base64.StdEncoding.EncodeToString([]byte(c.doveadmKey)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	var out [][]json.RawMessage
+	err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+	if err != nil || len(out) != len(commands) || slices.ContainsFunc(out, func(o []json.RawMessage) bool { return len(o) < 2 }) {
+		return resp.StatusCode, nil, fmt.Errorf("unexpected response with HTTP status %d", resp.StatusCode)
+	}
+	return resp.StatusCode, out, nil
+}
+
 func (c *Client) doveadmUnlessUnknownUser(ctx context.Context, client *http.Client, cmd string, params any) error {
 	kind, payload, status, err := c.doveadm(ctx, client, cmd, params, 64<<10)
 	if err != nil {
@@ -154,6 +178,7 @@ type Folder struct {
 	Total      uint32 `json:"total"`
 	Unread     uint32 `json:"unread"`
 	Subscribed bool   `json:"subscribed"`
+	Size       int64  `json:"size"`
 }
 
 var specialUses = map[imap.MailboxAttr]string{
@@ -179,7 +204,7 @@ func specialUse(l *imap.ListData) string {
 func (c *Client) Folders(address string) ([]Folder, error) {
 	var out []Folder
 	err := c.with(address, func(ic *imapclient.Client) error {
-		list, err := ic.List("", "*", &imap.ListOptions{ReturnStatus: &imap.StatusOptions{NumMessages: true, NumUnseen: true}, ReturnSpecialUse: true, ReturnSubscribed: true}).Collect()
+		list, err := ic.List("", "*", &imap.ListOptions{ReturnStatus: &imap.StatusOptions{NumMessages: true, NumUnseen: true, Size: true}, ReturnSpecialUse: true, ReturnSubscribed: true}).Collect()
 		if err != nil {
 			return err
 		}
@@ -193,6 +218,9 @@ func (c *Client) Folders(address string) ([]Folder, error) {
 			}
 			if l.Status != nil && l.Status.NumUnseen != nil {
 				f.Unread = *l.Status.NumUnseen
+			}
+			if l.Status != nil && l.Status.Size != nil {
+				f.Size = *l.Status.Size
 			}
 			out = append(out, f)
 		}

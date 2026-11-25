@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Eye, EyeOff, Inbox, ListFilter, Plug, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Ellipsis, Eye, EyeOff, HardDrive, Inbox, ListFilter, Plug, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -30,10 +30,12 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes, plural } from "@/lib/format"
+import { storageTier } from "@/lib/mail"
 import { mailboxesQuery, organizationsQuery } from "@/lib/queries"
-import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization, Protocol } from "@/lib/types"
+import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization, Protocol, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -333,9 +335,114 @@ function ProtocolsDialog({
   )
 }
 
+const quotaSchema = z.object({ quotaMb: z.string().trim().regex(/^\d*$/, "Enter a whole number of megabytes.") })
+
+function QuotaDialog({ mailbox, onClose }: { mailbox: Mailbox; onClose: () => void }) {
+  const qc = useQueryClient()
+  const form = useForm({ resolver: zodResolver(quotaSchema), defaultValues: { quotaMb: mailbox.quotaBytes ? String(Math.round(mailbox.quotaBytes / MB)) : "" } })
+  const save = useMutation({
+    mutationFn: ({ quotaMb }: z.infer<typeof quotaSchema>) => api<Mailbox>(`/mailboxes/${mailbox.id}`, { method: "PATCH", body: { quotaBytes: Number(quotaMb) * MB } }),
+    onSuccess: (m) => {
+      toast.success(m.quotaBytes ? `${m.address} can now store ${formatBytes(m.quotaBytes)}` : `${m.address} has no storage limit`)
+      qc.invalidateQueries({ queryKey: ["mailboxes", m.orgId] })
+      qc.invalidateQueries({ queryKey: ["my-mailboxes"] })
+      onClose()
+    },
+  })
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title="Change quota"
+      description={mailbox.address}
+      submitLabel="Save quota"
+      pending={save.isPending}
+      onSubmit={form.handleSubmit((v) => save.mutate(v))}
+    >
+      <Field id="quota-mb" label="Quota in MB" hint={`Uses ${formatBytes(mailbox.usedBytes ?? 0)} now. Leave empty for no limit.`} error={form.formState.errors.quotaMb?.message}>
+        <Input id="quota-mb" inputMode="numeric" autoComplete="off" aria-invalid={!!form.formState.errors.quotaMb} {...form.register("quotaMb")} />
+      </Field>
+    </FormDialog>
+  )
+}
+
+const warningLevel = z.string().trim().regex(/^([5-9]\d)?$/, "Enter a whole number from 50 to 99, or leave it empty.")
+
+const warningsSchema = z
+  .object({ first: warningLevel, second: warningLevel, notifyAdmins: z.boolean() })
+  .refine((v) => !v.first || !v.second || Number(v.second) > Number(v.first), { message: "Set the final warning above the first one.", path: ["second"] })
+
+function QuotaWarningsDialog({ orgId, warnings, onClose }: { orgId: string; warnings: QuotaWarnings; onClose: () => void }) {
+  const qc = useQueryClient()
+  const form = useForm({
+    resolver: zodResolver(warningsSchema),
+    defaultValues: { first: String(warnings.percents[0] ?? ""), second: String(warnings.percents[1] ?? ""), notifyAdmins: warnings.notifyAdmins },
+  })
+  const errors = form.formState.errors
+  const save = useMutation({
+    mutationFn: ({ first, second, notifyAdmins }: z.infer<typeof warningsSchema>) =>
+      api<QuotaWarnings>(`/organizations/${orgId}/quota-warnings`, { method: "PUT", body: { percents: [first, second].filter(Boolean).map(Number), notifyAdmins } }),
+    onSuccess: (saved) => {
+      toast.success(saved.percents.length ? `Storage warnings at ${saved.percents.map((p) => `${p}%`).join(" and ")}` : "Storage warnings turned off")
+      qc.invalidateQueries({ queryKey: ["quota-warnings", orgId] })
+      qc.invalidateQueries({ queryKey: ["my-mailboxes"] })
+      onClose()
+    },
+  })
+
+  return (
+    <FormDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title="Storage warnings"
+      description="Aether measures every mailbox every few minutes and emails it once as it passes each level, so people can clean up before mail is returned to senders. Clear both levels to turn warnings off."
+      submitLabel="Save warnings"
+      pending={save.isPending}
+      onSubmit={form.handleSubmit((v) => save.mutate(v))}
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="warn-first" label="First warning, % full" hint="For example 80." error={errors.first?.message}>
+          <Input id="warn-first" inputMode="numeric" autoComplete="off" aria-invalid={!!errors.first} {...form.register("first")} />
+        </Field>
+        <Field id="warn-second" label="Final warning, % full" hint="Optional. For example 95." error={errors.second?.message}>
+          <Input id="warn-second" inputMode="numeric" autoComplete="off" aria-invalid={!!errors.second} {...form.register("second")} />
+        </Field>
+      </div>
+      <SwitchField control={form.control} name="notifyAdmins" id="warn-admins" label="Email administrators too" hint="Owners and administrators of this organization get a copy in their own mailbox." />
+    </FormDialog>
+  )
+}
+
+function MailboxStorage({ mailbox, levels }: { mailbox: Mailbox; levels?: number[] }) {
+  const used = mailbox.usedBytes ?? 0
+  if (!mailbox.quotaBytes) {
+    return (
+      <span className="text-sm whitespace-nowrap tabular-nums">
+        {formatBytes(used)} <span className="text-fg-tertiary">· No limit</span>
+      </span>
+    )
+  }
+  const tier = storageTier(used, mailbox.quotaBytes, levels)
+  return (
+    <div className="flex w-40 flex-col gap-2">
+      <span className="flex justify-between gap-2 text-sm whitespace-nowrap tabular-nums">
+        <span>
+          {formatBytes(used)} <span className="text-fg-tertiary">of {formatBytes(mailbox.quotaBytes)}</span>
+        </span>
+        <span className={tierText[tier]}>{usagePercent(used, mailbox.quotaBytes)}%</span>
+      </span>
+      <UsageBar used={used} quota={mailbox.quotaBytes} tier={tier} />
+    </div>
+  )
+}
+
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
+  const warnings = useQuery({ queryKey: ["quota-warnings", orgId], queryFn: () => api<QuotaWarnings>(`/organizations/${orgId}/quota-warnings`) })
+  const [editingWarnings, setEditingWarnings] = useState(false)
+  const [resizing, setResizing] = useState<Mailbox | null>(null)
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)
@@ -446,6 +553,19 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         description="User mailboxes have an owner account that signs in with the address. Shared mailboxes have members instead."
         actions={
           <>
+            <Button
+              variant="secondary"
+              loading={editingWarnings && warnings.isPending}
+              onClick={() => {
+                if (warnings.isError) {
+                  toast.error(errorMessage(warnings.error))
+                  warnings.refetch()
+                } else setEditingWarnings(true)
+              }}
+            >
+              <BellRing aria-hidden />
+              Storage warnings
+            </Button>
             <Button variant="secondary" disabled={!org.data} onClick={() => setEditingDefaults(true)}>
               <Plug aria-hidden />
               Protocols for new mailboxes
@@ -465,7 +585,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                 <TableHead>Address</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Display name</TableHead>
-                <TableHead>Quota</TableHead>
+                <TableHead>Storage</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-28">
                   <span className="sr-only">Actions</span>
@@ -483,7 +603,9 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                   </TableCell>
                   <TableCell>{m.kind === "shared" ? <StatusBadge tone="neutral">Shared</StatusBadge> : "User"}</TableCell>
                   <TableCell>{m.displayName || "—"}</TableCell>
-                  <TableCell>{m.quotaBytes ? formatBytes(m.quotaBytes) : "No limit"}</TableCell>
+                  <TableCell>
+                    <MailboxStorage mailbox={m} levels={warnings.data?.percents} />
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <Switch
@@ -535,6 +657,10 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                             <DropdownMenuItem onSelect={() => setAuditing(m)}>
                               <ShieldCheck aria-hidden />
                               Access report
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setResizing(m)}>
+                              <HardDrive aria-hidden />
+                              Change quota…
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
                               <CalendarArrowUp aria-hidden />
@@ -617,6 +743,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       </FormDialog>
 
       <DelegatesDialog mailbox={delegating} onOpenChange={(open) => !open && setDelegating(null)} />
+      {resizing && <QuotaDialog mailbox={resizing} onClose={() => setResizing(null)} />}
+      {editingWarnings && warnings.data && <QuotaWarningsDialog orgId={orgId} warnings={warnings.data} onClose={() => setEditingWarnings(false)} />}
 
       <RecoverDialog mailbox={recovering} onOpenChange={(open) => !open && setRecovering(null)} />
 

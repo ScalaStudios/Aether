@@ -26,6 +26,7 @@ import { Security } from "@/components/settings/security"
 import { ActiveSessions } from "@/components/settings/sessions"
 import { PersonalAliases } from "@/components/settings/personal-aliases"
 import { Signatures } from "@/components/settings/signatures"
+import { Storage } from "@/components/settings/storage"
 import { PageHeader, SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView } from "@/components/states"
@@ -89,6 +90,7 @@ export function SettingsView() {
       <ActiveSessions />
       {session && !setup && (
         <>
+          <Storage />
           <Signatures />
           <MailRules />
           <PersonalAliases />

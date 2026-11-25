@@ -226,6 +226,7 @@ The Go API is the only component that writes application data. It keeps organiza
 | `AETHER_RELAYHOST`, `AETHER_RELAY_USER`, `AETHER_RELAY_PASSWORD` | none | An authenticated relay for outgoing mail, for hosts that block outbound port 25 |
 | `AETHER_MTA_STS_MODE` | `testing` | The MTA-STS policy mode. Set it to `enforce` once TLS reports show no failures |
 | `AETHER_CUSTOM_CSS` | `true` | Organizations' custom CSS from **Administration → Branding**. Set it to `false` if a stylesheet breaks the sign-in page |
+| `AETHER_QUOTA_CHECK_INTERVAL` | `5m` | How often Aether measures mailbox sizes and sends storage warnings |
 | `AETHER_BACKUP_REPOSITORY`, `AETHER_BACKUP_PASSWORD` | none | A restic repository on S3-compatible storage for off-site backups, and its encryption password |
 | `COMPOSE_PROFILES` | none | `antivirus` for ClamAV and `monitoring` for Prometheus and Grafana |
 | `COMPOSE_FILE` | `compose.yml` | Add `compose.external-proxy.yml` to run behind an existing reverse proxy instead of Caddy |
@@ -260,6 +261,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Mailbox access auditing](documentation/mailbox-auditing.md): who other than the owner opened, read, moved, deleted or sent from a mailbox.
 - [Rooms and equipment](documentation/rooms-and-equipment.md): bookable rooms and equipment, booking rules, approvals, the room finder, and free/busy over CalDAV.
 - [Personal aliases](documentation/personal-aliases.md): aliases and masked addresses people create for themselves, the policy that limits them, and the SimpleLogin-compatible endpoint for password managers.
+- [Storage and quota warnings](documentation/storage.md): how full each mailbox is, folder by folder, and the warning emails before it fills up.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

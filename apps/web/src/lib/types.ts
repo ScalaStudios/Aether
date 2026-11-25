@@ -152,6 +152,13 @@ export interface Mailbox {
   sendAs?: boolean
   sendOnBehalf?: boolean
   fromAddresses?: Address[]
+  usedBytes?: number
+  quotaWarningPercents?: number[]
+}
+
+export interface QuotaWarnings {
+  percents: number[]
+  notifyAdmins: boolean
 }
 
 export type DelegateAccess = "read" | "full"
@@ -417,6 +424,7 @@ export interface Folder {
   specialUse: SpecialUse
   total: number
   unread: number
+  size: number
   subscribed: boolean
 }
 

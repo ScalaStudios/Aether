@@ -318,6 +318,35 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationBranding" }
         "404": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/quota-warnings:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [mailboxes]
+      summary: When the organization's mailboxes get storage warnings (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaWarnings" }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [mailboxes]
+      summary: Change the storage warning levels
+      description: "Recorded in the audit log as organization.quota_warnings.update. An empty percents list turns the warnings off."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuotaWarnings" }
+      responses:
+        "200":
+          description: Saved, with the levels sorted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaWarnings" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/signature-templates:
     parameters: [{ $ref: "#/components/parameters/orgId" }]
     get:
@@ -3512,6 +3541,8 @@ components:
       properties:
         domainId: { type: string, format: uuid, description: Allowed and verified alias domain in this organization }
         mailboxId: { type: string, format: uuid, description: Active personal mailbox owned by the caller in this organization }
+        quotaWarningPercents: { type: array, items: { type: integer }, description: "The organization's storage warning levels. Only in GET /me/mailboxes." }
+        usedBytes: { type: integer, description: "Storage in use when Aether last measured it, every AETHER_QUOTA_CHECK_INTERVAL. Only in GET /organizations/{orgId}/mailboxes." }
     Alias:
       type: object
       required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt, hiddenFromDirectory]
@@ -3738,6 +3769,13 @@ components:
         total: { type: integer }
         unread: { type: integer }
         subscribed: { type: boolean, description: Whether IMAP clients that show only subscribed folders list it }
+        size: { type: integer, description: "Bytes the folder's messages count against the quota. The folders' sizes add up to the mailbox's usage." }
+    QuotaWarnings:
+      type: object
+      required: [percents, notifyAdmins]
+      properties:
+        percents: { type: array, maxItems: 2, items: { type: integer, minimum: 50, maximum: 99 }, description: "How full a mailbox is, in percent, when it gets a warning. Defaults to 80 and 95." }
+        notifyAdmins: { type: boolean, description: "Also deliver a copy to the organization's owners and administrators who have a mailbox." }
     MessageTransfer:
       type: object
       required: [to]

@@ -2,6 +2,7 @@
 
 import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { ArchiveRestore, CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, PenSquare, ShieldAlert, Trash2, type LucideIcon } from "lucide-react"
+import Link from "next/link"
 import { useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
@@ -12,9 +13,11 @@ import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { useSession } from "@/hooks/use-session"
 import { api, errorMessage } from "@/lib/api"
-import { dragTypes, folderIcons, folderLabel, folderParent, folderTree, snoozedFolder } from "@/lib/mail"
+import { formatBytes } from "@/lib/format"
+import { dragTypes, folderIcons, folderLabel, folderParent, folderTree, snoozedFolder, storageTier } from "@/lib/mail"
 import type { Folder, Mailbox } from "@/lib/types"
 
 type FolderRequest = { method: "POST" | "PATCH" | "DELETE"; path?: string; folder?: string; moveTo?: string; body?: object; done: string }
@@ -123,6 +126,22 @@ function FolderMenu({ folder, label, open, onOpenChange, onAction, onMarkRead, o
 }
 
 type Tree = { mailbox: Mailbox; folders: UseQueryResult<Folder[]> }
+
+function StorageSummary({ mailbox, folders }: { mailbox: Mailbox; folders: Folder[] }) {
+  const used = folders.reduce((n, f) => n + f.size, 0)
+  const quota = mailbox.quotaBytes
+  const tier = storageTier(used, quota, mailbox.quotaWarningPercents)
+  return (
+    <Link href="/settings#storage" className="flex flex-col gap-2 rounded-lg px-3 py-2 transition-colors duration-160 hover:bg-muted">
+      <span className="flex items-baseline justify-between gap-3 text-xs">
+        <span className="font-semibold text-fg-secondary">Storage</span>
+        {quota > 0 && <span className={cn("font-semibold tabular-nums", tierText[tier])}>{usagePercent(used, quota)}%</span>}
+      </span>
+      {quota > 0 && <UsageBar used={used} quota={quota} tier={tier} />}
+      <span className="text-xs text-fg-tertiary tabular-nums">{quota ? `${formatBytes(used)} of ${formatBytes(quota)} used` : `${formatBytes(used)} used · No limit`}</span>
+    </Link>
+  )
+}
 
 function MailboxFolders({
   mailbox,
@@ -389,6 +408,7 @@ export function FolderPane({
           )
         })}
       </nav>
+      {primary?.folders.data && <StorageSummary mailbox={primary.mailbox} folders={primary.folders.data} />}
     </aside>
   )
 }
