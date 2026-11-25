@@ -65,7 +65,7 @@ func (s *Server) mailboxForExport(w http.ResponseWriter, r *http.Request, p *pri
 	}
 	m := &mailbox{}
 	err := s.db.QueryRow(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes WHERE id = $1`, id).Scan(
-		&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.PurgeAfter, &m.OnHold)
+		&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return nil, false, false

@@ -29,7 +29,7 @@ func graceDays(w http.ResponseWriter, r *http.Request) (int, bool) {
 
 func (s *Server) reloadMailbox(ctx context.Context, m *mailbox) error {
 	return s.db.QueryRow(ctx, `SELECT `+mailboxColumns+` FROM mailboxes WHERE id = $1`, m.ID).Scan(
-		&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.PurgeAfter, &m.OnHold)
+		&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 }
 
 func (s *Server) closeAndKeepMail(w http.ResponseWriter, r *http.Request, p *principal, m *mailbox, meta map[string]any) {
@@ -112,7 +112,7 @@ func (s *Server) restoreMailbox(w http.ResponseWriter, r *http.Request, p *princ
 	}
 	err := s.db.QueryRow(r.Context(), `
 		UPDATE mailboxes SET active = true, purge_after = NULL WHERE id = $1 AND purge_after IS NOT NULL RETURNING `+mailboxColumns, m.ID).Scan(
-		&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.PurgeAfter, &m.OnHold)
+		&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
