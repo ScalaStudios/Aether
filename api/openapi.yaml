@@ -20,6 +20,7 @@ tags:
   - name: app-passwords
   - name: mail
   - name: identity-providers
+  - name: mail-queue
   - name: contacts
   - name: calendar
   - name: integrations
@@ -2090,6 +2091,56 @@ paths:
         "204": { description: Saved }
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /admin/mail-queue:
+    get:
+      tags: [mail-queue]
+      summary: List messages waiting in the Postfix queue (platform administrators only)
+      description: >-
+        Shows the envelope only, never the message content. Messages are sorted oldest first and cut at limit; matched counts every message that fits the filter,
+        and summary always covers the whole queue. Answers 503 queue_not_configured when AETHER_POSTFIX_API_KEY is not set and 503 queue_unavailable when Postfix cannot be reached.
+      parameters:
+        - { name: sender, in: query, description: "Text in the envelope sender, ignoring case", schema: { type: string, maxLength: 320 } }
+        - { name: recipientDomain, in: query, description: Exact domain of at least one recipient, schema: { type: string, maxLength: 255 } }
+        - { name: error, in: query, description: "Text in a recipient's last delivery error, ignoring case", schema: { type: string, maxLength: 500 } }
+        - { name: queue, in: query, schema: { $ref: "#/components/schemas/QueueName" } }
+        - { name: limit, in: query, description: 0 returns only the counts, schema: { type: integer, minimum: 0, maximum: 1000, default: 200 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailQueue" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /admin/mail-queue/{action}:
+    post:
+      tags: [mail-queue]
+      summary: Retry, hold, release or delete queued messages (platform administrators only)
+      description: >-
+        Send the queue IDs to change, or a filter that is applied when the request runs. retry schedules deferred messages for immediate delivery, hold moves messages to the hold queue,
+        release moves held messages back to the deferred queue, and delete removes messages without notifying anyone. Messages the action does not apply to are skipped,
+        and affected counts the rest. Each request is one mail_queue.<action> audit event.
+      parameters:
+        - { name: action, in: path, required: true, schema: { type: string, enum: [retry, hold, release, delete] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QueueActionInput" }
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [affected]
+                properties:
+                  affected: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /hooks/identity-providers/{slug}:
     post:
       tags: [identity-providers]
@@ -2838,6 +2889,56 @@ components:
             parts: { type: array, items: { type: string } }
         draftUid: { type: integer, description: The draft this message replaces. On send it is deleted from Drafts. }
         sendAt: { type: string, format: date-time, description: Schedule the message instead of sending it now. The Date header is set to this time. }
+    QueueName:
+      type: string
+      enum: [maildrop, incoming, active, deferred, hold]
+    QueueFilter:
+      type: object
+      minProperties: 1
+      properties:
+        sender: { type: string, maxLength: 320 }
+        recipientDomain: { type: string, maxLength: 255 }
+        error: { type: string, maxLength: 500 }
+        queue: { $ref: "#/components/schemas/QueueName" }
+    QueueActionInput:
+      type: object
+      oneOf:
+        - required: [ids]
+        - required: [filter]
+      properties:
+        ids: { type: array, minItems: 1, maxItems: 1000, items: { type: string, pattern: "^[0-9A-Za-z]{5,32}$" } }
+        filter: { $ref: "#/components/schemas/QueueFilter" }
+    QueuedMessage:
+      type: object
+      required: [id, queue, arrivalTime, size, sender, recipients]
+      properties:
+        id: { type: string }
+        queue: { $ref: "#/components/schemas/QueueName" }
+        arrivalTime: { type: string, format: date-time }
+        size: { type: integer, description: Bytes }
+        sender: { type: string, description: MAILER-DAEMON for bounces }
+        recipients:
+          type: array
+          items:
+            type: object
+            required: [address]
+            properties:
+              address: { type: string }
+              delayReason: { type: string, description: The last delivery error for this recipient }
+        nextAttempt: { type: string, format: date-time, description: Deferred messages only }
+    MailQueue:
+      type: object
+      required: [summary, matched, messages]
+      properties:
+        summary:
+          type: object
+          required: [total, queues]
+          properties:
+            total: { type: integer }
+            queues: { type: object, additionalProperties: { type: integer } }
+            oldestArrival: { type: string, format: date-time, description: Arrival of the oldest message that is not on hold }
+        matched: { type: integer }
+        messages: { type: array, items: { $ref: "#/components/schemas/QueuedMessage" } }
     IdentityProvider:
       type: object
       required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]

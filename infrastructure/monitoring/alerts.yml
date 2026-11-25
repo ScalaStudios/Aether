@@ -1,0 +1,19 @@
+groups:
+  - name: aether-mail-queue
+    rules:
+      - alert: AetherMailQueueBacklog
+        expr: max(sum without (queue) (aether_mail_queue_messages{queue!="hold"})) > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} messages are waiting in the Postfix queue"
+          description: More than 100 messages that are not on hold have been queued for 15 minutes. Open Administration → Mail queue to see the delivery errors.
+      - alert: AetherMailQueueStale
+        expr: max(aether_mail_queue_oldest_seconds) > 14400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A message has waited in the Postfix queue for more than 4 hours
+          description: Open Administration → Mail queue to see why the oldest message is still waiting. Held messages are not counted.

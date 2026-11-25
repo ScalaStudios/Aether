@@ -16,6 +16,7 @@ x-api-env: &api-env
   AETHER_DOVECOT_API_URL: ${AETHER_DOVECOT_API_URL:-http://dovecot:8089}
   AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
   AETHER_DOVECOT_API_KEY: ${AETHER_DOVECOT_API_KEY}
+  AETHER_POSTFIX_API_KEY: ${AETHER_POSTFIX_API_KEY:-}
   AETHER_VALKEY_PASSWORD: ${AETHER_VALKEY_PASSWORD}
   AETHER_RSPAMD_CONTROLLER_PASSWORD: ${AETHER_RSPAMD_CONTROLLER_PASSWORD}
   AETHER_SIEVE_RELAY_PASSWORD: ${AETHER_SIEVE_RELAY_PASSWORD}
@@ -115,7 +116,10 @@ services:
         condition: service_healthy
 
   postfix:
-    build: ./infrastructure/docker/postfix
+    build:
+      context: ./infrastructure/docker/postfix
+      additional_contexts:
+        aether-source: .
     image: aether/postfix:dev
     restart: unless-stopped
     dns: 172.29.53.53
@@ -127,6 +131,7 @@ services:
       AETHER_RELAYHOST: ${AETHER_RELAYHOST:-}
       AETHER_RELAY_USER: ${AETHER_RELAY_USER:-}
       AETHER_RELAY_PASSWORD: ${AETHER_RELAY_PASSWORD:-}
+      AETHER_POSTFIX_API_KEY: ${AETHER_POSTFIX_API_KEY:-}
     volumes:
       - postfix-spool:/var/spool/postfix
       - postfix-logs:/var/log/postfix
@@ -267,6 +272,7 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
     volumes:
       - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     secrets:
       - rspamd-metrics-password

@@ -24,7 +24,7 @@ export const attendeeStatusLabels: Record<AttendeeStatus, string> = {
 }
 
 export function plural(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`
+  return `${count.toLocaleString()} ${noun}${count === 1 ? "" : "s"}`
 }
 
 export function formatPercent(part: number, total: number) {
@@ -33,6 +33,19 @@ export function formatPercent(part: number, total: number) {
 
 export function formatDateTime(iso: string) {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso))
+}
+
+const relativeUnits: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60],
+]
+
+export function formatRelative(iso: string) {
+  const seconds = (new Date(iso).getTime() - Date.now()) / 1000
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" })
+  const [unit, size] = relativeUnits.find(([, size]) => Math.abs(seconds) >= size) ?? ["second", 1]
+  return format.format(Math.round(seconds / size), unit)
 }
 
 export function formatDate(iso: string) {

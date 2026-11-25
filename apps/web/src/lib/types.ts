@@ -200,6 +200,33 @@ export interface MessageTraceDetail extends MessageTraceSummary {
   related: { id: number; receivedAt: string; service: string; sender: string; status: MessageTraceStatus }[]
 }
 
+export type QueueName = "maildrop" | "incoming" | "active" | "deferred" | "hold"
+
+export type QueueAction = "retry" | "hold" | "release" | "delete"
+
+export interface QueueFilter {
+  sender?: string
+  recipientDomain?: string
+  error?: string
+  queue?: QueueName
+}
+
+export interface QueuedMessage {
+  id: string
+  queue: QueueName
+  arrivalTime: string
+  size: number
+  sender: string
+  recipients: { address: string; delayReason?: string }[]
+  nextAttempt?: string
+}
+
+export interface MailQueue {
+  summary: { total: number; queues: Record<QueueName, number>; oldestArrival?: string }
+  matched: number
+  messages: QueuedMessage[]
+}
+
 export interface APIKey {
   id: string
   name: string

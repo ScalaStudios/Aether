@@ -13,6 +13,7 @@ secrets:
   mailDbPassword: ""
   dovecotMasterPassword: ""
   dovecotApiKey: ""
+  postfixApiKey: ""
   sieveRelayPassword: ""
   rspamdControllerPassword: ""
   valkeyPassword: ""

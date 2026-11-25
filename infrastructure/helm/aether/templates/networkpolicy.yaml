@@ -97,4 +97,6 @@ spec:
     - ports: [{ port: 25 }, { port: 465 }, { port: 587 }]
     - from: {{- include "aether.allowFrom" (list "dovecot" "api") | nindent 8 }}
       ports: [{ port: 10025 }]
+    - from: {{- include "aether.allowFrom" (list "api") | nindent 8 }}
+      ports: [{ port: 8025 }]
 {{- end }}

@@ -21,10 +21,12 @@ var (
 	kickBacklog     = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_kick_backlog_seconds", Help: "Age in seconds of the oldest IMAP session kick still waiting for a successful doveadm call; 0 when none is pending."})
 	spamLearned     = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "aether_spam_learned_total", Help: "Messages sent to Rspamd for Bayes learning after a move into or out of Junk, by class and result."}, []string{"class", "result"})
 	aclBacklog      = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_acl_backlog_seconds", Help: "Age in seconds of the oldest active mailbox whose Dovecot rights are still waiting for a successful reconciliation; 0 when none is pending."})
+	queueMessages   = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "aether_mail_queue_messages", Help: "Messages in the Postfix queue by queue: maildrop, incoming, active, deferred and hold. Read every minute."}, []string{"queue"})
+	queueOldest     = prometheus.NewGauge(prometheus.GaugeOpts{Name: "aether_mail_queue_oldest_seconds", Help: "Age in seconds of the oldest message in the Postfix queue that is not on hold; 0 when there is none."})
 )
 
 func init() {
-	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned,
+	metricsRegistry.MustRegister(httpRequests, httpDuration, authAttempts, mailSends, mailBackendErrs, webhookEvents, kickBacklog, aclBacklog, spamLearned, queueMessages, queueOldest,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 }
 

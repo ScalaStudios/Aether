@@ -77,6 +77,12 @@ func TestTenantIsolation(t *testing.T) {
 	if got := orgAdmin.do("GET", "/admin/message-trace", nil, nil); got != 403 {
 		t.Errorf("org admin searched the whole server's message trace: %d", got)
 	}
+	if got := orgAdmin.do("GET", "/admin/mail-queue", nil, nil); got != 403 {
+		t.Errorf("org admin listed the mail queue: %d", got)
+	}
+	if got := orgAdmin.do("POST", "/admin/mail-queue/delete", map[string]any{"filter": map[string]string{"queue": "deferred"}}, nil); got != 403 {
+		t.Errorf("org admin deleted queued mail: %d", got)
+	}
 
 	member := b.bob
 	if got := member.do("GET", "/organizations/"+b.orgID+"/mailboxes", nil, nil); got != 403 {

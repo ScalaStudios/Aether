@@ -24,6 +24,9 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
     secretKeyRef:
       name: {{ include "aether.secretName" .root }}
       key: {{ .key }}
+      {{- if .optional }}
+      optional: true
+      {{- end }}
 {{- end -}}
 
 {{- define "aether.podSecurity" -}}

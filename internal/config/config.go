@@ -26,6 +26,8 @@ type Config struct {
 	DovecotAPIKey         string
 	RspamdControllerURL   string
 	RspamdPassword        string
+	PostfixAPIURL         string
+	PostfixAPIKey         string
 	ValkeyAddr            string
 	ValkeyPassword        string
 	LocalLogin            bool
@@ -58,6 +60,8 @@ func Load() (*Config, error) {
 		DovecotAPIKey:         os.Getenv("AETHER_DOVECOT_API_KEY"),
 		RspamdControllerURL:   env("AETHER_RSPAMD_CONTROLLER_URL", "http://rspamd:11334"),
 		RspamdPassword:        os.Getenv("AETHER_RSPAMD_CONTROLLER_PASSWORD"),
+		PostfixAPIURL:         env("AETHER_POSTFIX_API_URL", "http://postfix:8025"),
+		PostfixAPIKey:         os.Getenv("AETHER_POSTFIX_API_KEY"),
 		ValkeyAddr:            env("AETHER_VALKEY_ADDR", "valkey:6379"),
 		ValkeyPassword:        os.Getenv("AETHER_VALKEY_PASSWORD"),
 		LocalLogin:            env("AETHER_LOCAL_LOGIN", "true") == "true",

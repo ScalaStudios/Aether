@@ -170,6 +170,10 @@ Rspamd's controller accepts training requests only with `AETHER_RSPAMD_CONTROLLE
 
 Installations created before shared mailboxes existed must add the key to `.env` before upgrading. [Shared mailboxes](shared-mailboxes.md#upgrading-an-existing-installation) lists the steps, including the check for existing folders named `Shared`.
 
+## Postfix queue API
+
+The Postfix container runs `aether-postfix-api` on port 8025 inside the Compose network, protected by `AETHER_POSTFIX_API_KEY`, which `setup.sh` generates. The API uses it for the [mail queue](mail-queue.md) page: listing, retrying, holding, releasing and deleting queued messages. Only the API and the Postfix containers receive the key. Without it both still start and deliver mail, and the queue page says it is not connected. Never publish the port: the key allows deleting any queued message. If the API runs elsewhere, set `AETHER_POSTFIX_API_URL` (default `http://postfix:8025`) and open the port to the API only.
+
 ## Monitoring
 
 The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks; none of them can be switched off. The metrics cover:
@@ -182,6 +186,7 @@ The API serves Prometheus metrics on port 9090 inside the Compose network (`AETH
 - pending IMAP session kicks (age of the oldest),
 - pending rights reconciliation (age of the oldest),
 - messages sent to the spam filter for learning, by class (`spam`, `ham`) and result (`learned`, `duplicate`, `disabled`, `failed`),
+- messages in the Postfix queue by queue, and the age of the oldest one not on hold,
 - Go runtime and process statistics.
 
 No metric carries a user, mailbox, or address label.
@@ -205,7 +210,7 @@ For a ready-made setup, start the optional profile:
 docker compose --profile monitoring up -d
 ```
 
-This runs Prometheus, which keeps 30 days of data and scrapes the API, Dovecot, Rspamd, and Postfix, and Grafana with an "Aether overview" dashboard. Grafana listens only on `127.0.0.1:3300` (set `AETHER_GRAFANA_PORT` to change it). Reach it through an SSH tunnel (`ssh -L 3300:127.0.0.1:3300 <host>`) or your VPN. Sign in as `admin` with `AETHER_GRAFANA_PASSWORD` from `.env`.
+This runs Prometheus, which keeps 30 days of data, scrapes the API, Dovecot, Rspamd, and Postfix, and evaluates the mail queue alerts in `infrastructure/monitoring/alerts.yml` (see [Mail queue](mail-queue.md#monitoring-and-alerts)), and Grafana with an "Aether overview" dashboard. Grafana listens only on `127.0.0.1:3300` (set `AETHER_GRAFANA_PORT` to change it). Reach it through an SSH tunnel (`ssh -L 3300:127.0.0.1:3300 <host>`) or your VPN. Sign in as `admin` with `AETHER_GRAFANA_PASSWORD` from `.env`.
 
 ## Antivirus
 

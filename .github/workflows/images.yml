@@ -18,7 +18,7 @@ jobs:
         include:
           - { name: api, context: ., dockerfile: infrastructure/docker/api/Dockerfile }
           - { name: web, context: apps/web, dockerfile: apps/web/Dockerfile }
-          - { name: postfix, context: infrastructure/docker/postfix, dockerfile: infrastructure/docker/postfix/Dockerfile }
+          - { name: postfix, context: infrastructure/docker/postfix, dockerfile: infrastructure/docker/postfix/Dockerfile, build-contexts: "aether-source=." }
           - { name: dovecot, context: infrastructure/docker/dovecot, dockerfile: infrastructure/docker/dovecot/Dockerfile }
           - { name: rspamd, context: infrastructure/docker/rspamd, dockerfile: infrastructure/docker/rspamd/Dockerfile }
           - { name: unbound, context: infrastructure/docker/unbound, dockerfile: infrastructure/docker/unbound/Dockerfile }
@@ -42,6 +42,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-contexts: ${{ matrix.build-contexts }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

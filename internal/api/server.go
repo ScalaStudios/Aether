@@ -20,6 +20,7 @@ import (
 
 	"github.com/scalastudios/aether/internal/config"
 	"github.com/scalastudios/aether/internal/mail"
+	"github.com/scalastudios/aether/internal/mail/queue"
 	"github.com/scalastudios/aether/internal/secrets"
 )
 
@@ -31,6 +32,7 @@ type Server struct {
 	box           *secrets.Box
 	kv            *redis.Client
 	mail          *mail.Client
+	queue         *queue.Client
 	log           *slog.Logger
 	oidc          *oidcCache
 	resolve       resolver
@@ -40,7 +42,7 @@ type Server struct {
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1)}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -246,6 +248,8 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/admin/message-trace", s.listMessageTrace)
 	authed("GET /api/v1/admin/message-trace/export", s.exportMessageTrace)
 	authed("GET /api/v1/admin/message-trace/{id}", s.getMessageTrace)
+	authed("GET /api/v1/admin/mail-queue", s.listMailQueue)
+	authed("POST /api/v1/admin/mail-queue/{action}", s.changeMailQueue)
 
 	return instrument(securityHeaders(mux))
 }
