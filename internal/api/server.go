@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/v1/organizations/{orgId}/quota-warnings", s.saveQuotaWarnings)
 	authed("GET /api/v1/organizations/{orgId}/sender-warnings", s.getSenderWarnings)
 	authed("PUT /api/v1/organizations/{orgId}/sender-warnings", s.saveSenderWarnings)
+	authed("GET /api/v1/organizations/{orgId}/attachment-policy", s.getAttachmentPolicy)
+	authed("PUT /api/v1/organizations/{orgId}/attachment-policy", s.saveAttachmentPolicy)
 	authed("GET /api/v1/organizations/{orgId}/signature-templates", s.listSignatureTemplates)
 	authed("PUT /api/v1/organizations/{orgId}/signature-templates", s.saveSignatureTemplate)
 	authed("DELETE /api/v1/organizations/{orgId}/signature-templates", s.deleteSignatureTemplate)

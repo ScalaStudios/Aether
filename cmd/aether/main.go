@@ -142,6 +142,9 @@ func serve(log *slog.Logger) error {
 	if err := srv.SyncDKIM(ctx); err != nil {
 		log.Error("DKIM key sync incomplete; affected domains send unsigned mail", "err", err)
 	}
+	if err := srv.SyncAttachmentPolicies(ctx); err != nil {
+		log.Error("attachment policy sync incomplete; affected domains do not filter attachments", "err", err)
+	}
 	go srv.RunScheduler(ctx)
 	go srv.RunAccessWorkers(ctx)
 	go srv.RunQueueMetrics(ctx)

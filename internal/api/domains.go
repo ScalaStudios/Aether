@@ -159,6 +159,9 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	if err := s.publishDKIM(r.Context(), name, selector, privPEM); err != nil {
 		s.log.Error("dkim publish failed; outgoing mail for this domain will be unsigned until the API restarts", "domain", name, "err", err)
 	}
+	if err := s.publishAttachmentPolicy(r.Context(), orgID); err != nil {
+		s.log.Error("attachment policy publish failed; attachments for this domain are not filtered until the API restarts", "domain", name, "err", err)
+	}
 	s.audit(r.Context(), r, p, &orgID, "domain.create", "domain", id, map[string]any{"name": name, "aliasOf": in.AliasOf, "aliasSendAs": in.AliasSendAs})
 	d, err := scanDomain(s.db.QueryRow(r.Context(), `SELECT `+domainColumns+` FROM domains WHERE id = $1`, id))
 	if err != nil {
@@ -216,6 +219,7 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	s.kv.HDel(r.Context(), dkimKeysHash, d.DKIMSelector+"."+d.Name)
 	s.kv.HDel(r.Context(), dkimSelectorsHash, d.Name)
+	s.kv.HDel(r.Context(), attachmentPolicyHash, d.Name)
 	s.audit(r.Context(), r, p, &d.OrgID, "domain.delete", "domain", d.ID, map[string]any{"name": d.Name})
 	w.WriteHeader(http.StatusNoContent)
 }

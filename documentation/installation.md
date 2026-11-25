@@ -250,6 +250,22 @@ If you already use other profiles, list them all, for example `COMPOSE_PROFILES=
 
 Rspamd then sends every attachment to ClamAV and rejects infected mail during the SMTP session, so the sender gets the error. This applies to both incoming and outgoing mail. ClamAV downloads signature updates by itself and keeps them in the `clamav` volume. If ClamAV is not reachable, mail is still delivered unscanned. With Helm, set `clamav.enabled=true`.
 
+## Attachment filtering
+
+Each organization chooses blocked file types under **Administration → Attachments**, with separate lists for incoming and outgoing mail. For each list the action is one of:
+
+- **Reject message:** Rspamd refuses the message during the SMTP session. Outside senders get a bounce from their own server, and people sending from Aether Mail see the error.
+- **Remove attachment:** the message is delivered, and each blocked attachment is replaced by a short text note naming the file. A message whose only part is a blocked file is rejected instead.
+- **Off:** attachments are not checked.
+
+An attachment is blocked when its file name ends in a listed extension (case and trailing dots or spaces are ignored, so `invoice.pdf.exe` and `INVOICE.EXE.` match `exe`), when Rspamd detects a listed type from the content (an executable named `report.pdf` matches `exe`), or when a ZIP, 7z or gzip archive contains a file with a listed extension. Attachments inside forwarded messages are checked too.
+
+Organizations that never changed the setting reject incoming mail carrying executables, scripts, disk images and macro-enabled Office files; outgoing mail is not checked. **Use the default list** restores that list.
+
+Exceptions skip the check for listed envelope senders, either an address or `@domain` for a whole domain. Other servers can forge the envelope sender, so add only senders you trust.
+
+The API stores the policy in PostgreSQL and publishes it to Valkey under the hash `AETHER_ATTACHMENT_POLICY`, one field per domain. Rspamd reads it for each message: by recipient domain for incoming mail, and by sender domain for authenticated submissions. The API republishes every policy at startup, so restart it if Valkey lost its data. Mail for a domain with no published policy is not filtered. Mail forwarded by Sieve rules is not checked again. Each change is recorded in the audit log as `attachment_policy.update`.
+
 ## Upgrades
 
 Each release is a tag, such as `v0.1.0`, with notes in [CHANGELOG.md](../CHANGELOG.md). Back up first, then check out the new tag and rebuild:

@@ -247,3 +247,144 @@ rspamd_config:register_symbol({
     })
   end,
 })
+
+local attachment_redis = lua_redis.parse_redis_server('aether_attachments')
+
+local function attachment_extension(name)
+  return (name:lower():gsub('[%s%.]+$', '')):match('%.([^%./\\]+)$')
+end
+
+local function blocked_attachment(part, blocked)
+  local name = part:get_filename() or ''
+  local ext = attachment_extension(name)
+  if ext and blocked[ext] then
+    return name
+  end
+  local detected = part:get_detected_ext()
+  if detected and blocked[detected:lower()] then
+    return name ~= '' and name or detected
+  end
+  if part:is_archive() then
+    for _, file in ipairs(part:get_archive():get_files() or {}) do
+      ext = attachment_extension(file)
+      if ext and blocked[ext] then
+        return name .. ' (' .. file .. ')'
+      end
+    end
+  end
+end
+
+local function without_parts(task, removed)
+  local nl = ({ cr = '\r', lf = '\n' })[task:get_newlines_type()] or '\r\n'
+  local out, open = {}, {}
+  task:headers_foreach(function(_, hdr)
+    out[#out + 1] = hdr.raw:gsub('\r?\n?$', '') .. nl
+  end, { full = true })
+  out[#out + 1] = nl
+  for i, part in ipairs(task:get_parts()) do
+    local enclosing = part:get_enclosing_boundary()
+    if enclosing then
+      while #open > 0 and open[#open] ~= enclosing do
+        out[#out + 1] = '--' .. table.remove(open) .. '--' .. nl
+      end
+      out[#out + 1] = '--' .. enclosing .. nl
+    end
+    if removed[i] then
+      out[#out + 1] = 'Content-Type: text/plain; charset=utf-8' .. nl .. 'Content-Transfer-Encoding: 8bit' .. nl .. nl
+      out[#out + 1] = string.format('The attachment "%s" was removed because your organization blocks this file type.', removed[i]) .. nl
+    elseif i > 1 then
+      out[#out + 1] = tostring(part:get_raw_headers()) .. nl
+      if part:is_multipart() then
+        open[#open + 1] = part:get_boundary()
+      elseif not part:is_message() then
+        out[#out + 1] = tostring(part:get_raw_content()) .. nl
+      end
+    elseif part:is_multipart() then
+      open[#open + 1] = part:get_boundary()
+    else
+      out[#out + 1] = tostring(part:get_raw_content())
+    end
+  end
+  while #open > 0 do
+    out[#out + 1] = '--' .. table.remove(open) .. '--' .. nl
+  end
+  return table.concat(out)
+end
+
+rspamd_config:register_symbol({
+  name = 'AETHER_BLOCKED_ATTACHMENT',
+  type = 'prefilter',
+  priority = 5,
+  callback = function(task)
+    local user = task:get_user()
+    if not attachment_redis or user == 'aether-sieve-relay' then
+      return
+    end
+    local candidates = {}
+    for i, part in ipairs(task:get_parts()) do
+      if not part:is_multipart() and not part:is_message() and not (part:is_text() and not part:is_attachment()) then
+        candidates[i] = part
+      end
+    end
+    if not next(candidates) then
+      return
+    end
+    local sender = (task:get_from('smtp') or {})[1] or {}
+    local sender_addr, sender_domain = (sender.addr or ''):lower(), (sender.domain or ''):lower()
+    local domains, seen = {}, {}
+    for _, addr in ipairs(user and { sender } or task:get_recipients('smtp') or {}) do
+      local domain = (addr.domain or ''):lower()
+      if domain ~= '' and not seen[domain] then
+        seen[domain] = true
+        domains[#domains + 1] = domain
+      end
+    end
+    if #domains == 0 then
+      return
+    end
+    local args = { 'AETHER_ATTACHMENT_POLICY' }
+    for _, domain in ipairs(domains) do
+      args[#args + 1] = domain
+    end
+    lua_redis.redis_make_request(task, attachment_redis, nil, false, function(err, data)
+      if err or type(data) ~= 'table' then
+        return
+      end
+      local removed, names, reject = {}, {}, false
+      for _, raw in ipairs(data) do
+        local parser = ucl.parser()
+        local policy = type(raw) == 'string' and parser:parse_string(raw) and parser:get_object()
+        local rules = policy and policy[user and 'outbound' or 'inbound']
+        local exempt = {}
+        for _, entry in ipairs(policy and policy.exemptSenders or {}) do
+          exempt[entry] = true
+        end
+        if rules and rules.action ~= 'off' and not exempt[sender_addr] and not exempt['@' .. sender_domain] then
+          local blocked = {}
+          for _, ext in ipairs(rules.extensions or {}) do
+            blocked[ext] = true
+          end
+          for i, part in pairs(candidates) do
+            local name = blocked_attachment(part, blocked)
+            if name then
+              if not removed[i] then
+                removed[i] = (name:gsub('%c', ''))
+                names[#names + 1] = removed[i]
+              end
+              reject = reject or rules.action == 'reject' or not part:get_enclosing_boundary()
+            end
+          end
+        end
+      end
+      if #names == 0 then
+        return
+      end
+      task:insert_result('AETHER_BLOCKED_ATTACHMENT', 1.0, names)
+      if reject then
+        task:set_pre_result({ action = 'reject', message = string.format('Message rejected: the attachment "%s" is a blocked file type', names[1]), module = 'aether' })
+      else
+        task:set_message(without_parts(task, removed))
+      end
+    end, 'HMGET', args)
+  end,
+})

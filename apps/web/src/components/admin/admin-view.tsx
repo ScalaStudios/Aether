@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import { z } from "zod"
 
 import { AliasesTab } from "@/components/admin/aliases-tab"
+import { AttachmentsTab } from "@/components/admin/attachments-tab"
 import { AuditTab } from "@/components/admin/audit-tab"
 import { BlockedAddressesTab } from "@/components/admin/blocked-addresses-tab"
 import { BrandingTab } from "@/components/admin/branding-tab"
@@ -74,6 +75,7 @@ const orgTabs = [
   { value: "message-trace", label: "Message trace", Component: MessageTraceTab },
   { value: "retention", label: "Retention", Component: RetentionTab },
   { value: "sender-warnings", label: "Sender warnings", Component: SenderWarningsTab },
+  { value: "attachments", label: "Attachments", Component: AttachmentsTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

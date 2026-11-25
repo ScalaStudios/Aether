@@ -941,6 +941,21 @@ export interface BrandingSettings {
 
 export type OrgBranding = BrandingSettings & BrandImages & { customCssEnabled: boolean }
 
+export type AttachmentAction = "off" | "reject" | "remove"
+
+export interface AttachmentRules {
+  action: AttachmentAction
+  extensions: string[]
+}
+
+export interface AttachmentPolicy {
+  inbound: AttachmentRules
+  outbound: AttachmentRules
+  exemptSenders: string[]
+}
+
+export type OrgAttachmentPolicy = AttachmentPolicy & { defaultExtensions: string[] }
+
 export interface SignatureLink {
   label: string
   url: string
