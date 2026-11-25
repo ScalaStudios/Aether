@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ChartColumn, ChevronRight, Globe, Inbox, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useState } from "react"
-import { useForm } from "react-hook-form"
+import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -16,9 +16,13 @@ import { SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
+import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
 import { formatDate, formatPercent, plural } from "@/lib/format"
@@ -31,6 +35,8 @@ const schema = z.object({
     .trim()
     .toLowerCase()
     .regex(/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, "Enter a domain name such as example.com."),
+  aliasOf: z.string(),
+  aliasSendAs: z.boolean(),
 })
 
 type Values = z.infer<typeof schema>
@@ -80,10 +86,14 @@ export function DomainsTab({ orgId }: { orgId: string }) {
   const domains = useQuery(domainsQuery(orgId))
   const [adding, setAdding] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
-  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "" } })
+  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "", aliasOf: "none", aliasSendAs: false } })
+  const aliasOf = useWatch({ control: form.control, name: "aliasOf" })
+  const targets = domains.data?.filter((d) => !d.aliasOf) ?? []
+  const domainName = (id: string | null) => domains.data?.find((d) => d.id === id)?.name
 
   const add = useMutation({
-    mutationFn: (values: Values) => api<Domain>(`/organizations/${orgId}/domains`, { method: "POST", body: values }),
+    mutationFn: ({ aliasOf, ...values }: Values) =>
+      api<Domain>(`/organizations/${orgId}/domains`, { method: "POST", body: aliasOf === "none" ? { name: values.name } : { ...values, aliasOf } }),
     onSuccess: (domain) => {
       qc.invalidateQueries({ queryKey: ["domains", orgId] })
       setAdding(false)
@@ -120,7 +130,10 @@ export function DomainsTab({ orgId }: { orgId: string }) {
             <TableBody>
               {items.map((d) => (
                 <TableRow key={d.id} className="cursor-pointer" onClick={() => setOpenId(d.id)}>
-                  <TableCell className="font-mono text-sm">{d.name}</TableCell>
+                  <TableCell>
+                    <span className="font-mono text-sm">{d.name}</span>
+                    {d.aliasOf && <span className="block text-sm text-fg-tertiary">Alias of {domainName(d.aliasOf)}</span>}
+                  </TableCell>
                   <TableCell>
                     <DomainVerifiedBadge domain={d} />
                   </TableCell>
@@ -152,6 +165,32 @@ export function DomainsTab({ orgId }: { orgId: string }) {
         <Field id="domain-name" label="Domain name" error={form.formState.errors.name?.message}>
           <Input id="domain-name" placeholder="example.com" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!form.formState.errors.name} {...form.register("name")} />
         </Field>
+        {targets.length > 0 && (
+          <Controller
+            control={form.control}
+            name="aliasOf"
+            render={({ field }) => (
+              <Field id="domain-alias-of" label="Alias of" hint="Mail to any address on an alias domain goes to the same address on this domain, if it exists.">
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger id="domain-alias-of" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not an alias domain</SelectItem>
+                    {targets.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>
+                        @{d.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+          />
+        )}
+        {aliasOf !== "none" && (
+          <SwitchField control={form.control} name="aliasSendAs" id="domain-alias-send-as" label="Allow sending from this domain" hint="People can send as their address on this domain." />
+        )}
       </FormDialog>
 
       {openId && <DomainDialog key={openId} domainId={openId} orgId={orgId} onClose={() => setOpenId(null)} />}
@@ -173,6 +212,13 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
       qc.invalidateQueries({ queryKey: ["domains", orgId] })
       qc.invalidateQueries({ queryKey: ["dns", domainId] })
       toast.success(`${d.name} is verified`)
+    },
+  })
+  const sendAs = useMutation({
+    mutationFn: (aliasSendAs: boolean) => api<Domain>(`/domains/${domainId}`, { method: "PATCH", body: { aliasSendAs } }),
+    onSuccess: (d) => {
+      qc.setQueryData(["domain", domainId], d)
+      qc.invalidateQueries({ queryKey: ["domains", orgId] })
     },
   })
   const remove = useMutation({
@@ -202,6 +248,15 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
               : "Publish the ownership TXT record, wait for DNS to update, then select Verify. Lookups can take a few minutes to reflect changes."}
           </DialogDescription>
         </DialogHeader>
+        {d?.aliasOf && (
+          <div className="flex items-start gap-3">
+            <Switch id="domain-send-as" checked={d.aliasSendAs} disabled={sendAs.isPending} onCheckedChange={(v) => sendAs.mutate(v)} className="mt-1" />
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="domain-send-as">Allow sending from this domain</Label>
+              <p className="text-sm text-fg-tertiary">People can send as their address on this alias domain.</p>
+            </div>
+          </div>
+        )}
         <QueryView query={dns} isEmpty={(data) => data.records.length === 0} empty={<p className="text-fg-secondary">No DNS records are required for this domain.</p>}>
           {(data) => (
             <ul className="flex flex-col gap-3">

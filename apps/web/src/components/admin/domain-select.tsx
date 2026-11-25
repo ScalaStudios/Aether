@@ -16,7 +16,7 @@ export function DomainSelect<T extends FieldValues & { domainId: string }>({
   orgId: string
   control: Control<T>
 }) {
-  const domains = useQuery(domainsQuery(orgId))
+  const domains = useQuery({ ...domainsQuery(orgId), select: (items) => items.filter((d) => !d.aliasOf) })
 
   return (
     <Controller

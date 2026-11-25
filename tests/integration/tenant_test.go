@@ -52,6 +52,7 @@ func TestTenantIsolation(t *testing.T) {
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},
 		{"DELETE", "/domains/" + b.domainID},
+		{"PATCH", "/domains/" + b.domainID},
 		{"PATCH", "/mailboxes/" + b.bobMailbox},
 		{"DELETE", "/mailboxes/" + b.bobMailbox},
 		{"GET", "/mailboxes/" + b.bobMailbox + "/folders"},
@@ -103,6 +104,9 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("POST", "/organizations/"+a.orgID+"/retention-policies", map[string]any{"action": "keep", "days": 10, "mailboxId": b.bobMailbox}, nil); got != 422 {
 		t.Errorf("creating a retention policy for another tenant's mailbox returned %d, want 422", got)
+	}
+	if got := orgAdmin.do("POST", "/organizations/"+a.orgID+"/domains", map[string]any{"name": "steal" + randomSuffix() + ".test", "aliasOf": b.domainID}, nil); got != 422 {
+		t.Errorf("creating an alias domain of another tenant's domain returned %d, want 422", got)
 	}
 	if got := orgAdmin.do("POST", "/me/app-passwords", map[string]string{"name": "steal", "mailboxId": b.aliceMailbox}, nil); got != 422 {
 		t.Errorf("creating an app password for another tenant's mailbox returned %d, want 422", got)

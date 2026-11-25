@@ -96,6 +96,8 @@ export interface Domain {
   dkimSelector: string
   dkimRecord: string
   active: boolean
+  aliasOf: string | null
+  aliasSendAs: boolean
   createdAt: string
 }
 

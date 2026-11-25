@@ -71,12 +71,22 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 	}
 	local, _, _ = strings.Cut(local, "+")
 	sender = strings.ToLower(sender)
+	senderLocal, senderDomain, _ := strings.Cut(sender, "@")
+	var targetDomain *string
+	if err := s.db.QueryRow(ctx, `SELECT target_name FROM mail_alias_domains WHERE alias_name = $1`, senderDomain).Scan(&targetDomain); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	senders := []string{sender}
+	if targetDomain != nil {
+		senders = append(senders, senderLocal+"@"+*targetDomain)
+	}
 	var orgID, acceptFrom string
 	var members, allowed []string
 	var moderated, dynamicMember bool
-	err := s.db.QueryRow(ctx, `SELECT org_id, accept_from, destinations, allowed_senders, moderated, EXISTS (SELECT 1 FROM list_dynamic_members lm WHERE lm.alias_id = aliases.id AND lm.address = $2)
-		FROM aliases WHERE address = $1 AND active
-		UNION ALL SELECT org_id, 'resource', '{}', '{}', false, false FROM mailboxes WHERE address = $1 AND kind = 'resource' AND active`, local+"@"+domain, sender).
+	err := s.db.QueryRow(ctx, `WITH target AS (SELECT $1::text || '@' || coalesce((SELECT target_name FROM mail_alias_domains WHERE alias_name = $2::text), $2::text) AS address)
+		SELECT org_id, accept_from, destinations, allowed_senders, moderated, EXISTS (SELECT 1 FROM list_dynamic_members lm WHERE lm.alias_id = aliases.id AND lm.address = ANY ($3))
+		FROM aliases WHERE active AND address = (SELECT address FROM target)
+		UNION ALL SELECT org_id, 'resource', '{}', '{}', false, false FROM mailboxes WHERE kind = 'resource' AND active AND address = (SELECT address FROM target)`, local, domain, senders).
 		Scan(&orgID, &acceptFrom, &members, &allowed, &moderated, &dynamicMember)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "DUNNO", nil
@@ -85,12 +95,14 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 		return "DUNNO", err
 	}
 	reject := "REJECT 5.7.1 " + local + "@" + domain + " does not accept mail from this sender"
-	_, senderDomain, _ := strings.Cut(sender, "@")
 	var hosted, sameOrg bool
 	err = s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mail_domains WHERE name = $1), EXISTS (SELECT 1 FROM domains WHERE name = $1 AND org_id = $2)`, senderDomain, orgID).
 		Scan(&hosted, &sameOrg)
 	if err != nil {
 		return "", err
+	}
+	listed := func(list []string) bool {
+		return slices.ContainsFunc(senders, func(a string) bool { return slices.Contains(list, a) })
 	}
 	authenticated := saslUser != ""
 	if moderated && hosted && !authenticated {
@@ -104,9 +116,9 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 	case "organization":
 		permit = authenticated && sameOrg
 	case "members":
-		permit = trusted && (slices.Contains(members, sender) || dynamicMember)
+		permit = trusted && (listed(members) || dynamicMember)
 	case "allowlist":
-		permit = trusted && (slices.Contains(allowed, sender) || slices.Contains(allowed, "@"+senderDomain))
+		permit = trusted && (listed(allowed) || slices.Contains(allowed, "@"+senderDomain) || targetDomain != nil && slices.Contains(allowed, "@"+*targetDomain))
 	}
 	if permit {
 		return "DUNNO", nil

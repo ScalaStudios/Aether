@@ -48,15 +48,17 @@ type domain struct {
 	DKIMSelector      string     `json:"dkimSelector"`
 	DKIMRecord        string     `json:"dkimRecord"`
 	Active            bool       `json:"active"`
+	AliasOf           *string    `json:"aliasOf"`
+	AliasSendAs       bool       `json:"aliasSendAs"`
 	CreatedAt         time.Time  `json:"createdAt"`
 }
 
-const domainColumns = `id, org_id, name, verified_at, verification_token, dkim_selector, dkim_public_key, active, created_at`
+const domainColumns = `id, org_id, name, verified_at, verification_token, dkim_selector, dkim_public_key, active, alias_of, alias_send_as, created_at`
 
 func scanDomain(row pgx.Row) (*domain, error) {
 	d := &domain{}
 	var pub string
-	if err := row.Scan(&d.ID, &d.OrgID, &d.Name, &d.VerifiedAt, &d.VerificationToken, &d.DKIMSelector, &pub, &d.Active, &d.CreatedAt); err != nil {
+	if err := row.Scan(&d.ID, &d.OrgID, &d.Name, &d.VerifiedAt, &d.VerificationToken, &d.DKIMSelector, &pub, &d.Active, &d.AliasOf, &d.AliasSendAs, &d.CreatedAt); err != nil {
 		return nil, err
 	}
 	d.Verified = d.VerifiedAt != nil
@@ -93,7 +95,9 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	var in struct {
-		Name string `json:"name"`
+		Name        string  `json:"name"`
+		AliasOf     *string `json:"aliasOf"`
+		AliasSendAs bool    `json:"aliasSendAs"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
@@ -103,6 +107,20 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		writeError(w, http.StatusUnprocessableEntity, "invalid_domain", "Enter a fully qualified domain name such as example.com.")
 		return
 	}
+	if in.AliasOf != nil {
+		var target bool
+		if uuidPattern.MatchString(*in.AliasOf) {
+			if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM domains WHERE id = $1 AND org_id = $2 AND alias_of IS NULL)`, *in.AliasOf, orgID).Scan(&target); err != nil {
+				s.internalError(w, r, err)
+				return
+			}
+		}
+		if !target {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_alias_target", "Choose a domain of this organization that is not itself an alias domain.")
+			return
+		}
+	}
+	in.AliasSendAs = in.AliasSendAs && in.AliasOf != nil
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -119,8 +137,8 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	var id string
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(r.Context(), `INSERT INTO domains (org_id, name, verification_token, verified_at, dkim_selector, dkim_private_key, dkim_public_key) VALUES ($1, $2, $3, $4, $5, '', $6) RETURNING id`,
-			orgID, name, secrets.Token(20), verifiedAt, selector, base64.StdEncoding.EncodeToString(pub)).Scan(&id); err != nil {
+		if err := tx.QueryRow(r.Context(), `INSERT INTO domains (org_id, name, verification_token, verified_at, dkim_selector, dkim_private_key, dkim_public_key, alias_of, alias_send_as) VALUES ($1, $2, $3, $4, $5, '', $6, $7, $8) RETURNING id`,
+			orgID, name, secrets.Token(20), verifiedAt, selector, base64.StdEncoding.EncodeToString(pub), in.AliasOf, in.AliasSendAs).Scan(&id); err != nil {
 			return err
 		}
 		_, err := tx.Exec(r.Context(), `UPDATE domains SET dkim_private_key = $2 WHERE id = $1`, id, s.box.Seal(privPEM, "dkim:"+id))
@@ -138,7 +156,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	if err := s.publishDKIM(r.Context(), name, selector, privPEM); err != nil {
 		s.log.Error("dkim publish failed; outgoing mail for this domain will be unsigned until the API restarts", "domain", name, "err", err)
 	}
-	s.audit(r.Context(), r, p, &orgID, "domain.create", "domain", id, map[string]any{"name": name})
+	s.audit(r.Context(), r, p, &orgID, "domain.create", "domain", id, map[string]any{"name": name, "aliasOf": in.AliasOf, "aliasSendAs": in.AliasSendAs})
 	d, err := scanDomain(s.db.QueryRow(r.Context(), `SELECT `+domainColumns+` FROM domains WHERE id = $1`, id))
 	if err != nil {
 		s.internalError(w, r, err)
@@ -181,6 +199,10 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	_, err := s.db.Exec(r.Context(), `DELETE FROM domains WHERE id = $1`, d.ID)
 	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.ConstraintName == "domains_alias_of_fkey" {
+		writeError(w, http.StatusConflict, "domain_has_alias_domains", "Alias domains still point to this domain. Delete them first; the domain is unchanged.")
+		return
+	}
 	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 		writeError(w, http.StatusConflict, "domain_not_empty", "This domain still has mailboxes. Delete them first; the domain and its aliases are unchanged.")
 		return
@@ -193,6 +215,32 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 	s.kv.HDel(r.Context(), dkimSelectorsHash, d.Name)
 	s.audit(r.Context(), r, p, &d.OrgID, "domain.delete", "domain", d.ID, map[string]any{"name": d.Name})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request, p *principal) {
+	d, ok := s.domainFromPath(w, r, p)
+	if !ok {
+		return
+	}
+	var in struct {
+		AliasSendAs *bool `json:"aliasSendAs"`
+	}
+	if !decode(w, r, 8<<10, &in) {
+		return
+	}
+	if in.AliasSendAs != nil {
+		if d.AliasOf == nil {
+			writeError(w, http.StatusUnprocessableEntity, "not_alias_domain", "Only alias domains have a send-as setting.")
+			return
+		}
+		if _, err := s.db.Exec(r.Context(), `UPDATE domains SET alias_send_as = $2 WHERE id = $1`, d.ID, *in.AliasSendAs); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		s.audit(r.Context(), r, p, &d.OrgID, "domain.update", "domain", d.ID, map[string]any{"name": d.Name, "aliasSendAs": *in.AliasSendAs})
+		d.AliasSendAs = *in.AliasSendAs
+	}
+	writeJSON(w, http.StatusOK, d)
 }
 
 type dnsRecord struct {

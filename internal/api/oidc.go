@@ -341,7 +341,7 @@ func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, 
 		}
 		local, domain, _ := strings.Cut(email, "@")
 		var domainID string
-		err = tx.QueryRow(ctx, `SELECT id, org_id FROM domains WHERE name = $1 AND active AND verified_at IS NOT NULL`, domain).Scan(&domainID, &orgID)
+		err = tx.QueryRow(ctx, `SELECT id, org_id FROM domains WHERE name = $1 AND active AND verified_at IS NOT NULL AND alias_of IS NULL`, domain).Scan(&domainID, &orgID)
 		if errors.Is(err, pgx.ErrNoRows) || !localPartPattern.MatchString(local) {
 			return nil
 		}

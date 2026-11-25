@@ -566,6 +566,8 @@ paths:
               required: [name]
               properties:
                 name: { type: string }
+                aliasOf: { type: [string, "null"], format: uuid, description: "Makes this an alias domain of another domain of the organization that is not itself an alias domain. Mail to local@alias is delivered to local@target when that mailbox or alias exists, and rejected otherwise. Alias domains cannot hold mailboxes or aliases of their own." }
+                aliasSendAs: { type: boolean, default: false, description: "For an alias domain, lets everyone who may send as local@target also send as local@alias." }
       responses:
         "201":
           description: Created
@@ -573,6 +575,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Domain" }
         "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /domains/{domainId}:
     get:
       tags: [domains]
@@ -583,10 +586,29 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Domain" }
+    patch:
+      tags: [domains]
+      summary: Change whether people may send as their address on an alias domain
+      parameters: [{ $ref: "#/components/parameters/domainId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                aliasSendAs: { type: boolean }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+        "422": { $ref: "#/components/responses/Error" }
     delete:
       tags: [domains]
       summary: Delete a domain and its aliases
-      description: Refused with 409 domain_not_empty while any mailbox, active or not, still belongs to the domain; delete those mailboxes first. Aliases, DMARC reports and signature templates of the domain are deleted with it.
+      description: Refused with 409 domain_not_empty while any mailbox, active or not, still belongs to the domain, and with 409 domain_has_alias_domains while alias domains point to it; delete those first. Aliases, DMARC reports and signature templates of the domain are deleted with it.
       parameters: [{ $ref: "#/components/parameters/domainId" }]
       responses:
         "204": { description: "Deleted, including its aliases" }
@@ -2916,7 +2938,7 @@ components:
         html: { type: string }
     Domain:
       type: object
-      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, createdAt]
+      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, aliasOf, aliasSendAs, createdAt]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -2927,6 +2949,8 @@ components:
         dkimSelector: { type: string }
         dkimRecord: { type: string, description: TXT value to publish at <selector>._domainkey.<domain> }
         active: { type: boolean }
+        aliasOf: { type: [string, "null"], format: uuid, description: The domain this alias domain points to, or null for a regular domain }
+        aliasSendAs: { type: boolean }
         createdAt: { type: string, format: date-time }
     DNSRecord:
       type: object

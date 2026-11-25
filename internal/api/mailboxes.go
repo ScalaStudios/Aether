@@ -99,7 +99,7 @@ func (s *Server) myMailboxes(w http.ResponseWriter, r *http.Request, p *principa
 
 func (s *Server) orgDomain(r *http.Request, orgID, domainID string) (string, error) {
 	var name string
-	err := s.db.QueryRow(r.Context(), `SELECT name FROM domains WHERE id = $1 AND org_id = $2`, domainID, orgID).Scan(&name)
+	err := s.db.QueryRow(r.Context(), `SELECT name FROM domains WHERE id = $1 AND org_id = $2 AND alias_of IS NULL`, domainID, orgID).Scan(&name)
 	return name, err
 }
 
