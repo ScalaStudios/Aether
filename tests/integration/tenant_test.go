@@ -2,7 +2,10 @@
 
 package integration
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTenantIsolation(t *testing.T) {
 	a := setupWorld(t)
@@ -73,6 +76,9 @@ func TestTenantIsolation(t *testing.T) {
 		}
 		if d.method == "PATCH" {
 			body = map[string]bool{"active": false}
+		}
+		if d.method == "PATCH" && strings.HasPrefix(d.path, "/organizations/") {
+			body = map[string][]string{"mailboxProtocols": {}}
 		}
 		if d.method == "POST" && d.path[len(d.path)-4:] == "send" {
 			body = map[string]any{"to": []map[string]string{{"address": "x@" + b.domain}}, "subject": "x"}

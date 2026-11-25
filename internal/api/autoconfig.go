@@ -186,7 +186,7 @@ func (s *Server) appleProfile(w http.ResponseWriter, r *http.Request, p *princip
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	created, ok := s.issueAppPassword(w, r, p, in.MailboxID, "Apple device profile")
+	created, ok := s.issueAppPassword(w, r, p, in.MailboxID, "Apple device profile", "all")
 	if !ok {
 		return
 	}

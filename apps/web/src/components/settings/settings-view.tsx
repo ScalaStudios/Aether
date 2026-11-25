@@ -24,6 +24,7 @@ import { ManagedLists } from "@/components/settings/managed-lists"
 import { SenderLists } from "@/components/settings/sender-lists"
 import { Signatures } from "@/components/settings/signatures"
 import { PageHeader, SectionHeader } from "@/components/page-header"
+import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -35,7 +36,7 @@ import { useSession } from "@/hooks/use-session"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { myMailboxesQuery } from "@/lib/queries"
-import type { AppPassword, CreatedAppPassword, Session } from "@/lib/types"
+import type { AppPassword, AppPasswordScope, CreatedAppPassword, Session } from "@/lib/types"
 
 export function SettingsView() {
   const session = useSession().data
@@ -198,7 +199,16 @@ function ProfilePicture({ email, name }: { email: string; name: string }) {
 const createSchema = z.object({
   name: z.string().trim().min(1, "Name the device or client, for example “Laptop Thunderbird”."),
   mailboxId: z.string().min(1, "Choose a mailbox."),
+  scope: z.enum(["all", "mail", "dav"]),
 })
+
+const scopes: { value: AppPasswordScope; label: string }[] = [
+  { value: "all", label: "Mail, calendar and contacts" },
+  { value: "mail", label: "Mail" },
+  { value: "dav", label: "Calendar and contacts" },
+]
+
+const scopeLabel = (scope: AppPasswordScope) => scopes.find((s) => s.value === scope)?.label ?? scope
 
 type CreateValues = z.infer<typeof createSchema>
 
@@ -211,7 +221,7 @@ function AppPasswords() {
   const [revoking, setRevoking] = useState<AppPassword | null>(null)
   const [profiling, setProfiling] = useState(false)
   const [profileMailbox, setProfileMailbox] = useState("")
-  const form = useForm<CreateValues>({ resolver: zodResolver(createSchema), defaultValues: { name: "", mailboxId: "" } })
+  const form = useForm<CreateValues>({ resolver: zodResolver(createSchema), defaultValues: { name: "", mailboxId: "", scope: "all" } })
   const writable = mailboxes.data?.filter((m) => m.kind !== "shared" && (m.access === "owner" || (m.access === "full" && m.sendAs))) ?? []
 
   const create = useMutation({
@@ -260,7 +270,7 @@ function AppPasswords() {
     <section id="app-passwords" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
         title="App passwords"
-        description="Use an app password instead of your sign-in password in IMAP and SMTP mail clients. Each one works for a single mailbox. Shared mailboxes appear in your mail app automatically under Shared; they never need their own password."
+        description="Use an app password instead of your sign-in password in mail, calendar and contacts apps. Each one works for a single mailbox, and you can limit it to mail or to calendar and contacts. Shared mailboxes appear in your mail app automatically under Shared; they never need their own password."
         actions={
           <>
             <Button
@@ -290,6 +300,7 @@ function AppPasswords() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Mailbox</TableHead>
+                <TableHead>Works for</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-12">
                   <span className="sr-only">Actions</span>
@@ -301,6 +312,7 @@ function AppPasswords() {
                 <TableRow key={p.id}>
                   <TableCell className="font-medium">{p.name}</TableCell>
                   <TableCell>{p.mailboxAddress}</TableCell>
+                  <TableCell>{scopeLabel(p.scope)}</TableCell>
                   <TableCell>{formatDate(p.createdAt)}</TableCell>
                   <TableCell>
                     <IconButton label={`Revoke ${p.name}`} size="icon-sm" onClick={() => setRevoking(p)}>
@@ -331,7 +343,7 @@ function AppPasswords() {
         }
       >
         {created ? (
-          <ClientSettings password={created.password} username={created.mailboxAddress} host={host} />
+          <ClientSettings password={created.password} username={created.mailboxAddress} host={host} scope={created.scope} />
         ) : (
           <>
             <Field id="ap-name" label="Name" error={form.formState.errors.name?.message}>
@@ -355,6 +367,16 @@ function AppPasswords() {
                     </SelectContent>
                   </Select>
                 </Field>
+              )}
+            />
+            <Controller
+              control={form.control}
+              name="scope"
+              render={({ field }) => (
+                <fieldset className="flex flex-col items-start gap-2">
+                  <legend className="mb-2 text-label text-fg-secondary">Works for</legend>
+                  <SegmentedControl label="Works for" options={scopes} value={field.value} onChange={field.onChange} />
+                </fieldset>
               )}
             />
           </>
@@ -405,12 +427,10 @@ function AppPasswords() {
   )
 }
 
-function ClientSettings({ password, username, host }: { password: string; username: string; host: string }) {
-  const rows: [string, string][] = [
-    ["Username", username],
-    ["IMAP server", `${host} · port 993 SSL/TLS or 143 STARTTLS`],
-    ["SMTP server", `${host} · port 465 SSL/TLS or 587 STARTTLS`],
-  ]
+function ClientSettings({ password, username, host, scope }: { password: string; username: string; host: string; scope: AppPasswordScope }) {
+  const rows: [string, string][] = [["Username", username]]
+  if (scope !== "dav") rows.push(["IMAP server", `${host} · port 993 SSL/TLS or 143 STARTTLS`], ["SMTP server", `${host} · port 465 SSL/TLS or 587 STARTTLS`])
+  if (scope !== "mail") rows.push(["CalDAV and CardDAV", `https://${host}/dav/`])
 
   return (
     <div className="flex flex-col gap-4">
@@ -423,7 +443,7 @@ function ClientSettings({ password, username, host }: { password: string; userna
           </div>
         ))}
       </dl>
-      <p className="text-sm text-fg-tertiary">Authentication: normal password. Use the full mailbox address as the username for both servers.</p>
+      <p className="text-sm text-fg-tertiary">Authentication: normal password. Use the full mailbox address as the username for every server.</p>
     </div>
   )
 }

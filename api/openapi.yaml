@@ -161,7 +161,7 @@ paths:
     patch:
       tags: [organizations]
       summary: Change organization settings
-      description: Administrators only. API keys cannot use this route.
+      description: Administrators only. API keys cannot use this route. mailboxProtocols applies to mailboxes created afterwards, including mailboxes created at single sign-on; existing mailboxes keep their protocols.
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -171,6 +171,8 @@ paths:
               type: object
               properties:
                 deletedItemRetentionDays: { type: integer, minimum: 1, maximum: 30, description: Days that permanently deleted messages stay recoverable }
+                spamLearning: { type: boolean, description: Whether the spam filter learns from messages moved into and out of Junk }
+                mailboxProtocols: { $ref: "#/components/schemas/Protocols" }
       responses:
         "200":
           description: OK
@@ -616,8 +618,8 @@ paths:
   /mailboxes/{mailboxId}:
     patch:
       tags: [mailboxes]
-      summary: Change a mailbox's display name, quota, active state or directory visibility
-      description: Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them.
+      summary: Change a mailbox's display name, quota, active state, directory visibility or protocols
+      description: Removing imap or sieve from protocols ends the IMAP and ManageSieve sessions signed in as the address; removing imap from a shared mailbox also removes its members' rights from its folders in Dovecot and ends their sessions. App passwords stay valid and work again when the protocol is turned back on. Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -630,6 +632,7 @@ paths:
                 quotaBytes: { type: integer, minimum: 0 }
                 active: { type: boolean }
                 hiddenFromDirectory: { type: boolean, description: Leaves the mailbox out of the directory, address suggestions and the CardDAV directory. It still receives mail. }
+                protocols: { $ref: "#/components/schemas/Protocols" }
       responses:
         "200":
           description: OK
@@ -1255,7 +1258,7 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/AppPassword" } }
     post:
       tags: [app-passwords]
-      summary: Create an IMAP/SMTP app password. The secret is returned once.
+      summary: Create an app password for mail apps, calendar and contacts apps, or both. The secret is returned once.
       description: Only for an active user mailbox the caller owns, or has full access with Send as on; anything else is refused with 422 invalid_mailbox. Shared mailboxes never need an app password; they appear under Shared in each member's own mail account.
       requestBody:
         required: true
@@ -1267,6 +1270,7 @@ paths:
               properties:
                 name: { type: string }
                 mailboxId: { type: string, format: uuid }
+                scope: { $ref: "#/components/schemas/AppPasswordScope" }
       responses:
         "201":
           description: Created
@@ -2438,13 +2442,24 @@ components:
               role: { type: string, enum: [owner, admin, member] }
     Organization:
       type: object
-      required: [id, name, slug, createdAt, deletedItemRetentionDays]
+      required: [id, name, slug, createdAt, deletedItemRetentionDays, mailboxProtocols]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         slug: { type: string }
         createdAt: { type: string, format: date-time }
         deletedItemRetentionDays: { type: integer, minimum: 1, maximum: 30 }
+        mailboxProtocols: { $ref: "#/components/schemas/Protocols" }
+    Protocols:
+      type: array
+      uniqueItems: true
+      items: { type: string, enum: [imap, smtp, sieve, dav, webmail] }
+      description: "The ways a mailbox can be used: imap, smtp (SMTP submission), sieve (ManageSieve), dav (CalDAV and CardDAV) and webmail (Aether Mail). With webmail off, the mailbox disappears from Aether Mail for everyone, and organization administrators still manage its rules, automatic replies and signatures in the console."
+    AppPasswordScope:
+      type: string
+      enum: [all, mail, dav]
+      default: all
+      description: "mail allows IMAP and SMTP submission; dav allows CalDAV and CardDAV; all also allows ManageSieve. The mailbox's protocols still apply."
     ThemeColors:
       type: object
       description: "Colours that replace Aether's in one theme, as #rrggbb. Leave a key out to keep Aether's colour."
@@ -2606,7 +2621,7 @@ components:
         found: { type: array, items: { type: string } }
     Mailbox:
       type: object
-      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt, kind, hiddenFromDirectory]
+      required: [id, orgId, domainId, address, localPart, displayName, quotaBytes, active, createdAt, kind, hiddenFromDirectory, protocols]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -2623,6 +2638,7 @@ components:
         access: { type: string, enum: [owner, full, read], description: The caller's access. Only in GET /me/mailboxes. }
         sendAs: { type: boolean, description: The caller may send from the address. Only in GET /me/mailboxes. }
         sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }
+        protocols: { $ref: "#/components/schemas/Protocols" }
     Alias:
       type: object
       required: [id, orgId, domainId, address, localPart, destinations, active, kind, name, acceptFrom, allowedSenders, sendAs, owners, moderated, moderators, moderationExempt, hiddenFromDirectory]
@@ -2773,13 +2789,14 @@ components:
                   status: { $ref: "#/components/schemas/MessageTraceStatus" }
     AppPassword:
       type: object
-      required: [id, name, mailboxId, mailboxAddress, createdAt]
+      required: [id, name, mailboxId, mailboxAddress, createdAt, scope]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         mailboxId: { type: string, format: uuid }
         mailboxAddress: { type: string }
         createdAt: { type: string, format: date-time }
+        scope: { $ref: "#/components/schemas/AppPasswordScope" }
     Folder:
       type: object
       required: [name, specialUse, total, unread, subscribed]

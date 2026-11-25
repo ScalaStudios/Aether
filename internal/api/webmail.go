@@ -29,7 +29,7 @@ func (s *Server) accessibleMailbox(ctx context.Context, id, userID string) (*own
 	m := &ownedMailbox{}
 	err := s.db.QueryRow(ctx, `
 		SELECT m.id, m.org_id, m.address, m.display_name, m.kind, `+mailboxAccessLevel("$2")+`, `+mailboxSendAs("$2")+`, `+mailboxSendOnBehalf("$2")+` FROM mailboxes m JOIN domains d ON d.id = m.domain_id
-		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND d.active AND d.verified_at IS NOT NULL`, id, userID).
+		WHERE m.id = $1 AND `+mailboxAccess("$2")+` AND m.active AND 'webmail' = ANY(m.protocols) AND d.active AND d.verified_at IS NOT NULL`, id, userID).
 		Scan(&m.ID, &m.OrgID, &m.Address, &m.DisplayName, &m.Kind, &m.Access, &m.SendAs, &m.SendOnBehalf)
 	return m, m.Access, err
 }

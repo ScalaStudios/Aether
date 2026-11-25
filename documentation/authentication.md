@@ -137,6 +137,7 @@ IMAP and SMTP submission also accept an OpenID Connect access token through the 
 - An enabled identity provider in Aether publishes an `introspection_endpoint` (RFC 7662) in its discovery document, and reports the token as active when Aether asks with its client ID and secret. Halo does.
 - The token was issued to Aether's client ID, or its `aud` contains Aether's client ID or `AETHER_PUBLIC_URL`. A token issued to another application at the same provider is refused.
 - The token's subject is linked to an Aether account, which means the person has signed in to Aether through that provider at least once.
+- The mailbox has the protocol turned on: IMAP for IMAP logins, SMTP submission for SMTP logins (see [Protocol access](#protocol-access)).
 - That account is active and owns the mailbox, or has full access and Send as on it as a delegate. A shared mailbox is never accepted as the username; its folders are reached through a member's own login, as [Shared mailboxes](shared-mailboxes.md#in-mail-apps) describes.
 
 Dovecot hands these logins to the API, which caches a positive introspection result for up to 5 minutes, or until the token expires if that is sooner. Suspending an account or removing access takes effect at once, because the mailbox check is not cached.
@@ -145,7 +146,7 @@ Most desktop and phone mail apps only offer OAuth for a fixed list of large prov
 
 ## Calendar and contacts apps
 
-Calendar and contacts apps connect over CalDAV and CardDAV, using the same app passwords as mail apps.
+Calendar and contacts apps connect over CalDAV and CardDAV, using an app password created for **Mail, calendar and contacts** or for **Calendar and contacts**.
 
 | Setting | Value |
 | --- | --- |
@@ -154,6 +155,19 @@ Calendar and contacts apps connect over CalDAV and CardDAV, using the same app p
 | Password | an app password for that mailbox |
 
 Discovery works through `/.well-known/caldav` and `/.well-known/carddav`. The server, its discovery, and calendar and contact create, read, query, and delete are covered by automated tests that use the `go-webdav` client, and have also been checked with the Python `caldav` client. Apps can create calendars with `MKCALENDAR`. Apple Calendar and Contacts on iOS have been tested against a production installation: add Calendar under **Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account** (and Contacts under **Settings → Apps → Contacts → Contacts Accounts → Add Account → Other → Add CardDAV Account**) with the mail host name and an app password. Thunderbird and DAVx5 use the same standard, so they are expected to work, but they have not yet been tested against Aether.
+
+## Protocol access
+
+Each mailbox has five switches, under **Administration → Mailboxes → More actions → Protocol access**: Aether Mail, IMAP, SMTP submission, ManageSieve, and CalDAV and CardDAV. New mailboxes, including those created at single sign-on, start with the organization's defaults under **Protocols for new mailboxes**; changing the defaults leaves existing mailboxes alone. The API is `PATCH /api/v1/mailboxes/{mailboxId}` with `protocols`, and `PATCH /api/v1/organizations/{orgId}` with `mailboxProtocols`.
+
+- Dovecot checks IMAP, SMTP submission (through Postfix's SASL) and ManageSieve for app passwords in the `mail_credentials` view, and the API checks them for access tokens. The API checks CalDAV and CardDAV.
+- Turning IMAP or ManageSieve off ends the open sessions signed in as the address. Turning IMAP off for a shared mailbox also removes its members' rights from its folders and ends their sessions, and turning SMTP off stops members sending as it from their mail apps.
+- With Aether Mail off, the mailbox disappears from Aether Mail for everyone, and scheduled messages from it fail instead of sending. Administrators still manage its rules, automatic replies and signatures in the console, and server-side filters and automatic replies keep running.
+- App passwords are not revoked. They stop working for a protocol while it is off and work again when it is turned back on.
+
+An authenticated SMTP connection that is already open when SMTP is turned off can keep sending until the client disconnects, because Postfix only checks the credentials at login.
+
+Each app password also has a scope, chosen when it is created: **Mail** (IMAP and SMTP submission), **Calendar and contacts** (CalDAV and CardDAV), or **Mail, calendar and contacts**, which also allows ManageSieve. App passwords created before scopes existed, and those in Apple device profiles, have the last one.
 
 ## Bootstrap administrator
 

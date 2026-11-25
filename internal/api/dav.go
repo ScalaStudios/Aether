@@ -52,7 +52,8 @@ func (s *Server) davAuthenticate(r *http.Request) (string, bool) {
 		SELECT u.id FROM app_passwords p
 		JOIN mailboxes m ON m.id = p.mailbox_id
 		JOIN users u ON u.id = p.user_id
-		WHERE m.address = lower($1) AND p.token_hash = $2 AND p.revoked_at IS NULL AND m.active AND u.status = 'active' AND m.owner_user_id = u.id`,
+		WHERE m.address = lower($1) AND p.token_hash = $2 AND p.revoked_at IS NULL AND m.active AND u.status = 'active' AND m.owner_user_id = u.id
+		  AND 'dav' = ANY(m.protocols) AND p.scope IN ('all', 'dav')`,
 		strings.TrimSpace(username), secrets.SHA256Hex(password)).Scan(&userID)
 	return userID, err == nil
 }

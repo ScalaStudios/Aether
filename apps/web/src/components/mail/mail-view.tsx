@@ -40,7 +40,7 @@ function isTyping(target: EventTarget | null) {
 
 export function MailView() {
   const qc = useQueryClient()
-  const mailboxes = useQuery(myMailboxesQuery)
+  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.protocols.includes("webmail")) })
   const own = mailboxes.data?.filter((m) => m.kind !== "shared") ?? []
   const shared = mailboxes.data?.filter((m) => m.kind === "shared") ?? []
   const [primaryId, setPrimaryId] = useState<string | null>(null)

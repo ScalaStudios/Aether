@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,9 +31,21 @@ type mailbox struct {
 	Kind        string     `json:"kind"`
 	RetainedAt  *time.Time `json:"retainedAt"`
 	Hidden      bool       `json:"hiddenFromDirectory"`
+	Protocols   []string   `json:"protocols"`
 }
 
-const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at, hidden_from_directory`
+const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at, hidden_from_directory, protocols`
+
+var mailboxProtocols = []string{"imap", "smtp", "sieve", "dav", "webmail"}
+
+func validProtocols(list []string) bool {
+	for i, p := range list {
+		if !slices.Contains(mailboxProtocols, p) || slices.Contains(list[:i], p) {
+			return false
+		}
+	}
+	return list != nil
+}
 
 func collectMailboxes(rows pgx.Rows, err error) ([]mailbox, error) {
 	if err != nil {
@@ -194,9 +207,9 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		if in.Kind == "user" {
 			owner = &userID
 		}
-		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+mailboxColumns,
+		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind, protocols) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT mailbox_protocols FROM organizations WHERE id = $1)) RETURNING `+mailboxColumns,
 			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Kind).
-			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden)
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols)
 		if err == nil && in.Kind == "resource" {
 			err = saveResource(r.Context(), tx, m.ID, in.Resource)
 		}
@@ -231,7 +244,7 @@ func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *prin
 	}
 	var m mailbox
 	err := s.db.QueryRow(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes WHERE id = $1`, id).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden)
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.orgRole(m.OrgID) == "") {
 		notFound(w)
 		return nil, false
@@ -253,16 +266,21 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	var in struct {
-		DisplayName *string `json:"displayName"`
-		QuotaBytes  *int64  `json:"quotaBytes"`
-		Active      *bool   `json:"active"`
-		Hidden      *bool   `json:"hiddenFromDirectory"`
+		DisplayName *string   `json:"displayName"`
+		QuotaBytes  *int64    `json:"quotaBytes"`
+		Active      *bool     `json:"active"`
+		Hidden      *bool     `json:"hiddenFromDirectory"`
+		Protocols   *[]string `json:"protocols"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
 	if in.QuotaBytes != nil && *in.QuotaBytes < 0 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_quota", "The quota cannot be negative.")
+		return
+	}
+	if in.Protocols != nil && !validProtocols(*in.Protocols) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_protocols", "Protocols must be a list of imap, smtp, sieve, dav and webmail.")
 		return
 	}
 	if in.Active != nil && !*in.Active {
@@ -279,21 +297,57 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 			return
 		}
 	}
-	err := s.db.QueryRow(r.Context(), `
-		UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active), hidden_from_directory = coalesce($5, hidden_from_directory),
-			retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END
-		WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active, in.Hidden).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden)
+	var imapChanged bool
+	err := pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		var before []string
+		if err := tx.QueryRow(r.Context(), `SELECT protocols FROM mailboxes WHERE id = $1 FOR UPDATE`, m.ID).Scan(&before); err != nil {
+			return err
+		}
+		err := tx.QueryRow(r.Context(), `
+			UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active), hidden_from_directory = coalesce($5, hidden_from_directory), protocols = coalesce($6, protocols),
+				retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END
+			WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active, in.Hidden, in.Protocols).
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols)
+		if err != nil {
+			return err
+		}
+		lost := func(protocol string) bool {
+			return slices.Contains(before, protocol) && !slices.Contains(m.Protocols, protocol)
+		}
+		var kick []string
+		if lost("imap") || lost("sieve") {
+			kick = append(kick, m.Address)
+		}
+		imapChanged = m.Kind == "shared" && slices.Contains(before, "imap") != slices.Contains(m.Protocols, "imap")
+		if imapChanged {
+			if _, err := tx.Exec(r.Context(), `UPDATE mailboxes SET `+markACLPending+` WHERE id = $1`, m.ID); err != nil {
+				return err
+			}
+		}
+		if imapChanged && lost("imap") {
+			rows, err := tx.Query(r.Context(), `SELECT u.email FROM mailbox_delegates md JOIN users u ON u.id = md.user_id WHERE md.mailbox_id = $1`, m.ID)
+			if err != nil {
+				return err
+			}
+			members, err := pgx.CollectRows(rows, pgx.RowTo[string])
+			if err != nil {
+				return err
+			}
+			kick = append(kick, members...)
+		}
+		return queueKicks(r.Context(), tx, kick)
+	})
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.update", "mailbox", m.ID, map[string]any{"address": m.Address, "active": m.Active, "quotaBytes": m.QuotaBytes, "hiddenFromDirectory": m.Hidden})
-	if activate {
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.update", "mailbox", m.ID, map[string]any{"address": m.Address, "active": m.Active, "quotaBytes": m.QuotaBytes, "hiddenFromDirectory": m.Hidden, "protocols": m.Protocols})
+	if activate || imapChanged {
 		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
 			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)
 		}
 	}
+	wake(s.kickWake)
 	writeJSON(w, http.StatusOK, m)
 }
 
@@ -472,10 +526,11 @@ type appPassword struct {
 	MailboxID      string    `json:"mailboxId"`
 	MailboxAddress string    `json:"mailboxAddress"`
 	CreatedAt      time.Time `json:"createdAt"`
+	Scope          string    `json:"scope"`
 }
 
 func (s *Server) listAppPasswords(w http.ResponseWriter, r *http.Request, p *principal) {
-	rows, err := s.db.Query(r.Context(), `SELECT a.id, a.name, a.mailbox_id, m.address, a.created_at FROM app_passwords a JOIN mailboxes m ON m.id = a.mailbox_id WHERE a.user_id = $1 AND a.revoked_at IS NULL ORDER BY a.created_at DESC`, p.User.ID)
+	rows, err := s.db.Query(r.Context(), `SELECT a.id, a.name, a.mailbox_id, m.address, a.created_at, a.scope FROM app_passwords a JOIN mailboxes m ON m.id = a.mailbox_id WHERE a.user_id = $1 AND a.revoked_at IS NULL ORDER BY a.created_at DESC`, p.User.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -497,30 +552,38 @@ func (s *Server) createAppPassword(w http.ResponseWriter, r *http.Request, p *pr
 	var in struct {
 		Name      string `json:"name"`
 		MailboxID string `json:"mailboxId"`
+		Scope     string `json:"scope"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
 	in.Name = strings.TrimSpace(in.Name)
+	if in.Scope == "" {
+		in.Scope = "all"
+	}
 	if in.Name == "" || len(in.Name) > 100 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Name the app password after the device or app that will use it.")
 		return
 	}
-	if out, ok := s.issueAppPassword(w, r, p, in.MailboxID, in.Name); ok {
+	if in.Scope != "all" && in.Scope != "mail" && in.Scope != "dav" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_scope", "Scope must be all, mail or dav.")
+		return
+	}
+	if out, ok := s.issueAppPassword(w, r, p, in.MailboxID, in.Name, in.Scope); ok {
 		writeJSON(w, http.StatusCreated, out)
 	}
 }
 
-func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *principal, mailboxID, name string) (*createdAppPassword, bool) {
+func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *principal, mailboxID, name, scope string) (*createdAppPassword, bool) {
 	var out createdAppPassword
 	var orgID string
 	out.Password = secrets.Token(20)
 	err := s.db.QueryRow(r.Context(), `
-		INSERT INTO app_passwords (user_id, mailbox_id, name, token_hash)
-		SELECT $1, m.id, $3, $4 FROM mailboxes m WHERE m.id = $2 AND m.active AND `+signInAsMailbox("$1")+`
-		RETURNING id, name, mailbox_id, created_at, (SELECT address FROM mailboxes WHERE id = $2), (SELECT org_id FROM mailboxes WHERE id = $2)`,
-		p.User.ID, mailboxID, name, secrets.SHA256Hex(out.Password)).
-		Scan(&out.ID, &out.Name, &out.MailboxID, &out.CreatedAt, &out.MailboxAddress, &orgID)
+		INSERT INTO app_passwords (user_id, mailbox_id, name, token_hash, scope)
+		SELECT $1, m.id, $3, $4, $5 FROM mailboxes m WHERE m.id = $2 AND m.active AND `+signInAsMailbox("$1")+`
+		RETURNING id, name, mailbox_id, created_at, scope, (SELECT address FROM mailboxes WHERE id = $2), (SELECT org_id FROM mailboxes WHERE id = $2)`,
+		p.User.ID, mailboxID, name, secrets.SHA256Hex(out.Password), scope).
+		Scan(&out.ID, &out.Name, &out.MailboxID, &out.CreatedAt, &out.Scope, &out.MailboxAddress, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) || (err != nil && !uuidPattern.MatchString(mailboxID)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_mailbox", "Choose one of your own active mailboxes.")
 		return nil, false
@@ -529,7 +592,7 @@ func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *pri
 		s.internalError(w, r, err)
 		return nil, false
 	}
-	s.audit(r.Context(), r, p, &orgID, "app_password.create", "app_password", out.ID, map[string]any{"mailbox": out.MailboxAddress})
+	s.audit(r.Context(), r, p, &orgID, "app_password.create", "app_password", out.ID, map[string]any{"mailbox": out.MailboxAddress, "scope": out.Scope})
 	return &out, true
 }
 

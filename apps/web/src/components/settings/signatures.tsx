@@ -24,7 +24,7 @@ import { myMailboxesQuery, signaturesQuery } from "@/lib/queries"
 import type { Signature, SignatureSettings } from "@/lib/types"
 
 export function Signatures() {
-  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read") })
+  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read" && m.protocols.includes("webmail")) })
   const [chosen, setChosen] = useState<string | null>(null)
   const mailboxId = chosen ?? mailboxes.data?.[0]?.id ?? null
   const [editing, setEditing] = useState<Signature | null>(null)

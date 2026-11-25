@@ -273,7 +273,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	var usable, permitted, writable bool
 	err = tx.QueryRow(ctx, `
 		SELECT s.id, s.mailbox_id, m.address, m.display_name, s.recipients, s.raw, s.in_reply_to, s.attempts, s.subject, s.sender_mode, s.sender_user_id,
-		       m.active AND d.active AND d.verified_at IS NOT NULL,
+		       m.active AND 'webmail' = ANY(m.protocols) AND d.active AND d.verified_at IS NOT NULL,
 		       coalesce(u.status = 'active' AND CASE s.sender_mode WHEN 'send_as' THEN `+mailboxSendAs("s.sender_user_id")+` ELSE `+mailboxSendOnBehalf("s.sender_user_id")+` END, false),
 		       `+mailboxAccessLevel("s.sender_user_id")+` IN ('owner', 'full')
 		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id LEFT JOIN users u ON u.id = s.sender_user_id
@@ -287,7 +287,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		return false
 	}
 	if !usable {
-		tx.Exec(ctx, `UPDATE scheduled_messages SET error = 'The mailbox is disabled.' WHERE id = $1`, id)
+		tx.Exec(ctx, `UPDATE scheduled_messages SET error = 'The mailbox is disabled or Aether Mail is turned off for it.' WHERE id = $1`, id)
 		return tx.Commit(ctx) == nil
 	}
 	if !permitted {

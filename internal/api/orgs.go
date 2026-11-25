@@ -18,10 +18,11 @@ type organization struct {
 	CreatedAt    time.Time `json:"createdAt"`
 	SpamLearning bool      `json:"spamLearning"`
 
-	DeletedItemRetentionDays int `json:"deletedItemRetentionDays"`
+	DeletedItemRetentionDays int      `json:"deletedItemRetentionDays"`
+	MailboxProtocols         []string `json:"mailboxProtocols"`
 }
 
-const organizationColumns = `id, name, slug, created_at, spam_learning, deleted_item_retention_days`
+const organizationColumns = `id, name, slug, created_at, spam_learning, deleted_item_retention_days, mailbox_protocols`
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request, p *principal) {
 	rows, err := s.db.Query(r.Context(), `
@@ -58,7 +59,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, p *p
 	}
 	var org organization
 	err := s.db.QueryRow(r.Context(), `INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING `+organizationColumns, in.Name, in.Slug).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays)
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		writeError(w, http.StatusConflict, "slug_taken", "Another organization already uses this slug.")
@@ -94,7 +95,7 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request, p *prin
 		return
 	}
 	var org organization
-	err := s.db.QueryRow(r.Context(), `SELECT `+organizationColumns+` FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays)
+	err := s.db.QueryRow(r.Context(), `SELECT `+organizationColumns+` FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -112,13 +113,14 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 		return
 	}
 	var in struct {
-		SpamLearning             *bool `json:"spamLearning"`
-		DeletedItemRetentionDays *int  `json:"deletedItemRetentionDays"`
+		SpamLearning             *bool     `json:"spamLearning"`
+		DeletedItemRetentionDays *int      `json:"deletedItemRetentionDays"`
+		MailboxProtocols         *[]string `json:"mailboxProtocols"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
 	}
-	if in.SpamLearning == nil && in.DeletedItemRetentionDays == nil {
+	if in.SpamLearning == nil && in.DeletedItemRetentionDays == nil && in.MailboxProtocols == nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_organization", "Choose whether the spam filter learns from Junk moves.")
 		return
 	}
@@ -126,11 +128,16 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 		writeError(w, http.StatusUnprocessableEntity, "invalid_retention", "Keep deleted items for 1 to 30 days.")
 		return
 	}
+	if in.MailboxProtocols != nil && !validProtocols(*in.MailboxProtocols) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_protocols", "Protocols must be a list of imap, smtp, sieve, dav and webmail.")
+		return
+	}
 	var org organization
 	err := s.db.QueryRow(r.Context(), `
-		UPDATE organizations SET spam_learning = coalesce($2, spam_learning), deleted_item_retention_days = coalesce($3, deleted_item_retention_days)
-		WHERE id = $1 RETURNING `+organizationColumns, orgID, in.SpamLearning, in.DeletedItemRetentionDays).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays)
+		UPDATE organizations SET spam_learning = coalesce($2, spam_learning), deleted_item_retention_days = coalesce($3, deleted_item_retention_days),
+			mailbox_protocols = coalesce($4, mailbox_protocols)
+		WHERE id = $1 RETURNING `+organizationColumns, orgID, in.SpamLearning, in.DeletedItemRetentionDays, in.MailboxProtocols).
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -141,6 +148,9 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 	}
 	if in.DeletedItemRetentionDays != nil {
 		changes["deletedItemRetentionDays"] = org.DeletedItemRetentionDays
+	}
+	if in.MailboxProtocols != nil {
+		changes["mailboxProtocols"] = org.MailboxProtocols
 	}
 	s.audit(r.Context(), r, p, &org.ID, "organization.update", "organization", org.ID, changes)
 	writeJSON(w, http.StatusOK, org)

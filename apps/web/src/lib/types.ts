@@ -31,6 +31,8 @@ export interface AuthProviders {
   providers: { slug: string; name: string; kind: ProviderKind }[]
 }
 
+export type Protocol = "imap" | "smtp" | "sieve" | "dav" | "webmail"
+
 export interface Organization {
   id: string
   name: string
@@ -38,6 +40,7 @@ export interface Organization {
   createdAt: string
   spamLearning: boolean
   deletedItemRetentionDays: number
+  mailboxProtocols: Protocol[]
 }
 
 export interface Domain {
@@ -97,6 +100,7 @@ export interface Mailbox {
   kind: MailboxKind
   retainedAt?: string | null
   hiddenFromDirectory: boolean
+  protocols: Protocol[]
   access?: "owner" | DelegateAccess
   sendAs?: boolean
   sendOnBehalf?: boolean
@@ -340,7 +344,10 @@ export interface AppPassword {
   mailboxId: string
   mailboxAddress: string
   createdAt: string
+  scope: AppPasswordScope
 }
+
+export type AppPasswordScope = "all" | "mail" | "dav"
 
 export type CreatedAppPassword = AppPassword & { password: string }
 

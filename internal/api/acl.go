@@ -136,7 +136,8 @@ func (s *Server) reconcileACL(ctx context.Context, c *aclClaim) error {
 func (s *Server) syncClaimedACL(ctx context.Context, c *aclClaim) error {
 	members := map[string]imap.RightSet{}
 	if c.kind == "shared" {
-		rows, err := s.db.Query(ctx, `SELECT u.email, md.access FROM mailbox_delegates md JOIN users u ON u.id = md.user_id WHERE md.mailbox_id = $1 AND u.status = 'active'`, c.id)
+		rows, err := s.db.Query(ctx, `SELECT u.email, md.access FROM mailbox_delegates md JOIN users u ON u.id = md.user_id JOIN mailboxes m ON m.id = md.mailbox_id
+			WHERE md.mailbox_id = $1 AND u.status = 'active' AND 'imap' = ANY(m.protocols)`, c.id)
 		if err != nil {
 			return err
 		}

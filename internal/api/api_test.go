@@ -243,3 +243,22 @@ func TestPlistEscapesValues(t *testing.T) {
 		t.Errorf("dict = %s", got)
 	}
 }
+
+func TestValidProtocols(t *testing.T) {
+	for _, tc := range []struct {
+		list []string
+		want bool
+	}{
+		{[]string{"imap", "smtp", "sieve", "dav", "webmail"}, true},
+		{[]string{"webmail"}, true},
+		{[]string{}, true},
+		{nil, false},
+		{[]string{"pop3"}, false},
+		{[]string{"imap", "imap"}, false},
+		{[]string{"IMAP"}, false},
+	} {
+		if got := validProtocols(tc.list); got != tc.want {
+			t.Errorf("validProtocols(%q) = %v, want %v", tc.list, got, tc.want)
+		}
+	}
+}

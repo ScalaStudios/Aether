@@ -49,7 +49,7 @@ const statuses: Record<MailImport["status"], { tone: "success" | "warning" | "da
 
 export function ImportMail() {
   const qc = useQueryClient()
-  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read") })
+  const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read" && m.protocols.includes("webmail")) })
   const [chosen, setChosen] = useState<string | null>(null)
   const mailboxId = chosen ?? mailboxes.data?.[0]?.id ?? null
   const [open, setOpen] = useState(false)

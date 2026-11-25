@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Eye, EyeOff, Inbox, ListFilter, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, CalendarArrowUp, Ellipsis, Eye, EyeOff, Inbox, ListFilter, Plug, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { api, ApiError, errorMessage } from "@/lib/api"
 import { formatBytes, plural } from "@/lib/format"
 import { organizationsQuery } from "@/lib/queries"
-import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization } from "@/lib/types"
+import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization, Protocol } from "@/lib/types"
 
 const MB = 1024 * 1024
 
@@ -277,6 +277,62 @@ function RetentionSetting({ orgId }: { orgId: string }) {
   )
 }
 
+const protocolOptions: { value: Protocol; label: string; hint: string }[] = [
+  { value: "webmail", label: "Aether Mail", hint: "Read and send mail in the browser." },
+  { value: "imap", label: "IMAP", hint: "Mail apps read and organize mail." },
+  { value: "smtp", label: "SMTP submission", hint: "Mail apps send mail." },
+  { value: "sieve", label: "ManageSieve", hint: "Mail apps edit filters." },
+  { value: "dav", label: "CalDAV and CardDAV", hint: "Calendar and contacts apps sync." },
+]
+
+function ProtocolsDialog({
+  initial,
+  title,
+  description,
+  pending,
+  onOpenChange,
+  onSave,
+}: {
+  initial: Protocol[] | null
+  title: string
+  description: string
+  pending: boolean
+  onOpenChange: (open: boolean) => void
+  onSave: (protocols: Protocol[]) => void
+}) {
+  const [chosen, setChosen] = useState<Protocol[]>(initial ?? [])
+
+  return (
+    <FormDialog
+      open={!!initial}
+      onOpenChange={onOpenChange}
+      title={title}
+      description={description}
+      submitLabel="Save"
+      pending={pending}
+      onSubmit={(e) => {
+        e.preventDefault()
+        onSave(protocolOptions.map((o) => o.value).filter((p) => chosen.includes(p)))
+      }}
+    >
+      {protocolOptions.map((o) => (
+        <div key={o.value} className="flex items-start gap-3">
+          <Switch
+            id={`protocol-${o.value}`}
+            checked={chosen.includes(o.value)}
+            onCheckedChange={(on) => setChosen((list) => (on ? [...list, o.value] : list.filter((p) => p !== o.value)))}
+            className="mt-1"
+          />
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`protocol-${o.value}`}>{o.label}</Label>
+            <p className="text-sm text-fg-tertiary">{o.hint}</p>
+          </div>
+        </div>
+      ))}
+    </FormDialog>
+  )
+}
+
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
   const mailboxes = useQuery({
@@ -291,6 +347,9 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [auditing, setAuditing] = useState<Mailbox | null>(null)
   const [converting, setConverting] = useState<Mailbox | null>(null)
   const [recovering, setRecovering] = useState<Mailbox | null>(null)
+  const [restricting, setRestricting] = useState<Mailbox | null>(null)
+  const [editingDefaults, setEditingDefaults] = useState(false)
+  const org = useQuery({ ...organizationsQuery, select: (list) => list.find((o) => o.id === orgId) })
   const fileInput = useRef<HTMLInputElement>(null)
   const importTarget = useRef<{ mailbox: Mailbox; kind: ImportKind } | null>(null)
   const form = useForm<Values>({
@@ -352,6 +411,22 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       refresh()
     },
   })
+  const saveProtocols = useMutation({
+    mutationFn: ({ m, protocols }: { m: Mailbox; protocols: Protocol[] }) => api<Mailbox>(`/mailboxes/${m.id}`, { method: "PATCH", body: { protocols } }),
+    onSuccess: (m) => {
+      toast.success(`Saved protocol access for ${m.address}`)
+      setRestricting(null)
+      refresh()
+    },
+  })
+  const saveDefaults = useMutation({
+    mutationFn: (mailboxProtocols: Protocol[]) => api<Organization>(`/organizations/${orgId}`, { method: "PATCH", body: { mailboxProtocols } }),
+    onSuccess: () => {
+      toast.success("Saved protocol access for new mailboxes")
+      setEditingDefaults(false)
+      qc.invalidateQueries({ queryKey: organizationsQuery.queryKey })
+    },
+  })
   const convert = useMutation({
     mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}/convert`, { method: "POST", body: { kind: m.kind === "shared" ? "user" : "shared" } }),
     onSuccess: (m) => {
@@ -374,10 +449,16 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         title="Mailboxes"
         description="User mailboxes have an owner account that signs in with the address. Shared mailboxes have members instead."
         actions={
-          <Button onClick={() => setCreating(true)}>
-            <Plus aria-hidden />
-            Create mailbox
-          </Button>
+          <>
+            <Button variant="secondary" disabled={!org.data} onClick={() => setEditingDefaults(true)}>
+              <Plug aria-hidden />
+              Protocols for new mailboxes
+            </Button>
+            <Button onClick={() => setCreating(true)}>
+              <Plus aria-hidden />
+              Create mailbox
+            </Button>
+          </>
         }
       />
       <QueryView query={mailboxes} empty={<EmptyState icon={Inbox} title="No mailboxes" description="Create a mailbox on one of this organization's domains." />}>
@@ -450,6 +531,10 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                             <DropdownMenuItem onSelect={() => setRecovering(m)}>
                               <ArchiveRestore aria-hidden />
                               Recover deleted items…
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setRestricting(m)}>
+                              <Plug aria-hidden />
+                              Protocol access…
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => setAuditing(m)}>
                               <ShieldCheck aria-hidden />
@@ -538,6 +623,26 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       <DelegatesDialog mailbox={delegating} onOpenChange={(open) => !open && setDelegating(null)} />
 
       <RecoverDialog mailbox={recovering} onOpenChange={(open) => !open && setRecovering(null)} />
+
+      <ProtocolsDialog
+        key={restricting?.id ?? "mailbox"}
+        initial={restricting?.protocols ?? null}
+        title={`Protocol access for ${restricting?.address}`}
+        description="Turning off IMAP or ManageSieve ends open sessions right away. App passwords stay and work again when you turn a protocol back on."
+        pending={saveProtocols.isPending}
+        onOpenChange={(open) => !open && setRestricting(null)}
+        onSave={(protocols) => restricting && saveProtocols.mutate({ m: restricting, protocols })}
+      />
+
+      <ProtocolsDialog
+        key={editingDefaults ? "defaults-open" : "defaults"}
+        initial={editingDefaults ? (org.data?.mailboxProtocols ?? null) : null}
+        title="Protocols for new mailboxes"
+        description="Mailboxes created from now on, including at single sign-on, start with these protocols. Existing mailboxes keep theirs."
+        pending={saveDefaults.isPending}
+        onOpenChange={setEditingDefaults}
+        onSave={(protocols) => saveDefaults.mutate(protocols)}
+      />
 
       <input
         ref={fileInput}
