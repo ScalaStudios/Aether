@@ -990,7 +990,7 @@ paths:
   /mailboxes/{mailboxId}:
     patch:
       tags: [mailboxes]
-      summary: Change a mailbox's display name, quota, active state, directory visibility or protocols
+      summary: Change a mailbox's display name, quota, active state, directory visibility, protocols or hold
       description: Removing imap or sieve from protocols ends the IMAP and ManageSieve sessions signed in as the address; removing imap from a shared mailbox also removes its members' rights from its folders in Dovecot and ends their sessions. App passwords stay valid and work again when the protocol is turned back on. Setting active to false on a shared mailbox removes every member's rights from its folders in Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Once the rights are removed, the mailbox is closed and the members' IMAP sessions are ended. On a user mailbox it ends the sessions signed in as its address. Setting active to true on a shared mailbox marks the members for reconciliation, writes their rights to Dovecot and answers 200; if Dovecot cannot be reached at that moment, a background worker finishes the reconciliation. Session ends are retried until Dovecot confirms them.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
@@ -1005,6 +1005,7 @@ paths:
                 active: { type: boolean }
                 hiddenFromDirectory: { type: boolean, description: Leaves the mailbox out of the directory, address suggestions and the CardDAV directory. It still receives mail. }
                 protocols: { $ref: "#/components/schemas/Protocols" }
+                onHold: { type: boolean, description: While true, deleting the mailbox closes it and keeps its mail. Setting active to true also cancels a scheduled deletion. }
       responses:
         "200":
           description: OK
@@ -1015,10 +1016,34 @@ paths:
     delete:
       tags: [mailboxes]
       summary: Delete a mailbox
-      description: For a shared mailbox, removes every member's rights from Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Then deletes the mailbox and ends every IMAP session signed in as it and, for a shared mailbox, every member's sessions; the session ends are retried until Dovecot confirms them.
+      description: For a shared mailbox, removes every member's rights from Dovecot first; if Dovecot cannot be reached, or the rights cannot be removed within 60 seconds, the request answers 503 mail_unavailable and nothing changes. Then the mailbox stops receiving mail and its sessions are ended. graceDays, from 0 to 3650 and 0 when omitted, keeps the closed mailbox and its mail until that many days have passed; POST /mailboxes/{mailboxId}/restore brings it back. With graceDays 0 the mail is removed and the mailbox row is deleted. A mailbox on hold is closed instead, and its mail stays. After the row is gone, Dovecot removes the mailbox directory from the vmail volume.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - name: graceDays
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 3650, default: 0 }
+      responses:
+        "204": { description: Deleted now. The mail is removed from the mailbox and the directory is removed from the vmail volume. }
+        "200":
+          description: Closed. The mail is kept because the mailbox is on hold, or until purgeAfter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/restore:
+    post:
+      tags: [mailboxes]
+      summary: Cancel a scheduled mailbox deletion
+      description: Clears purgeAfter and activates the mailbox again. Refused with 422 not_deleting when nothing is scheduled. A shared mailbox's members are written back to Dovecot.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       responses:
-        "204": { description: Deleted. Stored mail on disk is retained for manual removal. }
+        "200":
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mailbox" }
+        "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/sending-limits:
     parameters: [{ $ref: "#/components/parameters/orgId" }]
@@ -1091,6 +1116,63 @@ paths:
       responses:
         "204": { description: Released }
         "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/exports:
+    get:
+      tags: [mailboxes]
+      summary: List mailbox exports
+      description: The mailbox's owner, anyone with access to it, and organization administrators. An administrator sees every export of the mailbox; anyone else sees only their own. API keys cannot call this route.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: Recent exports, newest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MailboxExport" } }
+    post:
+      tags: [mailboxes]
+      summary: Export a mailbox
+      description: Queues an export of the mailbox's mail, and of its owner's calendars and contacts when those flags are set. The caller must have access to the mailbox, or be an organization administrator; an administrator's export is recorded as mailbox.export. The file is built in the background. Download it from the link in the export once its status is ready. The link expires 7 days after the file is ready. One export per person per mailbox runs at a time. API keys cannot call this route.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format: { type: string, enum: [zip, mbox], default: zip, description: zip is a ZIP of .eml files. mbox is a single mbox file, or a ZIP containing mailbox.mbox when calendars or contacts are included. }
+                folder: { type: string, description: One folder. Empty exports every folder. }
+                since: { type: string, description: YYYY-MM-DD or RFC3339, inclusive. }
+                until: { type: string, description: YYYY-MM-DD, inclusive of that day, or an RFC3339 time. }
+                includeCalendar: { type: boolean, default: true }
+                includeContacts: { type: boolean, default: true }
+      responses:
+        "202":
+          description: Export queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailboxExport" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/exports/{exportId}/download:
+    get:
+      tags: [mailboxes]
+      summary: Download a finished mailbox export
+      description: The person who started it, or an organization administrator, while the link has not expired.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - name: exportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The archive
+          content:
+            application/zip: { schema: { type: string, format: binary } }
+            application/mbox: { schema: { type: string, format: binary } }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/convert:
     post:
       tags: [mailboxes]
@@ -4830,6 +4912,28 @@ components:
         kind: { type: string, enum: [user, shared], description: A user mailbox has an owner account that signs in with the address. A shared mailbox has no sign-in; its members open it with their own accounts. }
         hiddenFromDirectory: { type: boolean }
         fromAddresses: { type: array, items: { $ref: "#/components/schemas/Address" }, description: Authorized From addresses for this mailbox. Only in GET /me/mailboxes. }
+        purgeAfter: { type: [string, "null"], format: date-time, description: When set, the mailbox is closed and its mail is removed from the vmail volume at this time unless it is on hold or restored. }
+        onHold: { type: boolean, description: Deletion keeps the mail. }
+    MailboxExport:
+      type: object
+      required: [id, format, folder, includeCalendar, includeContacts, status, error, bytes, messages, mediaType, filename, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        format: { type: string, enum: [zip, mbox] }
+        folder: { type: string }
+        since: { type: [string, "null"], format: date-time }
+        until: { type: [string, "null"], format: date-time }
+        includeCalendar: { type: boolean }
+        includeContacts: { type: boolean }
+        status: { type: string, enum: [pending, running, ready, failed, expired] }
+        error: { type: string }
+        bytes: { type: integer }
+        messages: { type: integer }
+        mediaType: { type: string }
+        filename: { type: string }
+        expiresAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
         access: { type: string, enum: [owner, full, read], description: The caller's access. Only in GET /me/mailboxes. }
         sendAs: { type: boolean, description: The caller may send from the address. Only in GET /me/mailboxes. }
         sendOnBehalf: { type: boolean, description: The caller may send on behalf of the address. Only in GET /me/mailboxes. }

@@ -150,6 +150,8 @@ export interface Mailbox {
   retainedAt?: string | null
   hiddenFromDirectory: boolean
   protocols: Protocol[]
+  purgeAfter?: string | null
+  onHold: boolean
   access?: "owner" | DelegateAccess
   sendAs?: boolean
   sendOnBehalf?: boolean
@@ -164,6 +166,25 @@ export interface QuotaWarnings {
 }
 
 export type DelegateAccess = "read" | "full"
+
+export interface MailboxExport {
+  id: string
+  format: "zip" | "mbox"
+  folder: string
+  since?: string | null
+  until?: string | null
+  includeCalendar: boolean
+  includeContacts: boolean
+  status: "pending" | "running" | "ready" | "failed" | "expired"
+  error: string
+  bytes: number
+  messages: number
+  mediaType: string
+  filename: string
+  expiresAt?: string | null
+  createdAt: string
+  finishedAt?: string | null
+}
 
 export interface Delegate {
   userId: string

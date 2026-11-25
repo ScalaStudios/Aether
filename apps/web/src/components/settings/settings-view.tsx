@@ -17,6 +17,7 @@ import { IconButton } from "@/components/icon-button"
 import { PageContainer } from "@/components/page-container"
 import { FlowApprovals } from "@/components/settings/approvals"
 import { HeldMessages } from "@/components/settings/held-messages"
+import { ExportMail } from "@/components/settings/export-mail"
 import { ImportMail } from "@/components/settings/import-mail"
 import { MailRules } from "@/components/settings/mail-rules"
 import { MailboxAccess } from "@/components/settings/mailbox-access"
@@ -106,6 +107,7 @@ export function SettingsView() {
           <HeldMessages />
           <ManagedLists />
           <ImportMail />
+          <ExportMail />
           <MailboxAccess />
           <AppPasswords />
           <CalendarApps />

@@ -486,7 +486,7 @@ func (s *Server) exportCase(w http.ResponseWriter, r *http.Request, p *principal
 			if format == "eml" {
 				_, err = entry.Write(raw)
 			} else {
-				err = mailpkg.WriteMbox(entry, h, raw)
+				err = mailpkg.WriteHitMbox(entry, h, raw)
 			}
 			if err != nil {
 				return err

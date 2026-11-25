@@ -53,11 +53,12 @@ type Server struct {
 	apns          *apnsClient
 	scheduleWake  chan struct{}
 	imageClient   *http.Client
+	exportWake    chan struct{}
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
 	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
-		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(),
+		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(), exportWake: make(chan struct{}, 1),
 	}
 }
 
@@ -118,6 +119,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/auth-policy", s.authPolicy)
 	mux.HandleFunc("POST /internal/ios-push", s.registerIOSPush)
 	mux.HandleFunc("DELETE /internal/ios-push", s.deleteIOSPush)
+	mux.HandleFunc("GET /internal/mail-purges", s.listMailPurges)
+	mux.HandleFunc("POST /internal/mail-purges/{id}", s.ackMailPurge)
 	mux.HandleFunc("GET /mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("GET /.well-known/autoconfig/mail/config-v1.1.xml", s.mailAutoconfig)
 	mux.HandleFunc("/autodiscover/autodiscover.xml", s.mailAutodiscover)
@@ -248,6 +251,10 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/organizations/{orgId}/mailboxes", s.createMailbox)
 	authed("PATCH /api/v1/mailboxes/{mailboxId}", s.updateMailbox)
 	authed("DELETE /api/v1/mailboxes/{mailboxId}", s.deleteMailbox)
+	authed("POST /api/v1/mailboxes/{mailboxId}/restore", s.restoreMailbox)
+	authed("GET /api/v1/mailboxes/{mailboxId}/exports", s.listExports)
+	authed("POST /api/v1/mailboxes/{mailboxId}/exports", s.createExport)
+	authed("GET /api/v1/mailboxes/{mailboxId}/exports/{exportId}/download", s.downloadExport)
 	authed("POST /api/v1/mailboxes/{mailboxId}/convert", s.convertMailbox)
 	authed("PUT /api/v1/mailboxes/{mailboxId}/resource", s.updateResource)
 	authed("GET /api/v1/organizations/{orgId}/resources", s.listResources)

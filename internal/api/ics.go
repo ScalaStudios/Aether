@@ -155,18 +155,31 @@ func (s *Server) exportCalendar(w http.ResponseWriter, r *http.Request, p *princ
 		s.internalError(w, r, err)
 		return
 	}
-	rows, err := s.db.Query(ctx, `
-		SELECT o.data FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
-		WHERE c.user_id = $1 AND c.kind = 'calendar' AND c.slug = 'personal' ORDER BY o.starts_at NULLS LAST, o.name`, p.User.ID)
+	body, err := s.calendarICS(ctx, p.User.ID, "personal")
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="calendar.ics"`)
+	w.Write([]byte(body))
+}
+
+func (s *Server) calendarICS(ctx context.Context, userID, slug string) (string, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT o.data FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
+		WHERE c.user_id = $1 AND c.kind = 'calendar' AND c.slug = $2 ORDER BY o.starts_at NULLS LAST, o.name`, userID, slug)
+	if err != nil {
+		return "", err
 	}
 	objects, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		s.internalError(w, r, err)
-		return
+		return "", err
 	}
+	return compileCalendar(objects)
+}
+
+func compileCalendar(objects []string) (string, error) {
 	out := newCalendar()
 	seenTZ := map[string]bool{}
 	var events []*ical.Component
@@ -178,7 +191,7 @@ func (s *Server) exportCalendar(w http.ResponseWriter, r *http.Request, p *princ
 		for _, comp := range cal.Children {
 			if comp.Name == ical.CompTimezone {
 				id, _ := comp.Props.Text(ical.PropTimezoneID)
-				if seenTZ[id] {
+				if id == "" || seenTZ[id] {
 					continue
 				}
 				seenTZ[id] = true
@@ -189,18 +202,14 @@ func (s *Server) exportCalendar(w http.ResponseWriter, r *http.Request, p *princ
 		}
 	}
 	out.Children = append(out.Children, events...)
-	var buf bytes.Buffer
-	if len(out.Children) > 0 {
-		if err := ical.NewEncoder(&buf).Encode(out); err != nil {
-			s.internalError(w, r, err)
-			return
-		}
-	} else {
-		buf.WriteString("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Scala Studios//Aether//EN\r\nEND:VCALENDAR\r\n")
+	if len(out.Children) == 0 {
+		return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Scala Studios//Aether//EN\r\nEND:VCALENDAR\r\n", nil
 	}
-	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="calendar.ics"`)
-	w.Write(buf.Bytes())
+	var buf bytes.Buffer
+	if err := ical.NewEncoder(&buf).Encode(out); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 func (s *Server) importContacts(w http.ResponseWriter, r *http.Request, p *principal) {

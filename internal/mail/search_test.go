@@ -59,10 +59,10 @@ func TestSearchFolderMatchesRecipientsAndAttachments(t *testing.T) {
 	}
 }
 
-func TestWriteMboxEscapesFromLines(t *testing.T) {
+func TestWriteHitMboxEscapesFromLines(t *testing.T) {
 	var buf bytes.Buffer
 	h := Hit{From: []Address{{Address: "alice@example.com"}}, Date: time.Date(2024, 5, 1, 9, 0, 0, 0, time.UTC)}
-	if err := WriteMbox(&buf, h, []byte("Subject: x\r\n\r\nFrom here\r\n>From there\r\nok\r\n")); err != nil {
+	if err := WriteHitMbox(&buf, h, []byte("Subject: x\r\n\r\nFrom here\r\n>From there\r\nok\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	want := "From alice@example.com Wed May  1 09:00:00 2024\nSubject: x\n\n>From here\n>>From there\nok\n\n"
@@ -70,7 +70,7 @@ func TestWriteMboxEscapesFromLines(t *testing.T) {
 		t.Fatalf("got %q, want %q", buf.String(), want)
 	}
 	buf.Reset()
-	WriteMbox(&buf, Hit{From: []Address{{Address: "bad address@x"}}}, []byte("x"))
+	WriteHitMbox(&buf, Hit{From: []Address{{Address: "bad address@x"}}}, []byte("x"))
 	if !bytes.HasPrefix(buf.Bytes(), []byte("From MAILER-DAEMON ")) {
 		t.Fatalf("unsafe sender kept: %q", buf.String())
 	}

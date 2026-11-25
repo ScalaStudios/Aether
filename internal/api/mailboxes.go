@@ -33,9 +33,11 @@ type mailbox struct {
 	RetainedAt  *time.Time `json:"retainedAt"`
 	Hidden      bool       `json:"hiddenFromDirectory"`
 	Protocols   []string   `json:"protocols"`
+	PurgeAfter  *time.Time `json:"purgeAfter"`
+	OnHold      bool       `json:"onHold"`
 }
 
-const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at, hidden_from_directory, protocols`
+const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at, hidden_from_directory, protocols, purge_after, on_hold`
 
 var mailboxProtocols = []string{"imap", "smtp", "sieve", "dav", "webmail"}
 
@@ -219,7 +221,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind, protocols) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT mailbox_protocols FROM organizations WHERE id = $1)) RETURNING `+mailboxColumns,
 			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Kind).
-			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols)
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 		if err == nil && in.Kind == "resource" {
 			err = saveResource(r.Context(), tx, m.ID, in.Resource)
 		}
@@ -254,7 +256,7 @@ func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *prin
 	}
 	var m mailbox
 	err := s.db.QueryRow(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes WHERE id = $1`, id).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols)
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.orgRole(m.OrgID) == "") {
 		notFound(w)
 		return nil, false
@@ -281,6 +283,7 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		Active      *bool     `json:"active"`
 		Hidden      *bool     `json:"hiddenFromDirectory"`
 		Protocols   *[]string `json:"protocols"`
+		OnHold      *bool     `json:"onHold"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
@@ -315,9 +318,10 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 		err := tx.QueryRow(r.Context(), `
 			UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active), hidden_from_directory = coalesce($5, hidden_from_directory), protocols = coalesce($6, protocols),
-				retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END
-			WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active, in.Hidden, in.Protocols).
-			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols)
+				retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END,
+				on_hold = coalesce($7, on_hold), purge_after = CASE WHEN $4 IS TRUE THEN NULL ELSE purge_after END
+			WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active, in.Hidden, in.Protocols, in.OnHold).
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt, &m.Hidden, &m.Protocols, &m.PurgeAfter, &m.OnHold)
 		if err != nil {
 			return err
 		}
@@ -351,7 +355,7 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.update", "mailbox", m.ID, map[string]any{"address": m.Address, "active": m.Active, "quotaBytes": m.QuotaBytes, "hiddenFromDirectory": m.Hidden, "protocols": m.Protocols})
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.update", "mailbox", m.ID, map[string]any{"address": m.Address, "active": m.Active, "quotaBytes": m.QuotaBytes, "hiddenFromDirectory": m.Hidden, "protocols": m.Protocols, "onHold": m.OnHold})
 	if activate || imapChanged {
 		if err := s.syncMailboxACL(r.Context(), m.ID); err != nil {
 			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", m.ID, "err", err)
@@ -389,12 +393,19 @@ func (s *Server) deleteMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		writeJSON(w, http.StatusOK, m)
 		return
 	}
-	if err := s.retireMailbox(r.Context(), m, true); err != nil {
-		s.retireError(w, r, err)
+	days, ok := graceDays(w, r)
+	if !ok {
 		return
 	}
-	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.delete", "mailbox", m.ID, map[string]any{"address": m.Address})
-	w.WriteHeader(http.StatusNoContent)
+	if m.OnHold {
+		s.closeAndKeepMail(w, r, p, m, map[string]any{"address": m.Address, "onHold": true, "mailRetained": true})
+		return
+	}
+	if days > 0 {
+		s.scheduleMailboxPurge(w, r, p, m, days)
+		return
+	}
+	s.deleteMailboxNow(w, r, p, m)
 }
 
 func (s *Server) convertMailbox(w http.ResponseWriter, r *http.Request, p *principal) {

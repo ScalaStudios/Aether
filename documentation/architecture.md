@@ -155,6 +155,8 @@ The data model starts in `migrations/0001_init.sql` and evolves through numbered
 - `retention_policies`, retention policies for an organization or one mailbox, and `retention_runs`, when each mailbox is next due and the lease of the replica applying them
 - `dav_collections`, `dav_objects`, `calendar_shares`, and `calendar_subscriptions` for calendars, tasks, address books, shares, and external ICS feeds
 - `booking_pages`, `booking_types`, `booking_windows`, and `bookings` for public scheduling pages
+- `mailbox_exports`, background exports of a mailbox's mail, calendars and contacts, with the archive stored as a PostgreSQL large object so any API replica can serve the download
+- `mail_purges`, mailbox ids whose home directory under `/var/vmail` is waiting to be removed after the mailbox row is gone
 - `oidc_providers`, `oidc_login_states`, `sessions`, `audit_events`
 - `organizations.smime_policy`, `openpgp_policy` and `password_policy`, each `off`, `allow` or `require`
 - `encryption_keys`, one wrapped private key and its public certificate or key per user, address and protocol; the private key is ciphertext produced in the browser
@@ -164,7 +166,7 @@ The data model starts in `migrations/0001_init.sql` and evolves through numbered
 - `file_links`, one row per download link, pointing at a PostgreSQL large object
 - `dav_collections` and `dav_objects` for calendars and address books. `dav_objects.is_group` and `dav_objects.member_uids` record contact groups. `calendar_shares` grants read or write access to a calendar or an address book, for one user or every member of an organization
 
-Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data.
+Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data. Deleting a mailbox removes that directory. `graceDays` on the delete request keeps the row, and the directory, until the time in `purge_after`; a mailbox with `on_hold` is closed and the directory is left in place. Dovecot's user lookup reads `mail_storage_users`, which includes mailboxes still inside their grace period, so an export can still read them. After the row is gone, a loop in the Dovecot container asks the API for ids in `mail_purges` and deletes `/var/vmail/<id>`. The API admits that call from a private address that presents `AETHER_DOVECOT_API_KEY`. The Helm network policy allows it from the Dovecot pods to the API on port 8080.
 
 ## Request flow: webmail send
 

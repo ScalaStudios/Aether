@@ -79,4 +79,27 @@ chmod 0640 /run/dovecot-secrets/*
 
 install -d -o vmail -g vmail -m 0750 /var/vmail
 
+(
+	while true; do
+		sleep 5
+		url=$(cat /run/dovecot-secrets/api-url 2>/dev/null || true)
+		key=$(sed -n 's/^doveadm_api_key = //p' /run/dovecot-secrets/doveadm.conf 2>/dev/null || true)
+		if [ -z "$url" ] || [ -z "$key" ]; then
+			continue
+		fi
+		ids=$(curl -sf --max-time 10 -H "Authorization: Bearer ${key}" "${url}/internal/mail-purges" || true)
+		printf '%s\n' "$ids" | while IFS= read -r id; do
+			case "$id" in
+				????????-????-????-????-????????????) ;;
+				*) continue ;;
+			esac
+			home="/var/vmail/${id}"
+			if [ -d "$home" ]; then
+				rm -rf "$home" || continue
+			fi
+			curl -sf --max-time 10 -X POST -H "Authorization: Bearer ${key}" "${url}/internal/mail-purges/${id}" >/dev/null || true
+		done
+	done
+) &
+
 exec "$@"

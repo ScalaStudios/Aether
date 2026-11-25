@@ -187,7 +187,7 @@ func searchFolder(ctx context.Context, ic *imapclient.Client, extend func(), fol
 	return nil
 }
 
-func WriteMbox(w io.Writer, h Hit, raw []byte) error {
+func WriteHitMbox(w io.Writer, h Hit, raw []byte) error {
 	sender := "MAILER-DAEMON"
 	if len(h.From) > 0 && h.From[0].Address != "" && !strings.ContainsAny(h.From[0].Address, " \t\r\n") {
 		sender = h.From[0].Address

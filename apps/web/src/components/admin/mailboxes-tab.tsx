@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Ellipsis, Eye, EyeOff, HardDrive, Inbox, ListFilter, Plug, Plus, ShieldCheck, Trash2, Upload, Users } from "lucide-react"
+import { ArchiveRestore, ArrowRightLeft, BellRing, CalendarArrowUp, Download, Ellipsis, Eye, EyeOff, HardDrive, Inbox, ListFilter, Plug, Plus, ShieldCheck, RotateCcw, Shield, Trash2, Upload, Users } from "lucide-react"
 import { useRef, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -17,6 +17,7 @@ import { MailboxAccessReport } from "@/components/mailbox-access-report"
 import { SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
 import { RecoverDialog } from "@/components/mail/recover-dialog"
+import { ExportMailboxDialog } from "@/components/settings/export-mail"
 import { MailboxRules } from "@/components/settings/mail-rules"
 import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -32,7 +33,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { tierText, UsageBar, usagePercent } from "@/components/usage-bar"
 import { api, ApiError, errorMessage } from "@/lib/api"
-import { formatBytes, plural } from "@/lib/format"
+import { formatBytes, formatDateTime, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
 import { mailboxesQuery, organizationsQuery } from "@/lib/queries"
 import type { Delegate, DelegateAccess, ImportCounts, Mailbox, Organization, Protocol, QuotaWarnings } from "@/lib/types"
@@ -453,6 +454,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const [restricting, setRestricting] = useState<Mailbox | null>(null)
   const [editingDefaults, setEditingDefaults] = useState(false)
   const org = useQuery({ ...organizationsQuery, select: (list) => list.find((o) => o.id === orgId) })
+  const [exporting, setExporting] = useState<Mailbox | null>(null)
+  const [grace, setGrace] = useState("30")
   const fileInput = useRef<HTMLInputElement>(null)
   const importTarget = useRef<{ mailbox: Mailbox; kind: ImportKind } | null>(null)
   const form = useForm<Values>({
@@ -505,11 +508,11 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       }),
   })
   const remove = useMutation({
-    mutationFn: (id: string) => api<Mailbox | undefined>(`/mailboxes/${id}`, { method: "DELETE" }),
-    onSuccess: (retained) => {
-      if (retained?.retainedAt) {
-        toast.success(`${retained.address} is retained`, { description: "A legal hold keeps its mail. It stays inactive and can be deleted once the hold is released." })
-      } else toast.success("Mailbox deleted")
+    mutationFn: (m: Mailbox) => api<Mailbox | undefined>(`/mailboxes/${m.id}`, { method: "DELETE", query: m.onHold ? undefined : { graceDays: Number(grace) } }),
+    onSuccess: (_saved, m) => {
+      if (m.onHold) toast.success(`${m.address} is closed`, { description: "It is on hold, so its mail stays in place." })
+      else if (Number(grace) > 0) toast.success(`${m.address} will be deleted`, { description: "Its mail is removed when the grace period ends. Restore it from this list until then." })
+      else toast.success(`${m.address} was deleted`, { description: "Its mail is being removed from disk." })
       setDeleting(null)
       refresh()
     },
@@ -528,6 +531,20 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       toast.success("Saved protocol access for new mailboxes")
       setEditingDefaults(false)
       qc.invalidateQueries({ queryKey: organizationsQuery.queryKey })
+    },
+  })
+  const restore = useMutation({
+    mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}/restore`, { method: "POST" }),
+    onSuccess: (m) => {
+      toast.success(`${m.address} was restored`)
+      refresh()
+    },
+  })
+  const hold = useMutation({
+    mutationFn: (m: Mailbox) => api<Mailbox>(`/mailboxes/${m.id}`, { method: "PATCH", body: { onHold: !m.onHold } }),
+    onSuccess: (m) => {
+      toast.success(m.onHold ? `${m.address} is on hold` : `Hold released for ${m.address}`)
+      refresh()
     },
   })
   const convert = useMutation({
@@ -607,7 +624,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                     <MailboxStorage mailbox={m} levels={warnings.data?.percents} />
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <Switch
                         checked={m.active}
                         disabled={toggle.isPending && toggle.variables?.id === m.id}
@@ -619,6 +636,8 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                       ) : (
                         <StatusBadge tone={m.active ? "success" : "neutral"}>{m.active ? "Active" : "Inactive"}</StatusBadge>
                       )}
+                      {m.onHold && <StatusBadge tone="warning">On hold</StatusBadge>}
+                      {m.purgeAfter && <StatusBadge tone="danger">Deletes {formatDateTime(m.purgeAfter)}</StatusBadge>}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -626,11 +645,15 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                       <IconButton label={m.kind === "shared" ? `Members of ${m.address}` : `Delegates for ${m.address}`} size="icon-sm" onClick={() => setDelegating(m)}>
                         <Users />
                       </IconButton>
-                      <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => setDeleting(m)}>
+                      {m.purgeAfter && (
+                        <IconButton label={`Restore ${m.address}`} size="icon-sm" disabled={restore.isPending} onClick={() => restore.mutate(m)}>
+                          <RotateCcw />
+                        </IconButton>
+                      )}
+                      <IconButton label={`Delete ${m.address}`} size="icon-sm" onClick={() => { setGrace("30"); setDeleting(m) }}>
                         <Trash2 />
                       </IconButton>
-                      {m.active && (
-                        <DropdownMenu>
+                      <DropdownMenu>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <DropdownMenuTrigger asChild>
@@ -642,9 +665,13 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                             <TooltipContent>{`More actions for ${m.address}`}</TooltipContent>
                           </Tooltip>
                           <DropdownMenuContent align="end" className="w-auto min-w-64">
-                            <DropdownMenuItem onSelect={() => setManaging(m)}>
-                              <ListFilter aria-hidden />
-                              Mail rules and automatic replies
+                            <DropdownMenuItem onSelect={() => setExporting(m)}>
+                              <Download aria-hidden />
+                              Export mailbox
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => hold.mutate(m)}>
+                              <Shield aria-hidden />
+                              {m.onHold ? "Release hold" : "Place on hold"}
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => setRecovering(m)}>
                               <ArchiveRestore aria-hidden />
@@ -662,26 +689,33 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                               <HardDrive aria-hidden />
                               Change quota…
                             </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
-                              <CalendarArrowUp aria-hidden />
-                              Import calendar (.ics)
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
-                              <Upload aria-hidden />
-                              Import contacts (.vcf)
-                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => hide.mutate(m)}>
                               {m.hiddenFromDirectory ? <Eye aria-hidden /> : <EyeOff aria-hidden />}
                               {m.hiddenFromDirectory ? "Show in directory" : "Hide from directory"}
                             </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onSelect={() => setConverting(m)}>
-                              <ArrowRightLeft aria-hidden />
-                              {m.kind === "shared" ? "Convert to user mailbox…" : "Convert to shared mailbox…"}
-                            </DropdownMenuItem>
+                            {m.active && (
+                              <>
+                                <DropdownMenuItem onSelect={() => setManaging(m)}>
+                                  <ListFilter aria-hidden />
+                                  Mail rules and automatic replies
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
+                                  <CalendarArrowUp aria-hidden />
+                                  Import calendar (.ics)
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
+                                  <Upload aria-hidden />
+                                  Import contacts (.vcf)
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onSelect={() => setConverting(m)}>
+                                  <ArrowRightLeft aria-hidden />
+                                  {m.kind === "shared" ? "Convert to user mailbox…" : "Convert to shared mailbox…"}
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
-                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -799,15 +833,36 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         </SheetContent>
       </Sheet>
 
+      <ExportMailboxDialog mailbox={exporting} onOpenChange={(open) => !open && setExporting(null)} />
+
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}
-        title={`Delete ${deleting?.address}?`}
-        description="The mailbox stops receiving mail immediately and its app passwords stop working. Stored mail stays on disk until an operator removes it."
-        confirmLabel="Delete mailbox"
+        title={deleting?.onHold ? `Close ${deleting.address}?` : `Delete ${deleting?.address}?`}
+        description={
+          deleting?.onHold
+            ? "This mailbox is on hold. It stops receiving mail and its app passwords stop working, and its mail stays on disk until the hold is released."
+            : "The mailbox stops receiving mail immediately and its app passwords stop working. Stored mail is removed when the grace period ends, and can be restored until then."
+        }
+        confirmLabel={deleting?.onHold ? "Close mailbox" : Number(grace) > 0 ? "Schedule deletion" : "Delete mailbox"}
         pending={remove.isPending}
-        onConfirm={() => deleting && remove.mutate(deleting.id)}
-      />
+        onConfirm={() => deleting && remove.mutate(deleting)}
+      >
+        {!deleting?.onHold && (
+          <Field id="delete-grace" label="When to remove the stored mail">
+            <Select value={grace} onValueChange={setGrace}>
+              <SelectTrigger id="delete-grace" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="30">After 30 days</SelectItem>
+                <SelectItem value="7">After 7 days</SelectItem>
+                <SelectItem value="0">Now</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={!!converting}

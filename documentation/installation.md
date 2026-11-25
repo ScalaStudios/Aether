@@ -342,7 +342,7 @@ Back up these volumes and files:
 | Item | Contents |
 | --- | --- |
 | `pgdata` | All configuration, users, and download-link files, which are stored as PostgreSQL large objects. Use `docker compose exec postgres pg_dump -U aether aether`. |
-| `vmail` | Mail, in Maildir format. Copying the files is safe while running. |
+| `vmail` | Mail, in Maildir format. Copying the files is safe while running. Deleting a mailbox removes its directory here, immediately or after the grace period you choose. A mailbox on hold is closed and its directory is kept. |
 | `.env` | The secrets, including the key needed to read encrypted mail |
 | `tls` | The mail certificate |
 

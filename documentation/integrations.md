@@ -24,7 +24,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
 | `suppressions:read`, `suppressions:write` | Listing, adding, and removing suppressed addresses |
 
-A `write` scope includes `read`. Keys cannot read mail, use the platform administration endpoints, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name.
+A `write` scope includes `read`. Keys cannot read mail, export a mailbox, use the platform administration endpoints, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name.
 
 To revoke a key, use `DELETE /api/v1/api-keys/{keyId}`. Revocation takes effect immediately.
 
@@ -63,6 +63,12 @@ Each schedule takes the source `host`, `port`, `security` (`tls` or `starttls`),
 - `syncDeletions` removes copies made by this schedule when the source message is deleted or expunged from the same folder. It needs a destination with `UIDPLUS`, which Dovecot has.
 
 Every run is incremental: messages already in the destination folder are skipped by Message-ID, or by content when they have none. Each run reports the messages copied, skipped, updated and deleted, and a failed run is retried at the next interval. A run stops after 24 hours or at the end time. The source password is stored encrypted and erased when the schedule is stopped, reaches its end time, or loses its mailbox, its domain or, for one created by a mailbox owner, that person's access. Each API process runs at most four imports at a time, and only one import runs for a mailbox at once. Scheduling and stopping appear in the audit log as `mail_import.schedule` and `mail_import.stop`. API keys need `mailboxes:read` to list and `mailboxes:write` to schedule or stop.
+
+## Exporting and deleting a mailbox
+
+A signed-in person downloads their own mailbox from **Settings → Export mailbox**. An organization administrator does the same for any mailbox in the organization from **Administration → Mailboxes**. Every export is an audit event `mailbox.export`. The request is `POST /api/v1/mailboxes/{mailboxId}/exports` with `format` `zip` (a ZIP of `.eml` files) or `mbox`, an optional `folder`, optional `since` and `until`, and `includeCalendar` and `includeContacts`. Calendars are ICS files and contacts are vCard files for the mailbox owner; a shared mailbox has no owner, so those files are omitted. The export runs in the background. `GET /api/v1/mailboxes/{mailboxId}/exports` lists it, and `GET .../exports/{exportId}/download` returns the file once `status` is `ready`. The link expires seven days after the file is ready (`410 export_expired`). API keys cannot call these routes.
+
+`DELETE /api/v1/mailboxes/{mailboxId}` answers `204` when `graceDays` is omitted or `0`: the mailbox row is removed and its mail is deleted from the vmail volume. `graceDays` from 1 to 3650 answers `200` with `purgeAfter` set; the mailbox is closed and can be brought back with `POST /api/v1/mailboxes/{mailboxId}/restore` until that time. `onHold: true` (`PATCH` the mailbox) makes deletion close the mailbox and keep the mail. Activating a mailbox again also cancels a scheduled deletion.
 
 ## Webhooks
 
