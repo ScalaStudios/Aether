@@ -7,7 +7,8 @@ RUN apt-get update \
 COPY dovecot.conf dovecot-acl dovecot-acl-held /etc/dovecot/
 COPY sieve/ /etc/dovecot/sieve/
 COPY sieve-bin/ /usr/local/lib/aether-sieve/
-COPY entrypoint.sh tls-init.sh aether-token-check.sh /usr/local/bin/
+COPY entrypoint.sh tls-init.sh aether-token-check.sh encrypt-mail.sh /usr/local/bin/
 RUN for s in /etc/dovecot/sieve/*.sieve; do sievec "$s"; done && chmod 0755 /usr/local/bin/*.sh /usr/local/lib/aether-sieve/*
 EXPOSE 143 993 24 12345 4190
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["dovecot", "-F"]

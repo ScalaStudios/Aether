@@ -39,7 +39,7 @@ in_source() { docker run --rm -i -v "$mount:/source:ro" -v "$vmail:/vmail" alpin
 in_source "test -s $dump && { test -d /source/aether/vmail || test -f /source/vmail.tar.gz; }" || { echo "$source does not contain a database dump and mail" >&2; exit 1; }
 saved_key="$(in_source "test -f $env_file && sed -n 's/^AETHER_SECRET_KEY=//p' $env_file || true")"
 if [ -n "$saved_key" ] && [ "$saved_key" != "$AETHER_SECRET_KEY" ]; then
-  echo "AETHER_SECRET_KEY in .env differs from the backup. Restore the backup's env file as .env first, or DKIM keys and OIDC secrets cannot be decrypted." >&2
+  echo "AETHER_SECRET_KEY in .env differs from the backup. Restore the backup's env file as .env first, or mail, DKIM keys, and OIDC secrets cannot be decrypted." >&2
   exit 1
 fi
 

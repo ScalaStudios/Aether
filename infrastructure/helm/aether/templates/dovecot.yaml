@@ -31,17 +31,23 @@ spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.encryptExistingMail }}
+      initContainers:
+        - name: encrypt-mail
+          image: {{ include "aether.image" (dict "name" "dovecot" "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["encrypt-mail.sh"]
+          env: {{- include "aether.dovecotEnv" . | nindent 12 }}
+          securityContext: {{- include "aether.mailDaemonSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: vmail, mountPath: /var/vmail }
+            - { name: mail-tls, mountPath: /tls, readOnly: true }
+      {{- end }}
       containers:
         - name: dovecot
           image: {{ include "aether.image" (dict "name" "dovecot" "root" .) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          env:
-            - { name: AETHER_MAIL_HOSTNAME, value: {{ .Values.mailHostname | quote }} }
-            - { name: AETHER_DOVECOT_MASTER_ALLOW_NETS, value: {{ .Values.dovecotMasterAllowNets | quote }} }
-            {{- include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) | nindent 12 }}
-            {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) | nindent 12 }}
-            {{- include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_API_KEY" "key" "dovecotApiKey" "root" .) | nindent 12 }}
-            {{- include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) | nindent 12 }}
+          env: {{- include "aether.dovecotEnv" . | nindent 12 }}
           ports:
             - { name: imap, containerPort: 143 }
             - { name: imaps, containerPort: 993 }

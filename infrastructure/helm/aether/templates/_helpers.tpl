@@ -29,6 +29,16 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
       {{- end }}
 {{- end -}}
 
+{{- define "aether.dovecotEnv" -}}
+- { name: AETHER_MAIL_HOSTNAME, value: {{ .Values.mailHostname | quote }} }
+- { name: AETHER_DOVECOT_MASTER_ALLOW_NETS, value: {{ .Values.dovecotMasterAllowNets | quote }} }
+{{ include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) }}
+{{ include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_MASTER_PASSWORD" "key" "dovecotMasterPassword" "root" .) }}
+{{ include "aether.secretEnv" (dict "env" "AETHER_DOVECOT_API_KEY" "key" "dovecotApiKey" "root" .) }}
+{{ include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) }}
+{{ include "aether.secretEnv" (dict "env" "AETHER_SECRET_KEY" "key" "secretKey" "root" .) }}
+{{- end -}}
+
 {{- define "aether.podSecurity" -}}
 seccompProfile:
   type: RuntimeDefault

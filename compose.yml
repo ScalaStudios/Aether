@@ -107,6 +107,7 @@ services:
     environment:
       <<: *mail-env
       AETHER_DOVECOT_API_KEY: ${AETHER_DOVECOT_API_KEY:?run scripts/setup.sh or add AETHER_DOVECOT_API_KEY to .env}
+      AETHER_SECRET_KEY: ${AETHER_SECRET_KEY:?run scripts/setup.sh}
     volumes:
       - vmail:/var/vmail
       - tls:/tls:ro

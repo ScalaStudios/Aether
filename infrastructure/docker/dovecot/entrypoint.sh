@@ -5,6 +5,7 @@ set -eu
 : "${AETHER_DOVECOT_MASTER_PASSWORD:?required}"
 : "${AETHER_SIEVE_RELAY_PASSWORD:?required}"
 : "${AETHER_DOVECOT_API_KEY:?required}"
+: "${AETHER_SECRET_KEY:?required}"
 DB_HOST="${AETHER_DB_HOST:-postgres}"
 DB_NAME="${AETHER_DB_NAME:-aether}"
 MASTER_USER="${AETHER_DOVECOT_MASTER_USER:-aether-webmail}"
@@ -61,9 +62,21 @@ auth_policy_server_url = $(cat /run/dovecot-secrets/api-url)/internal/auth-polic
 auth_policy_server_api_header = X-API-Key: ${AETHER_DOVECOT_API_KEY}
 auth_policy_hash_nonce = $(openssl rand -hex 32)
 POLICY
+mail_crypt_scalar=$(printf 'aether-mail-crypt' | openssl dgst -sha512 -hmac "$AETHER_SECRET_KEY" -binary | od -An -v -tx1 | tr -d ' \n')
+[ "${#mail_crypt_scalar}" -eq 128 ]
+printf 'asn1=SEQUENCE:k\n[k]\nv=INT:1\nd=FORMAT:HEX,OCTETSTRING:0000%s\nc=EXP:0,OID:secp521r1\n' "$mail_crypt_scalar" \
+  | openssl asn1parse -genconf /dev/stdin -noout -out /dev/stdout \
+  | openssl pkey -inform DER -out /run/dovecot-secrets/mail-crypt.pem
+openssl pkey -in /run/dovecot-secrets/mail-crypt.pem -pubout -out /run/dovecot-secrets/mail-crypt.pub
+cat > /run/dovecot-secrets/mail-crypt.conf <<CRYPT
+plugin {
+  mail_crypt_global_private_key = </run/dovecot-secrets/mail-crypt.pem
+  mail_crypt_global_public_key = </run/dovecot-secrets/mail-crypt.pub
+}
+CRYPT
 chgrp dovecot /run/dovecot-secrets/*
 chmod 0640 /run/dovecot-secrets/*
 
 install -d -o vmail -g vmail -m 0750 /var/vmail
 
-exec dovecot -F
+exec "$@"

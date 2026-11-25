@@ -281,6 +281,29 @@ To follow development instead, stay on `main` and run `git pull` before rebuildi
 
 Database migrations run automatically when the API starts. They are transactional and serialized with an advisory lock.
 
+### Encrypt existing mail
+
+Dovecot encrypts new messages written to Maildir using a key derived from `AETHER_SECRET_KEY`. It can still read existing plaintext mail. After upgrading the source, migrate the existing messages during a mail maintenance window:
+
+1. Back up the stack and verify you have a protected copy of the current `.env`.
+2. Build the upgraded Dovecot image, stop Dovecot, and run the migration against the same `vmail` volume.
+
+   ```sh
+   docker compose build tls-init
+   docker compose stop dovecot
+   docker compose run --rm --no-deps dovecot encrypt-mail.sh
+   ```
+
+3. Once the command succeeds, bring the stack up with the upgraded images.
+
+   ```sh
+   docker compose up -d --build
+   ```
+
+IMAP and mailbox delivery are unavailable while Dovecot is stopped. Keep all writers off the volume during the migration. Allow enough free space for a temporary encrypted copy of the largest message and for encryption overhead across the volume. The migration replaces each message atomically, preserves its Maildir filename and modification time, and skips encrypted files on retry. If it fails or is interrupted, keep Dovecot stopped and rerun the migration command.
+
+This protects message files on stolen disks or copied volumes when the key is stored separately. A running host with access to the key can read messages. Dovecot indexes and caches can contain message metadata, and Postfix queues and earlier backups can still contain plaintext. Use encrypted storage and backups to protect those copies.
+
 ## Backups
 
 Back up these volumes and files:
@@ -289,7 +312,7 @@ Back up these volumes and files:
 | --- | --- |
 | `pgdata` | All configuration and users. Use `docker compose exec postgres pg_dump -U aether aether`. |
 | `vmail` | Mail, in Maildir format. Copying the files is safe while running. |
-| `.env` | The secrets |
+| `.env` | The secrets, including the key needed to read encrypted mail |
 | `tls` | The mail certificate |
 
 `scripts/backup.sh <target-dir> [keep-days]` writes these three items to a timestamped directory: a `pg_dump` custom-format dump, a tar of the maildirs, and a copy of `.env`. It checks that both archives are readable and deletes backups older than `keep-days` (default 14). Run it from a nightly timer, and copy the target directory to another machine; a backup on the same disk does not survive losing that disk.
@@ -301,6 +324,8 @@ To restore a local backup:
 ```
 
 The script stops the mail services and the API, then replaces the database and every mailbox with the backup's contents. When it finishes, it starts the stack again. It refuses to run without `--yes`. It also refuses if `AETHER_SECRET_KEY` in `.env` differs from the key in the backup's `env` file; on a new server, copy that file to `.env` first.
+
+Keep a protected copy of the original `AETHER_SECRET_KEY` off-host, with access controlled separately from volume snapshots. Losing or replacing it makes encrypted mail unreadable until the original key is restored. The local backup contains both the mail and the key, so protect the entire backup directory. After restoring a plaintext or mixed backup, rerun the [Maildir migration](#encrypt-existing-mail) to encrypt any remaining plaintext messages.
 
 `valkeydata` and `rspamd` hold caches and statistics, which are rebuilt automatically. DKIM keys in Valkey are re-published from PostgreSQL on every API start.
 

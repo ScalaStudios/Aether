@@ -11,4 +11,4 @@ Aether is starting in namespace {{ .Release.Namespace }}.
 
 3. Mail TLS comes from secret {{ .Values.mailTLS.secretName }}{{ if .Values.mailTLS.certManager.enabled }} (issued by cert-manager){{ else }}; create it before the mail pods can start{{ end }}.
 
-Back up the {{ include "aether.secretName" . }} secret. Without secretKey, stored DKIM keys and identity provider secrets cannot be decrypted.
+Back up the {{ include "aether.secretName" . }} secret. Without secretKey, stored mail, DKIM keys, and identity provider secrets cannot be decrypted.

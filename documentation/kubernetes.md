@@ -17,7 +17,7 @@ helm install aether infrastructure/helm/aether -n aether --create-namespace \
 - **Ingress:** sends `/api`, `/dav`, and `/.well-known/cal|carddav` to the API, and everything else to the web app.
 - **Mail Services:** two LoadBalancer Services, `-mail-smtp` (25, 465, 587) and `-mail-imap` (143, 993). They use `externalTrafficPolicy: Local` so that Postfix, Rspamd, and Dovecot see real client addresses.
 - **NetworkPolicies:** deny inbound traffic by default, then allow only the connections each service needs. The ingress controller's namespace is selected by `networkPolicy.ingressControllerNamespaceSelector`.
-- **A Secret with generated passwords and the encryption key.** Upgrades keep the existing values. Back this Secret up: without `secretKey`, stored DKIM keys and identity provider secrets cannot be decrypted.
+- **A Secret with generated passwords and the encryption key.** Upgrades keep the existing values. Back up the original `secretKey` in protected storage separate from volume snapshots. Losing or replacing it makes encrypted mail, DKIM keys, and identity provider secrets unreadable until the original value is restored.
 
 ## Constraints
 
@@ -25,6 +25,14 @@ helm install aether infrastructure/helm/aether -n aether --create-namespace \
 - **One Dovecot replica.** Maildir storage on a ReadWriteOnce volume cannot be shared between replicas.
 - **Mail TLS needs a certificate.** Mail TLS comes from the secret named in `mailTLS.secretName`, issued by cert-manager when `mailTLS.certManager.enabled=true`. The mail pods do not start until that secret exists.
 - **Backups:** the Compose backup script does not run in Kubernetes. Use your cluster's volume snapshots or a restic CronJob.
+
+## Encrypt existing mail
+
+The upgraded Dovecot image encrypts new Maildir messages and can still read plaintext messages. To migrate existing mail, take a volume snapshot and back up the Secret before upgrading. Set `encryptExistingMail: true` in your Helm values for the upgrade. The Dovecot StatefulSet replaces its single pod and the `encrypt-mail` init container rewrites the message files before Dovecot starts. Keep other writers off the volume until it finishes.
+
+Watch the rollout with `kubectl rollout status statefulset/dovecot -n aether` and check progress or errors with `kubectl logs dovecot-0 -n aether -c encrypt-mail`. The init container can retry after an interruption and skips files already encrypted. Once the rollout succeeds, remove the setting or set it to `false` at the next upgrade to avoid another scan. Re-enable it when restoring a snapshot containing plaintext mail.
+
+The key and storage considerations are the same as for [Compose installations](installation.md#encrypt-existing-mail).
 
 ## Status
 
