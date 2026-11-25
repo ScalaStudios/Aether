@@ -2,7 +2,7 @@
 
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ThemeProvider } from "next-themes"
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import { toast } from "sonner"
 
 import { BrandingEffects } from "@/components/branding"
@@ -30,7 +30,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" themes={["dark", "light"]} enableSystem={false} storageKey="aether-theme" disableTransitionOnChange>
       <QueryClientProvider client={client}>
-        <BrandingEffects />
+        <Suspense>
+          <BrandingEffects />
+        </Suspense>
         <TooltipProvider delayDuration={400}>{children}</TooltipProvider>
         <Toaster position="bottom-right" />
       </QueryClientProvider>

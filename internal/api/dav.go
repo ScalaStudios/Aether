@@ -229,7 +229,18 @@ func (s *Server) writableCollection(ctx context.Context, kind, slug string) (*co
 		}
 		return nil, webdav.NewHTTPError(http.StatusForbidden, errors.New("this "+noun+" is shared with you read-only"))
 	}
-	return c, err
+	if err != nil {
+		return nil, err
+	}
+	var subscribed bool
+	qerr := s.db.QueryRow(ctx, `SELECT true FROM calendar_subscriptions WHERE collection_id = $1`, c.ID).Scan(&subscribed)
+	if qerr != nil && !errors.Is(qerr, pgx.ErrNoRows) {
+		return nil, qerr
+	}
+	if subscribed {
+		return nil, webdav.NewHTTPError(http.StatusForbidden, errors.New("this calendar is subscribed from a link and can't be edited"))
+	}
+	return c, nil
 }
 
 func (s *Server) createDAVCollection(ctx context.Context, kind, p, name, description string) error {
@@ -267,6 +278,7 @@ type objectFields struct {
 	Recurring  bool
 	Group      bool
 	MemberUIDs []string
+	Component  string
 }
 
 func etagOf(data string) string {
@@ -293,40 +305,53 @@ func putDAVObjectIn(ctx context.Context, db txBeginner, collectionID, name, data
 	if f.UID == "" {
 		return nil, webdav.NewHTTPError(http.StatusBadRequest, errors.New("object has no UID"))
 	}
+	if f.Component == "" {
+		f.Component = "VEVENT"
+	}
 	row := &objectRow{Name: name, Data: data, ETag: etagOf(data), UpdatedAt: time.Now()}
 	err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
-		var current string
-		err := tx.QueryRow(ctx, `SELECT etag FROM dav_objects WHERE collection_id = $1 AND name = $2 FOR UPDATE`, collectionID, name).Scan(&current)
-		exists := err == nil
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if ifNoneMatch.IsWildcard() && exists {
-			return webdav.NewHTTPError(http.StatusPreconditionFailed, errors.New("object already exists"))
-		}
-		if ifMatch.IsSet() {
-			want, err := ifMatch.ETag()
-			if !ifMatch.IsWildcard() && (err != nil || !exists || want != current) || ifMatch.IsWildcard() && !exists {
-				return webdav.NewHTTPError(http.StatusPreconditionFailed, errors.New("object changed"))
-			}
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO dav_objects (collection_id, name, uid, etag, data, summary, emails, starts_at, ends_at, recurring, is_group, member_uids)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-			ON CONFLICT (collection_id, name) DO UPDATE SET uid = EXCLUDED.uid, etag = EXCLUDED.etag, data = EXCLUDED.data, summary = EXCLUDED.summary,
-				emails = EXCLUDED.emails, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, recurring = EXCLUDED.recurring,
-				is_group = EXCLUDED.is_group, member_uids = EXCLUDED.member_uids, updated_at = now()`,
-			collectionID, name, f.UID, row.ETag, data, f.Summary, nonNil(f.Emails), f.StartsAt, f.EndsAt, f.Recurring, f.Group, nonNil(f.MemberUIDs))
-		if isUniqueViolation(err) {
-			return webdav.NewHTTPError(http.StatusConflict, errors.New("another object in this collection has the same UID"))
-		}
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE dav_collections SET updated_at = now() WHERE id = $1`, collectionID)
-		return err
+		return insertDAVObject(ctx, tx, collectionID, row, f, ifMatch, ifNoneMatch)
 	})
 	return row, err
+}
+
+func insertDAVObject(ctx context.Context, tx pgx.Tx, collectionID string, row *objectRow, f objectFields, ifMatch, ifNoneMatch webdav.ConditionalMatch) error {
+	if f.Component == "" {
+		f.Component = "VEVENT"
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext(user_id::text), $2) FROM dav_collections WHERE id = $1`, collectionID, subscriptionLockKey); err != nil {
+		return err
+	}
+	var current string
+	err := tx.QueryRow(ctx, `SELECT etag FROM dav_objects WHERE collection_id = $1 AND name = $2 FOR UPDATE`, collectionID, row.Name).Scan(&current)
+	exists := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if ifNoneMatch.IsWildcard() && exists {
+		return webdav.NewHTTPError(http.StatusPreconditionFailed, errors.New("object already exists"))
+	}
+	if ifMatch.IsSet() {
+		want, err := ifMatch.ETag()
+		if !ifMatch.IsWildcard() && (err != nil || !exists || want != current) || ifMatch.IsWildcard() && !exists {
+			return webdav.NewHTTPError(http.StatusPreconditionFailed, errors.New("object changed"))
+		}
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO dav_objects (collection_id, name, uid, etag, data, summary, emails, starts_at, ends_at, recurring, component, is_group, member_uids)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT (collection_id, name) DO UPDATE SET uid = EXCLUDED.uid, etag = EXCLUDED.etag, data = EXCLUDED.data, summary = EXCLUDED.summary,
+			emails = EXCLUDED.emails, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, recurring = EXCLUDED.recurring, component = EXCLUDED.component,
+			is_group = EXCLUDED.is_group, member_uids = EXCLUDED.member_uids, updated_at = now()`,
+		collectionID, row.Name, f.UID, row.ETag, row.Data, f.Summary, nonNil(f.Emails), f.StartsAt, f.EndsAt, f.Recurring, f.Component, f.Group, nonNil(f.MemberUIDs))
+	if isUniqueViolation(err) {
+		return webdav.NewHTTPError(http.StatusConflict, errors.New("another object in this collection has the same UID"))
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE dav_collections SET updated_at = now() WHERE id = $1`, collectionID)
+	return err
 }
 
 func (s *Server) deleteDAVObject(ctx context.Context, collectionID, name string) error {
@@ -455,6 +480,11 @@ func calendarFields(cal *ical.Calendar) (objectFields, error) {
 			return f, webdav.NewHTTPError(http.StatusBadRequest, errors.New("a calendar object must contain a single UID"))
 		}
 		f.UID = uid
+		if comp.Name == ical.CompEvent {
+			f.Component = "VEVENT"
+		} else if f.Component == "" {
+			f.Component = "VTODO"
+		}
 		if comp.Props.Get(ical.PropRecurrenceID) != nil {
 			continue
 		}
@@ -467,9 +497,21 @@ func calendarFields(cal *ical.Calendar) (objectFields, error) {
 		if end, err := ev.DateTimeEnd(time.UTC); err == nil && !end.IsZero() {
 			f.EndsAt = &end
 		}
+		if comp.Name == ical.CompToDo {
+			if due, err := comp.Props.DateTime(ical.PropDue, time.UTC); err == nil && !due.IsZero() {
+				f.EndsAt = &due
+				if f.StartsAt == nil {
+					start := due
+					f.StartsAt = &start
+				}
+			}
+		}
 	}
 	if f.UID == "" {
 		return f, webdav.NewHTTPError(http.StatusBadRequest, errors.New("no event or task in the calendar object"))
+	}
+	if f.Component == "" {
+		f.Component = "VEVENT"
 	}
 	return f, nil
 }

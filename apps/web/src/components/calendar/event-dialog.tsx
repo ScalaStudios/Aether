@@ -128,7 +128,8 @@ export function EventDialog({
   const { event } = target
   const viewOnly = !!event?.readOnly
   const readOnly = event?.repeat === "custom" || viewOnly
-  const writable = calendars.filter((c) => c.access !== "read")
+  const source = calendars.find((c) => c.id === event?.calendarId)
+  const writable = calendars.filter((c) => c.access !== "read" && !c.subscribed)
   const calendarQuery = { calendar: event?.calendarId }
   const session = useSession()
   const invited = !!event?.organizer && event.organizer !== session.data?.user.email.toLowerCase()
@@ -210,7 +211,9 @@ export function EventDialog({
         title={readOnly ? event.title : event ? "Edit event" : "New event"}
         description={
           viewOnly
-            ? "This calendar is shared with you to view only."
+            ? source?.subscribed
+              ? "This calendar is subscribed from a link, so its events are updated from that link."
+              : "This calendar is shared with you to view only."
             : readOnly
             ? "Custom repeat (edit in the app that created it). Aether can’t save this repeat pattern, so the event is read-only here."
             : event?.repeat

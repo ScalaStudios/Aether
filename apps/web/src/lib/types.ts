@@ -988,6 +988,15 @@ export interface CalendarShare {
   orgName?: string
 }
 
+export interface CalendarSubscription {
+  url: string
+  refreshMinutes: number
+  lastFetchedAt: string | null
+  lastError?: string
+  events?: number
+  notModified?: boolean
+}
+
 export interface CalendarInfo {
   id: string
   name: string
@@ -995,6 +1004,8 @@ export interface CalendarInfo {
   access: CalendarAccess
   owner?: { name: string; email: string }
   shares?: CalendarShare[]
+  subscribed?: boolean
+  subscription?: CalendarSubscription
 }
 
 export type AttendeeStatus = "needs-action" | "accepted" | "tentative" | "declined"
@@ -1013,6 +1024,99 @@ export interface Invitation {
   status: AttendeeStatus | ""
   eventId?: string
   applied: boolean
+}
+
+export type TaskStatus = "needs-action" | "in-process" | "completed" | "cancelled"
+
+export interface Task {
+  id: string
+  calendarId: string
+  title: string
+  notes: string
+  due: string | null
+  status: TaskStatus
+  priority: number
+  completedAt: string | null
+  readOnly: boolean
+}
+
+export interface TaskInput {
+  title: string
+  notes: string
+  due: string | null
+  status: TaskStatus
+  priority: number
+  calendarId: string
+}
+
+export interface BookingWindow {
+  weekday: number
+  startMinute: number
+  endMinute: number
+}
+
+export interface BookingType {
+  id: string
+  slug: string
+  name: string
+  description: string
+  durationMinutes: number
+  bufferBeforeMinutes: number
+  bufferAfterMinutes: number
+  location: string
+  videoUrl: string
+  calendarId: string
+  active: boolean
+  windows: BookingWindow[]
+}
+
+export interface BookingPage {
+  slug: string
+  title: string
+  description: string
+  timezone: string
+  minNoticeMinutes: number
+  horizonDays: number
+  active: boolean
+  url: string
+  types: BookingType[]
+}
+
+export interface PublicBookingType {
+  slug: string
+  name: string
+  description: string
+  durationMinutes: number
+  location: string
+  video: boolean
+}
+
+export interface PublicBookingPage {
+  slug: string
+  title: string
+  description: string
+  hostName: string
+  timezone: string
+  horizonDays: number
+  types: PublicBookingType[]
+}
+
+export interface BookingSlots {
+  timezone: string
+  durationMinutes: number
+  slots: string[]
+}
+
+export interface BookingConfirmation {
+  id: string
+  title: string
+  start: string
+  end: string
+  timezone: string
+  hostName: string
+  location: string
+  videoUrl?: string
+  guestEmail: string
 }
 
 export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesStart" | "organizer" | "attendees" | "calendarId" | "readOnly" | "color" | "reminderMinutes"> & {

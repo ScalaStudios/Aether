@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, UserPlus, X } from "lucide-react";
+import { RefreshCw, SlidersHorizontal, Trash2, UserPlus, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { cn } from "cn";
@@ -28,8 +28,9 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useSession } from "@/hooks/use-session";
 import { api, errorMessage } from "@/lib/api";
+import { formatDateTime, plural } from "@/lib/format";
 import { calendarsQuery } from "@/lib/queries";
-import type { CalendarInfo } from "@/lib/types";
+import type { CalendarInfo, CalendarSubscription } from "@/lib/types";
 
 const palette = [
   "#3b82f6",
@@ -38,6 +39,14 @@ const palette = [
   "#e11d48",
   "#0ea5e9",
   "#64748b",
+];
+
+const refreshes = [
+  { value: "15", label: "Every 15 minutes" },
+  { value: "60", label: "Hourly" },
+  { value: "360", label: "Every 6 hours" },
+  { value: "1440", label: "Daily" },
+  { value: "10080", label: "Weekly" },
 ];
 
 const accessLabels = { owner: "Yours", write: "Can edit", read: "View only" };
@@ -68,10 +77,16 @@ export function CalendarsDialog({
   const [name, setName] = useState("");
   const [color, setColor] = useState(palette[0]);
   const [sharing, setSharing] = useState<string | null>(null);
+  const [editingFeed, setEditingFeed] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<CalendarInfo | null>(null);
+  const [feedUrl, setFeedUrl] = useState("");
+  const [feedName, setFeedName] = useState("");
+  const [feedColor, setFeedColor] = useState(palette[2]);
+  const [feedRefresh, setFeedRefresh] = useState("360");
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["calendars"] });
     qc.invalidateQueries({ queryKey: ["calendar-events"] });
+    qc.invalidateQueries({ queryKey: ["tasks"] });
   };
 
   const create = useMutation({
@@ -95,62 +110,130 @@ export function CalendarsDialog({
     },
     onError: (error) => toast.error(errorMessage(error)),
   });
+  const subscribe = useMutation({
+    mutationFn: () =>
+      api<CalendarInfo>("/calendar/subscriptions", {
+        method: "POST",
+        body: { url: feedUrl.trim(), name: feedName.trim(), color: feedColor, refreshMinutes: Number(feedRefresh) },
+      }),
+    onSuccess: (calendar) => {
+      setFeedUrl("");
+      setFeedName("");
+      refresh();
+      toast.success("Calendar subscribed", {
+        description: `${plural(calendar.subscription?.events ?? 0, "event")} added.`,
+      });
+    },
+  });
+  const refreshFeed = useMutation({
+    mutationFn: (id: string) =>
+      api<CalendarSubscription>(`/calendar/subscriptions/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
+    onSuccess: (info) => {
+      refresh();
+      toast.success(info.notModified ? "Calendar is up to date" : "Calendar refreshed", {
+        description: `${plural(info.events ?? 0, "event")} on this calendar.`,
+      });
+    },
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>Calendars</DialogTitle>
           <DialogDescription>
-            Choose which calendars to show, and share yours with people in your
-            organization.
+            Choose which calendars to show, share yours, or subscribe to a calendar link.
           </DialogDescription>
         </DialogHeader>
         <QueryView query={calendars}>
           {(list) => (
-            <ul className="flex flex-col divide-y divide-border">
+            <ul className="flex min-w-0 flex-col divide-y divide-border">
               {list.map((c) => (
-                <li key={c.id} className="flex flex-col gap-3 py-3">
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={!hidden.includes(c.id)}
-                      onCheckedChange={() => onToggle(c.id)}
-                      aria-label={`Show ${c.name}`}
-                    />
-                    <Swatch color={c.color} />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate font-semibold">{c.name}</span>
-                      <span className="truncate text-sm text-fg-tertiary">
-                        {c.owner
-                          ? `${c.owner.name || c.owner.email} · ${accessLabels[c.access]}`
-                          : c.shares?.length
-                            ? `Shared with ${c.shares.length}`
-                            : "Only you"}
-                      </span>
+                <li key={c.id} className="flex min-w-0 flex-col gap-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <div className="flex min-w-[180px] flex-1 items-center gap-3">
+                      <Switch
+                        checked={!hidden.includes(c.id)}
+                        onCheckedChange={() => onToggle(c.id)}
+                        aria-label={`Show ${c.name}`}
+                      />
+                      <Swatch color={c.color} />
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate font-semibold">{c.name}</span>
+                        <span className={cn("text-sm", c.subscription?.lastError ? "text-danger" : "truncate text-fg-tertiary")}>
+                          {c.subscription?.lastError
+                            ? c.subscription.lastError
+                            : c.subscribed
+                              ? c.subscription?.lastFetchedAt
+                                ? `Subscribed · updated ${formatDateTime(c.subscription.lastFetchedAt)}`
+                                : "Subscribed from a link"
+                              : c.owner
+                                ? `${c.owner.name || c.owner.email} · ${accessLabels[c.access]}`
+                                : c.shares?.length
+                                  ? `Shared with ${c.shares.length}`
+                                  : "Only you"}
+                        </span>
+                      </div>
                     </div>
-                    {c.access === "owner" && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        aria-expanded={sharing === c.id}
-                        onClick={() =>
-                          setSharing(sharing === c.id ? null : c.id)
-                        }
-                      >
-                        <UserPlus aria-hidden />
-                        Share
-                      </Button>
-                    )}
-                    {c.access === "owner" && c.id !== "personal" && (
-                      <IconButton
-                        label={`Delete ${c.name}`}
-                        size="icon-sm"
-                        onClick={() => setDeleting(c)}
-                      >
-                        <Trash2 />
-                      </IconButton>
-                    )}
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {c.subscription && (
+                        <>
+                          <IconButton
+                            label={`Refresh ${c.name}`}
+                            size="icon-sm"
+                            onClick={() => refreshFeed.mutate(c.id)}
+                            disabled={refreshFeed.isPending}
+                          >
+                            <RefreshCw className={refreshFeed.isPending && refreshFeed.variables === c.id ? "animate-spin" : undefined} />
+                          </IconButton>
+                          <IconButton
+                            label={`Subscription settings for ${c.name}`}
+                            size="icon-sm"
+                            aria-expanded={editingFeed === c.id}
+                            onClick={() => {
+                              setEditingFeed(editingFeed === c.id ? null : c.id);
+                              setSharing(null);
+                            }}
+                          >
+                            <SlidersHorizontal />
+                          </IconButton>
+                        </>
+                      )}
+                      {c.access === "owner" && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          aria-expanded={sharing === c.id}
+                          onClick={() => {
+                            setSharing(sharing === c.id ? null : c.id);
+                            setEditingFeed(null);
+                          }}
+                        >
+                          <UserPlus aria-hidden />
+                          Share
+                        </Button>
+                      )}
+                      {c.access === "owner" && c.id !== "personal" && (
+                        <IconButton
+                          label={`Delete ${c.name}`}
+                          size="icon-sm"
+                          onClick={() => setDeleting(c)}
+                        >
+                          <Trash2 />
+                        </IconButton>
+                      )}
+                    </div>
                   </div>
+                  {editingFeed === c.id && c.subscription && (
+                    <SubscriptionPanel
+                      calendar={c}
+                      subscription={c.subscription}
+                      onSaved={() => {
+                        setEditingFeed(null);
+                        refresh();
+                      }}
+                    />
+                  )}
                   {sharing === c.id && (
                     <SharePanel calendar={c} onChanged={refresh} />
                   )}
@@ -160,7 +243,7 @@ export function CalendarsDialog({
           )}
         </QueryView>
         <form
-          className="flex flex-col gap-3 border-t border-border pt-4"
+          className="flex min-w-0 flex-col gap-3 border-t border-border pt-4"
           onSubmit={(e) => {
             e.preventDefault();
             if (name.trim()) create.mutate();
@@ -208,17 +291,146 @@ export function CalendarsDialog({
             ))}
           </div>
         </form>
+        <form
+          className="flex min-w-0 flex-col gap-3 border-t border-border pt-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (feedUrl.trim()) subscribe.mutate();
+          }}
+        >
+          <div className="flex flex-col gap-1">
+            <label htmlFor="feed-url" className="text-label">
+              Subscribe from a link
+            </label>
+            <p className="text-sm text-fg-tertiary">
+              Paste an ICS address. Aether refreshes it on a schedule. webcal links work too. The calendar stays read-only.
+            </p>
+          </div>
+          <Input
+            id="feed-url"
+            type="url"
+            value={feedUrl}
+            placeholder="https://example.com/calendar.ics"
+            onChange={(e) => setFeedUrl(e.target.value)}
+          />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              aria-label="Calendar name"
+              value={feedName}
+              maxLength={100}
+              placeholder="Holidays, Team leave…"
+              onChange={(e) => setFeedName(e.target.value)}
+            />
+            <Select value={feedRefresh} onValueChange={setFeedRefresh}>
+              <SelectTrigger aria-label="Refresh schedule" className="w-full sm:w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {refreshes.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div role="radiogroup" aria-label="Subscription color" className="flex gap-2">
+            {palette.map((p) => (
+              <button
+                key={p}
+                type="button"
+                role="radio"
+                aria-checked={feedColor === p}
+                aria-label={p}
+                onClick={() => setFeedColor(p)}
+                className={cn(
+                  "size-8 rounded-full border-2 border-transparent transition-colors duration-160",
+                  feedColor === p && "border-foreground",
+                )}
+                style={{ background: p, backgroundClip: "content-box", padding: 4 }}
+              />
+            ))}
+          </div>
+          <Button type="submit" variant="secondary" className="self-start" loading={subscribe.isPending} disabled={!feedUrl.trim()}>
+            Subscribe
+          </Button>
+        </form>
         <ConfirmDialog
           open={!!deleting}
           onOpenChange={(o) => !o && setDeleting(null)}
           title={`Delete “${deleting?.name ?? ""}”?`}
-          description="Every event in this calendar is deleted, and people it was shared with lose access. This cannot be undone."
+          description={
+            deleting?.subscribed
+              ? "This stops the subscription and removes the events it added. This cannot be undone."
+              : "Every event in this calendar is deleted, and people it was shared with lose access. This cannot be undone."
+          }
           confirmLabel="Delete calendar"
           pending={remove.isPending}
           onConfirm={() => deleting && remove.mutate(deleting.id)}
         />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SubscriptionPanel({
+  calendar,
+  subscription,
+  onSaved,
+}: {
+  calendar: CalendarInfo;
+  subscription: CalendarSubscription;
+  onSaved: () => void;
+}) {
+  const [url, setUrl] = useState(subscription.url);
+  const [interval, setInterval] = useState(String(subscription.refreshMinutes));
+  const options = refreshes.some((r) => r.value === interval)
+    ? refreshes
+    : [...refreshes, { value: interval, label: `Every ${interval} minutes` }];
+  const update = useMutation({
+    mutationFn: () =>
+      api(`/calendar/subscriptions/${encodeURIComponent(calendar.id)}`, {
+        method: "PATCH",
+        body: { url: url.trim(), refreshMinutes: Number(interval) },
+      }),
+    onSuccess: () => {
+      toast.success("Subscription saved");
+      onSaved();
+    },
+  });
+
+  return (
+    <form
+      className="flex flex-col gap-3 rounded-lg bg-sunken p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (url.trim()) update.mutate();
+      }}
+    >
+      <Input
+        aria-label="Subscription link"
+        type="url"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={interval} onValueChange={setInterval}>
+          <SelectTrigger aria-label="Refresh schedule" className="w-full sm:w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="submit" size="sm" loading={update.isPending} disabled={!url.trim()}>
+          Save
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -235,12 +447,13 @@ function SharePanel({
   const [target, setTarget] = useState("");
   const [access, setAccess] = useState<"read" | "write">("read");
   const orgId = target.startsWith("org:") ? target.slice(4) : "";
+  const effectiveAccess = calendar.subscribed ? "read" : access;
 
   const share = useMutation({
     mutationFn: () =>
       api(`/calendar/calendars/${calendar.id}/shares`, {
         method: "POST",
-        body: orgId ? { orgId, access } : { email: target.trim(), access },
+        body: orgId ? { orgId, access: effectiveAccess } : { email: target.trim(), access: effectiveAccess },
       }),
     onSuccess: () => {
       setTarget("");
@@ -312,18 +525,20 @@ function SharePanel({
             onChange={(e) => setTarget(e.target.value)}
           />
         )}
-        <Select
-          value={access}
-          onValueChange={(v) => setAccess(v as "read" | "write")}
-        >
-          <SelectTrigger aria-label="Access" className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="read">View only</SelectItem>
-            <SelectItem value="write">Can edit</SelectItem>
-          </SelectContent>
-        </Select>
+        {!calendar.subscribed && (
+          <Select
+            value={access}
+            onValueChange={(v) => setAccess(v as "read" | "write")}
+          >
+            <SelectTrigger aria-label="Access" className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="read">View only</SelectItem>
+              <SelectItem value="write">Can edit</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         <Button
           type="submit"
           loading={share.isPending}

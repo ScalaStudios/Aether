@@ -30,12 +30,14 @@ type calendarShare struct {
 }
 
 type calendarInfo struct {
-	ID     string          `json:"id"`
-	Name   string          `json:"name"`
-	Color  string          `json:"color"`
-	Access string          `json:"access"`
-	Owner  *calendarOwner  `json:"owner,omitempty"`
-	Shares []calendarShare `json:"shares,omitempty"`
+	ID           string                `json:"id"`
+	Name         string                `json:"name"`
+	Color        string                `json:"color"`
+	Access       string                `json:"access"`
+	Owner        *calendarOwner        `json:"owner,omitempty"`
+	Shares       []calendarShare       `json:"shares,omitempty"`
+	Subscribed   bool                  `json:"subscribed,omitempty"`
+	Subscription *calendarSubscription `json:"subscription,omitempty"`
 }
 
 func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -86,6 +88,29 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request, p *princi
 			return
 		}
 		out[index[id]].Shares = append(out[index[id]].Shares, sh)
+	}
+	subs, err := s.db.Query(ctx, `SELECT collection_id, url, refresh_minutes, last_fetched_at, last_error FROM calendar_subscriptions WHERE collection_id = ANY($1)`, ids)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	defer subs.Close()
+	for subs.Next() {
+		var id, feed, lastError string
+		var refresh int
+		var fetched *time.Time
+		if err := subs.Scan(&id, &feed, &refresh, &fetched, &lastError); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		out[index[id]].Subscribed = true
+		if out[index[id]].Access == "owner" {
+			out[index[id]].Subscription = &calendarSubscription{URL: feed, RefreshMinutes: refresh, LastFetchedAt: fetched, LastError: lastError}
+		}
+	}
+	if err := subs.Err(); err != nil {
+		s.internalError(w, r, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -148,7 +173,8 @@ func (s *Server) updateCalendar(w http.ResponseWriter, r *http.Request, p *princ
 }
 
 func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request, p *principal) {
-	if r.PathValue("calendarId") == "personal" {
+	slug := r.PathValue("calendarId")
+	if slug == "personal" {
 		writeError(w, http.StatusUnprocessableEntity, "personal_calendar", "Your main calendar can’t be deleted.")
 		return
 	}
@@ -156,7 +182,16 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request, p *princ
 	if !ok {
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `DELETE FROM dav_collections WHERE id = $1`, id); err != nil {
+	err := pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(r.Context(), `
+			UPDATE booking_types SET calendar_slug = 'personal'
+			WHERE page_id = (SELECT id FROM booking_pages WHERE user_id = $1) AND calendar_slug = $2`, p.User.ID, slug); err != nil {
+			return err
+		}
+		_, err := tx.Exec(r.Context(), `DELETE FROM dav_collections WHERE id = $1`, id)
+		return err
+	})
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -187,6 +222,18 @@ func (s *Server) shareCollection(w http.ResponseWriter, r *http.Request, p *prin
 	article := "a"
 	if strings.HasPrefix(noun, "a") {
 		article = "an"
+	}
+	if in.Access == "write" {
+		var subscribed bool
+		err := s.db.QueryRow(r.Context(), `SELECT true FROM calendar_subscriptions WHERE collection_id = $1`, collectionID).Scan(&subscribed)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			s.internalError(w, r, err)
+			return
+		}
+		if subscribed {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_access", "Subscribed calendars can only be shared view-only.")
+			return
+		}
 	}
 	var err error
 	switch {
@@ -286,6 +333,7 @@ func (s *Server) busyFor(ctx context.Context, userID string, emails []string, fr
 		SELECT a.email, c.id, c.slug FROM unnest($1::text[]) AS a(email)
 		JOIN users u ON u.id = coalesce((SELECT id FROM users WHERE email = a.email), (SELECT owner_user_id FROM mailboxes WHERE address = a.email LIMIT 1))
 		JOIN dav_collections c ON c.user_id = u.id AND c.kind = 'calendar'
+			AND NOT EXISTS (SELECT 1 FROM calendar_subscriptions s WHERE s.collection_id = c.id)
 		WHERE u.status = 'active' AND EXISTS (
 			SELECT 1 FROM organization_members x JOIN organization_members y ON x.org_id = y.org_id WHERE x.user_id = u.id AND y.user_id = $2)`, emails, userID)
 	if err != nil {
@@ -334,7 +382,7 @@ func (s *Server) busyFor(ctx context.Context, userID string, emails []string, fr
 		}
 		out[i].Known = true
 		for _, e := range events {
-			if !e.AllDay && !e.transparent {
+			if !e.AllDay && !e.transparent && !e.cancelled {
 				out[i].Busy = append(out[i].Busy, busyPeriod{Start: e.Start, End: e.End})
 			}
 		}

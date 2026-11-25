@@ -124,7 +124,7 @@ Every saved rule change records `rule.forwarding.add` or `rule.forwarding.remove
 
 ## Calendar and contacts
 
-Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events and cards are stored as iCalendar and vCard text in `dav_objects`, together with a few extracted columns: UID, ETag, summary, email addresses, start and end time, whether the event repeats, and, for a contact group, `is_group` and `member_uids`. Those columns serve the web app's JSON API and recipient suggestions without parsing every object. Sharing is a row in `calendar_shares` that grants a user or every member of an organization read or write access to one collection, calendar or address book. A shared collection appears in the other person's home as `shared-<collection id>`, and writes to a read-only share are refused with 403.
+Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events, tasks (`VTODO`), and cards are stored as iCalendar and vCard text in `dav_objects`, together with extracted columns: component type (`VEVENT` or `VTODO`), UID, ETag, summary, email addresses, start and end time, whether the event repeats, and, for a contact group, `is_group` and `member_uids`.repeats, and task fields (status, priority, due time, completion time). Those columns serve the web app's JSON API and recipient suggestions without parsing every object. Sharing is a row in `calendar_shares` that grants a user or every member of an organization read or write access to one collection, calendar or address book. A shared collection appears in the other person's home as `shared-<collection id>`, and writes to a read-only share are refused with 403.
 
 A contact group is a vCard in an address book. Aether writes both Apple's `X-ADDRESSBOOKSERVER-KIND:group` (with `X-ADDRESSBOOKSERVER-MEMBER`) and vCard `KIND:group` (with `MEMBER`), so CardDAV clients such as Apple Contacts, DAVx⁵ and Thunderbird can sync it. Members are other cards in the same address book. Choosing a group in Aether Mail adds each member's email addresses. Deleting a contact removes them from the groups in that book. The main address book, `contacts`, cannot be deleted.
 
@@ -132,12 +132,15 @@ A contact group is a vCard in an address book. Aether writes both Apple's `X-ADD
 - **Ownership:** the user ID is part of every DAV path, and requests for another user's path are refused with 403.
 - **Writes:** conditional updates use `If-Match` with the stored ETag.
 - **Repeating events:** the JSON API expands them with `rrule-go` for the requested range.
+- **Tasks:** every calendar collection advertises `VEVENT` and `VTODO` over CalDAV. Tasks appear in the Calendar view's Tasks tab and sync over CalDAV alongside events; event-range queries ignore `VTODO` rows.
+- **Subscriptions:** `calendar_subscriptions` links a read-only calendar collection to an external `https://` or `webcal://` iCalendar URL. A background worker on every API process refreshes due feeds on their configured interval (default 1 hour) using `If-None-Match` and `If-Modified-Since`, refuses private network addresses unless `AETHER_WEBHOOK_ALLOW_PRIVATE` is `true`, and records outcomes in `aether_calendar_subscription_refresh_total`. Subscribed calendars are read-only in both the web app and CalDAV and cannot be shared with write access.
+- **Booking pages:** each user can publish a public scheduling page at `/book/<slug>` backed by `booking_pages`, `booking_types`, `booking_windows`, and `bookings`. Open slots are computed from the meeting type's weekly availability windows, duration, buffers, notice and horizon limits, and the host's own non-subscribed calendars. Booking takes a per-host PostgreSQL advisory lock, re-checks availability, inserts the `VEVENT` into the chosen calendar, and emails an iTIP invitation to the guest from the host's mailbox.
 
 We chose this over running Radicale or Baïkal next to Aether. Doing it in-process keeps one sign-in system and one set of tenant checks, and puts calendars and contacts in the same database backups as everything else. The trade-off is that `go-webdav`'s server is younger than those projects, which is why client compatibility is documented as untested until each client has been tried.
 
 ## Data model
 
-The data model is defined in `migrations/0001_init.sql`:
+The data model starts in `migrations/0001_init.sql` and evolves through numbered migrations in `migrations/`:
 
 - `organizations`, `organization_members` with roles owner, admin, and member. `organizations.remote_image_policy` is `block` (the default) or `proxy`
 - `remote_image_senders`, the addresses a user has chosen to always load images from, and `remote_image_messages`, the messages a user has chosen to show images for
@@ -150,6 +153,8 @@ The data model is defined in `migrations/0001_init.sql`:
 - `mail_kicks`, IMAP session kicks waiting for Dovecot to confirm them, one row per address with a generation that each new revocation increments
 - `quarantine_messages`, one stored copy of each held message with its category, score and Rspamd symbols; `quarantine_items`, one row per mailbox it was held for, with its status and who requested or released it; `quarantine_policies` per organization; `quarantine_allowed_senders` per mailbox
 - `retention_policies`, retention policies for an organization or one mailbox, and `retention_runs`, when each mailbox is next due and the lease of the replica applying them
+- `dav_collections`, `dav_objects`, `calendar_shares`, and `calendar_subscriptions` for calendars, tasks, address books, shares, and external ICS feeds
+- `booking_pages`, `booking_types`, `booking_windows`, and `bookings` for public scheduling pages
 - `oidc_providers`, `oidc_login_states`, `sessions`, `audit_events`
 - `organizations.smime_policy`, `openpgp_policy` and `password_policy`, each `off`, `allow` or `require`
 - `encryption_keys`, one wrapped private key and its public certificate or key per user, address and protocol; the private key is ciphertext produced in the browser

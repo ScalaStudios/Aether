@@ -222,13 +222,14 @@ The Postfix container runs `aether-postfix-api` on port 8025 inside the Compose 
 
 ## Monitoring
 
-The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, the loop that sends DMARC and TLS reports, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks. The report loop is the one that `AETHER_SEND_REPORTS=false` switches off. The schedule loop also wakes when a message is due within 30 seconds, so an undo delay is not rounded up to the 15 second pass. The metrics cover:
+The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loops for scheduled sends, snoozes, webhooks, and calendar subscription refreshes, the loop that sends DMARC and TLS reports, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks. The report loop is the one that `AETHER_SEND_REPORTS=false` switches off. The schedule loop also wakes when a message is due within 30 seconds, so an undo delay is not rounded up to the 15 second pass. The metrics cover:
 
 - request rate, errors, and latency by route,
 - sign-in attempts by method and result,
 - messages sent from Aether Mail,
 - mail service errors,
 - identity provider webhooks,
+- calendar subscription refreshes by outcome (`aether_calendar_subscription_refresh_total`),
 - pending IMAP session kicks (age of the oldest),
 - pending rights reconciliation (age of the oldest),
 - messages sent to the spam filter for learning, by class (`spam`, `ham`) and result (`learned`, `duplicate`, `disabled`, `failed`),

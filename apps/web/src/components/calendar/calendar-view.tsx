@@ -1,14 +1,16 @@
 "use client"
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CalendarCheck, CalendarCog, ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
+import { CalendarCheck, CalendarClock, CalendarCog, ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
 
 import { BookingRequestsDialog } from "@/components/calendar/booking-requests"
+import { BookingDialog } from "@/components/calendar/booking-dialog"
 import { CalendarsDialog } from "@/components/calendar/calendars-dialog"
 import { EventDialog, type EventSelection } from "@/components/calendar/event-dialog"
+import { TasksView } from "@/components/calendar/tasks-view"
 import { IconButton } from "@/components/icon-button"
 import { SegmentedControl } from "@/components/segmented-control"
 import { Spinner } from "@/components/spinner"
@@ -31,7 +33,7 @@ const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "nu
 const rangeFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" })
 const monthFormat = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" })
 
-type View = "week" | "month"
+type View = "week" | "month" | "tasks"
 type Open = (event: CalendarEvent) => void
 
 function timeLabel(event: CalendarEvent) {
@@ -66,7 +68,7 @@ export function CalendarView() {
   return <Calendar now={now} />
 }
 
-function CalendarMenu({ onManage }: { onManage: () => void }) {
+function CalendarMenu({ onManage, onBooking }: { onManage: () => void; onBooking: () => void }) {
   const qc = useQueryClient()
   const fileInput = useRef<HTMLInputElement>(null)
   const importFile = useMutation({
@@ -102,6 +104,10 @@ function CalendarMenu({ onManage }: { onManage: () => void }) {
             <CalendarCog aria-hidden />
             Calendars and sharing
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onBooking}>
+            <CalendarClock aria-hidden />
+            Booking page
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
             <Upload aria-hidden />
             Import .ics file
@@ -133,11 +139,13 @@ function Calendar({ now }: { now: Date }) {
     queryKey: ["calendar-events", toRFC3339(start), toRFC3339(end)],
     queryFn: () => api<CalendarEvent[]>("/calendar/events", { query: { start: toRFC3339(start), end: toRFC3339(end) } }),
     placeholderData: keepPreviousData,
+    enabled: view !== "tasks",
   })
   const calendars = useQuery(calendarsQuery)
   const requests = useQuery({ queryKey: ["booking-requests"], queryFn: () => api<BookingRequest[]>("/calendar/booking-requests"), refetchInterval: 60_000 })
   const [reviewing, setReviewing] = useState(() => new URLSearchParams(window.location.search).has("requests"))
   const [managing, setManaging] = useState(false)
+  const [booking, setBooking] = useState(false)
   const [hidden, setHidden] = useState<string[]>(() => JSON.parse(localStorage.getItem("aether.hiddenCalendars") ?? "[]"))
   const colors = new Map(calendars.data?.map((c) => [c.id, c.color]))
   const list = (events.data ?? []).filter((e) => !hidden.includes(e.calendarId ?? "")).map((e) => ({ ...e, color: colors.get(e.calendarId ?? "") }))
@@ -178,26 +186,29 @@ function Calendar({ now }: { now: Date }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-4 md:px-6">
-        <div className="flex items-center gap-1">
-          <Button variant="secondary" size="sm" className="mr-2 max-md:min-h-11" onClick={() => setAnchor(null)}>
-            Today
-          </Button>
-          <IconButton label={view === "week" ? "Previous week" : "Previous month"} size="icon-sm" onClick={() => move(-1)}>
-            <ChevronLeft />
-          </IconButton>
-          <IconButton label={view === "week" ? "Next week" : "Next month"} size="icon-sm" onClick={() => move(1)}>
-            <ChevronRight />
-          </IconButton>
-        </div>
+        {view !== "tasks" && (
+          <div className="flex items-center gap-1">
+            <Button variant="secondary" size="sm" className="mr-2 max-md:min-h-11" onClick={() => setAnchor(null)}>
+              Today
+            </Button>
+            <IconButton label={view === "week" ? "Previous week" : "Previous month"} size="icon-sm" onClick={() => move(-1)}>
+              <ChevronLeft />
+            </IconButton>
+            <IconButton label={view === "week" ? "Next week" : "Next month"} size="icon-sm" onClick={() => move(1)}>
+              <ChevronRight />
+            </IconButton>
+          </div>
+        )}
         <h1 aria-live="polite" className="min-w-0 flex-1 truncate text-h3 max-md:order-first max-md:basis-full">
-          {view === "week" ? rangeFormat.formatRange(start, addDays(start, 6)) : monthFormat.format(day)}
+          {view === "tasks" ? "Tasks" : view === "week" ? rangeFormat.formatRange(start, addDays(start, 6)) : monthFormat.format(day)}
         </h1>
-        {events.isFetching && <Spinner />}
+        {view !== "tasks" && events.isFetching && <Spinner />}
         <SegmentedControl
           label="View"
           options={[
             { value: "week", label: "Week" },
             { value: "month", label: "Month" },
+            { value: "tasks", label: "Tasks" },
           ]}
           value={view}
           onChange={setView}
@@ -211,13 +222,17 @@ function Calendar({ now }: { now: Date }) {
             </span>
           </Button>
         )}
-        <CalendarMenu onManage={() => setManaging(true)} />
-        <Button onClick={newEvent}>
-          <Plus aria-hidden />
-          New event
-        </Button>
+        <CalendarMenu onManage={() => setManaging(true)} onBooking={() => setBooking(true)} />
+        {view !== "tasks" && (
+          <Button onClick={newEvent}>
+            <Plus aria-hidden />
+            New event
+          </Button>
+        )}
       </header>
-      {events.isError ? (
+      {view === "tasks" ? (
+        <TasksView calendars={calendars.data ?? []} now={now} />
+      ) : events.isError ? (
         <ErrorState error={events.error} onRetry={() => events.refetch()} className="flex-1" />
       ) : view === "week" ? (
         <>
@@ -237,6 +252,7 @@ function Calendar({ now }: { now: Date }) {
           if (!open && window.location.search) window.history.replaceState(null, "", window.location.pathname)
         }}
       />
+      <BookingDialog open={booking} onOpenChange={setBooking} />
     </div>
   )
 }

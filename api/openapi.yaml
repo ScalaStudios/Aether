@@ -3922,6 +3922,264 @@ paths:
         - { name: shareId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: No longer shared }
+  /calendar/tasks:
+    get:
+      tags: [calendar]
+      summary: List tasks (VTODO) across your own and shared calendars
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, completed, all], default: all } }
+        - { name: calendar, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Tasks sorted by open status, due date, and priority
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/CalendarTask" } }
+    post:
+      tags: [calendar]
+      summary: Create a task (VTODO)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarTaskInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarTask" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/tasks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: calendar, in: query, schema: { type: string, default: personal } }
+    put:
+      tags: [calendar]
+      summary: Update a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarTaskInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarTask" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [calendar]
+      summary: Delete a task
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /calendar/subscriptions:
+    post:
+      tags: [calendar]
+      summary: Subscribe to an external iCalendar URL (https:// or webcal://)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+                name: { type: string, maxLength: 100 }
+                color: { type: string, pattern: "^(#[0-9a-fA-F]{6})?$" }
+                refreshMinutes: { type: integer, enum: [15, 60, 360, 1440] }
+      responses:
+        "201":
+          description: Subscribed calendar created and initially fetched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Calendar" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/subscriptions/{calendarId}:
+    parameters: [{ name: calendarId, in: path, required: true, schema: { type: string } }]
+    patch:
+      tags: [calendar]
+      summary: Update a calendar subscription's URL or refresh schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, format: uri }
+                refreshMinutes: { type: integer, minimum: 15, maximum: 10080 }
+      responses:
+        "204": { description: Updated }
+        "404": { $ref: "#/components/responses/Error" }
+  /calendar/subscriptions/{calendarId}/refresh:
+    post:
+      tags: [calendar]
+      summary: Refresh a calendar subscription immediately
+      parameters: [{ name: calendarId, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarSubscription" }
+        "404": { $ref: "#/components/responses/Error" }
+  /calendar/booking:
+    get:
+      tags: [calendar]
+      summary: Get your booking page configuration and meeting types
+      responses:
+        "200":
+          description: Booking page settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingPage" }
+    put:
+      tags: [calendar]
+      summary: Update your booking page settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BookingPageInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingPage" }
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingPage" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/booking/types:
+    post:
+      tags: [calendar]
+      summary: Create a booking meeting type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BookingTypeInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingPage" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /calendar/booking/types/{typeId}:
+    parameters: [{ name: typeId, in: path, required: true, schema: { type: string, format: uuid } }]
+    put:
+      tags: [calendar]
+      summary: Update a booking meeting type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BookingTypeInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingPage" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [calendar]
+      summary: Delete a booking meeting type
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /book/{slug}:
+    get:
+      tags: [calendar]
+      security: []
+      summary: Fetch a public booking page and its active meeting types
+      parameters: [{ name: slug, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: Public booking page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicBookingPage" }
+        "404": { $ref: "#/components/responses/Error" }
+  /book/{slug}/{typeSlug}/slots:
+    get:
+      tags: [calendar]
+      security: []
+      summary: Compute open booking slots for a meeting type within a date range
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: typeSlug, in: path, required: true, schema: { type: string } }
+        - { name: start, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Available start and end timestamps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  timezone: { type: string }
+                  durationMinutes: { type: integer }
+                  slots:
+                    type: array
+                    items: { type: string, format: date-time }
+        "404": { $ref: "#/components/responses/Error" }
+  /book/{slug}/{typeSlug}:
+    post:
+      tags: [calendar]
+      security: []
+      summary: Book an available slot, creating a calendar event and sending an iTIP invitation
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: typeSlug, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [start, name, email]
+              properties:
+                start: { type: string, format: date-time }
+                name: { type: string, maxLength: 200 }
+                email: { type: string, format: email }
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Booking confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  title: { type: string }
+                  start: { type: string, format: date-time }
+                  end: { type: string, format: date-time }
+                  timezone: { type: string }
+                  location: { type: string }
+                  videoUrl: { type: string }
+                  hostName: { type: string }
+                  guestEmail: { type: string, format: email }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /admin/identity-providers/{id}/scim-token:
     post:
       tags: [identity-providers]
@@ -5220,6 +5478,124 @@ components:
               name: { type: string }
               orgId: { type: string, format: uuid }
               orgName: { type: string }
+        subscription: { $ref: "#/components/schemas/CalendarSubscription" }
+    CalendarSubscription:
+      type: object
+      required: [url, refreshMinutes]
+      properties:
+        url: { type: string, format: uri }
+        refreshMinutes: { type: integer }
+        lastFetchedAt: { type: string, format: date-time, nullable: true }
+        lastError: { type: string }
+        events: { type: integer }
+        notModified: { type: boolean }
+    CalendarTask:
+      type: object
+      required: [id, calendarId, title, status, priority]
+      properties:
+        id: { type: string }
+        calendarId: { type: string }
+        title: { type: string }
+        notes: { type: string }
+        status: { type: string, enum: [needs-action, in-process, completed, cancelled] }
+        priority: { type: integer, minimum: 0, maximum: 9 }
+        due: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        readOnly: { type: boolean }
+    CalendarTaskInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 300 }
+        notes: { type: string }
+        status: { type: string, enum: [needs-action, in-process, completed, cancelled] }
+        priority: { type: integer, minimum: 0, maximum: 9 }
+        due: { type: string, format: date-time, nullable: true }
+        calendarId: { type: string, default: personal }
+    BookingWindow:
+      type: object
+      required: [weekday, startMinute, endMinute]
+      properties:
+        weekday: { type: integer, minimum: 0, maximum: 6 }
+        startMinute: { type: integer, minimum: 0, maximum: 1440 }
+        endMinute: { type: integer, minimum: 0, maximum: 1440 }
+    BookingType:
+      type: object
+      required: [id, slug, name, durationMinutes, bufferBeforeMinutes, bufferAfterMinutes, calendarId, active, windows]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        durationMinutes: { type: integer }
+        bufferBeforeMinutes: { type: integer }
+        bufferAfterMinutes: { type: integer }
+        location: { type: string }
+        videoUrl: { type: string }
+        calendarId: { type: string }
+        active: { type: boolean }
+        windows: { type: array, items: { $ref: "#/components/schemas/BookingWindow" } }
+    BookingTypeInput:
+      type: object
+      required: [name, durationMinutes, windows]
+      properties:
+        slug: { type: string }
+        name: { type: string, maxLength: 100 }
+        description: { type: string }
+        durationMinutes: { type: integer, minimum: 5, maximum: 480 }
+        bufferBeforeMinutes: { type: integer, minimum: 0, maximum: 240 }
+        bufferAfterMinutes: { type: integer, minimum: 0, maximum: 240 }
+        location: { type: string }
+        videoUrl: { type: string }
+        calendarId: { type: string, default: personal }
+        active: { type: boolean, default: true }
+        windows: { type: array, items: { $ref: "#/components/schemas/BookingWindow" } }
+    BookingPage:
+      type: object
+      required: [slug, active, timezone, minNoticeMinutes, horizonDays, url, types]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        timezone: { type: string }
+        minNoticeMinutes: { type: integer }
+        horizonDays: { type: integer }
+        active: { type: boolean }
+        url: { type: string, format: uri }
+        types: { type: array, items: { $ref: "#/components/schemas/BookingType" } }
+    BookingPageInput:
+      type: object
+      required: [slug, timezone, minNoticeMinutes, horizonDays]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        timezone: { type: string }
+        minNoticeMinutes: { type: integer }
+        horizonDays: { type: integer }
+        active: { type: boolean }
+    PublicBookingPage:
+      type: object
+      required: [slug, hostName, timezone, horizonDays, types]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        hostName: { type: string }
+        timezone: { type: string }
+        horizonDays: { type: integer }
+        types:
+          type: array
+          items:
+            type: object
+            required: [slug, name, durationMinutes]
+            properties:
+              slug: { type: string }
+              name: { type: string }
+              description: { type: string }
+              durationMinutes: { type: integer }
+              location: { type: string }
+              video: { type: boolean }
     CalendarInput:
       type: object
       required: [name]

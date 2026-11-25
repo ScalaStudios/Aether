@@ -482,6 +482,7 @@ type calendarEvent struct {
 	ReadOnly    bool            `json:"readOnly,omitempty"`
 	Reminder    *int            `json:"reminderMinutes,omitempty"`
 	transparent bool
+	cancelled   bool
 }
 
 var repeatRules = map[string]string{"daily": "FREQ=DAILY", "weekly": "FREQ=WEEKLY", "monthly": "FREQ=MONTHLY", "yearly": "FREQ=YEARLY"}
@@ -494,6 +495,8 @@ func eventFromComponent(id string, comp *ical.Component) (calendarEvent, *ical.E
 	out.Description, _ = comp.Props.Text(ical.PropDescription)
 	transp, _ := comp.Props.Text(ical.PropTransparency)
 	out.transparent = strings.EqualFold(transp, "TRANSPARENT")
+	status, _ := comp.Props.Text(ical.PropStatus)
+	out.cancelled = strings.EqualFold(status, "CANCELLED")
 	if start := comp.Props.Get(ical.PropDateTimeStart); start != nil && start.ValueType() == ical.ValueDate {
 		out.AllDay = true
 	}
@@ -551,9 +554,13 @@ func eventsIn(ctx context.Context, db queryer, calendars []collectionRow, from, 
 	for i, c := range calendars {
 		byID[c.ID], ids[i] = c, c.ID
 	}
+	subs, err := subscribedIDs(ctx, db, ids)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := db.Query(ctx, `
 		SELECT o.collection_id, o.name, o.data FROM dav_objects o
-		WHERE o.collection_id = ANY($1) AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
+		WHERE o.collection_id = ANY($1) AND o.component = 'VEVENT' AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +576,7 @@ func eventsIn(ctx context.Context, db queryer, calendars []collectionRow, from, 
 			continue
 		}
 		for _, e := range expandObject(name, cal, from, to) {
-			e.CalendarID, e.ReadOnly = byID[collectionID].Slug, byID[collectionID].Access == "read"
+			e.CalendarID, e.ReadOnly = byID[collectionID].Slug, byID[collectionID].Access == "read" || subs[collectionID]
 			out = append(out, e)
 		}
 	}
