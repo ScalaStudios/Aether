@@ -664,7 +664,7 @@ paths:
               required: [domainId, localPart]
               properties:
                 domainId: { type: string, format: uuid }
-                localPart: { type: string }
+                localPart: { type: string, pattern: "^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$", description: "A plus sign marks a tag on an existing address, so new addresses cannot contain one" }
                 displayName: { type: string }
                 quotaBytes: { type: integer, minimum: 0 }
                 password: { type: string, minLength: 12, description: Optional web sign-in password for the owner account. Not allowed for shared mailboxes. }
@@ -756,7 +756,7 @@ paths:
                   required: [domainId, localPart, destinations]
                   properties:
                     domainId: { type: string, format: uuid }
-                    localPart: { type: string }
+                    localPart: { type: string, pattern: "^([a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?)?$", description: "A plus sign marks a tag on an existing address, so new addresses cannot contain one" }
                 - { $ref: "#/components/schemas/AliasInput" }
       responses:
         "201":
@@ -2235,6 +2235,34 @@ paths:
               schema: { $ref: "#/components/schemas/AutoReply" }
         "403": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/tagged-mail:
+    get:
+      tags: [mail]
+      summary: How mail to a tagged address such as name+tag@example.com is handled
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaggedMail" }
+    put:
+      tags: [mail]
+      summary: Choose how mail to a tagged address is handled. An existing alias whose address contains a plus sign still receives its own mail.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaggedMail" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaggedMail" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /contacts:
     get:
       tags: [contacts]
@@ -3291,6 +3319,14 @@ components:
         message: { type: string, maxLength: 10000 }
         start: { type: string, format: date, description: First day replies are sent }
         end: { type: string, format: date, description: Last day replies are sent }
+    TaggedMail:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [inbox, create_folder, existing_folder, reject]
+          description: inbox delivers to the Inbox; create_folder files into a folder named after the tag and creates it when missing; existing_folder files into that folder only when it exists and otherwise into the Inbox; reject refuses the message during the SMTP session. In the folder modes, a tag with characters other than letters, digits, hyphens and underscores goes to the Inbox.
     Contact:
       type: object
       required: [id, name, emails, phones, organization, notes]

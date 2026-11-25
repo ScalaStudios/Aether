@@ -328,7 +328,7 @@ func (s *Server) createAlias(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	in.LocalPart = strings.ToLower(strings.TrimSpace(in.LocalPart))
 	if in.LocalPart != "" && !localPartPattern.MatchString(in.LocalPart) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, underscores, or plus signs, or leave it empty for a catch-all.")
+		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, or underscores, or leave it empty for a catch-all. A plus sign marks a tag, so it cannot be part of an address.")
 		return
 	}
 	a := &alias{OrgID: orgID, DomainID: in.DomainID, LocalPart: in.LocalPart, Active: true, Kind: "alias", AcceptFrom: "anyone", Destinations: []string{}, AllowedSenders: []string{}, SendAs: []string{}, Owners: []string{}, Groups: []string{}, MemberDomains: []string{}, Moderators: []string{}, ModerationExempt: []string{}}

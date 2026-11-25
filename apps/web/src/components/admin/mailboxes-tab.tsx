@@ -52,7 +52,7 @@ const schema = z
       .string()
       .trim()
       .toLowerCase()
-      .regex(/^[a-z0-9]([a-z0-9._+-]*[a-z0-9])?$/, "Use letters, digits, dots, hyphens, plus signs or underscores."),
+      .regex(/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/, "Use letters, digits, dots, hyphens or underscores. A plus sign marks a tag, so it can’t be part of an address."),
     displayName: z.string().trim(),
     password: z.union([z.literal(""), z.string().min(12, "Use at least 12 characters, or leave it empty.")]),
     quotaMb: z.string().regex(/^\d*$/, "Enter a whole number of megabytes."),

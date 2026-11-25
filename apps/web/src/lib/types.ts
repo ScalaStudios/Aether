@@ -616,6 +616,12 @@ export interface FlowHeldMessage {
   createdAt: string
 }
 
+export type TaggedMailMode = "inbox" | "create_folder" | "existing_folder" | "reject"
+
+export interface TaggedMail {
+  mode: TaggedMailMode
+}
+
 export interface AutoReply {
   enabled: boolean
   subject: string

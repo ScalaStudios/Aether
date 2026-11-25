@@ -249,6 +249,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/v1/mailboxes/{mailboxId}/rules", s.saveRules)
 	authed("GET /api/v1/mailboxes/{mailboxId}/auto-reply", s.getAutoReply)
 	authed("PUT /api/v1/mailboxes/{mailboxId}/auto-reply", s.saveAutoReply)
+	authed("GET /api/v1/mailboxes/{mailboxId}/tagged-mail", s.getTaggedMail)
+	authed("PUT /api/v1/mailboxes/{mailboxId}/tagged-mail", s.saveTaggedMail)
 	authed("GET /api/v1/mailboxes/{mailboxId}/signatures", s.getSignatures)
 	authed("PUT /api/v1/mailboxes/{mailboxId}/signatures", s.saveSignatures)
 	authed("GET /api/v1/mailboxes/{mailboxId}/signature-template", s.mailboxSignatureTemplate)

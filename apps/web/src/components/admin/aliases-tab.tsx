@@ -42,7 +42,7 @@ const schema = z
       .string()
       .trim()
       .toLowerCase()
-      .regex(/^([a-z0-9]([a-z0-9._+-]*[a-z0-9])?)?$/, "Use letters, digits, dots, hyphens, plus signs or underscores."),
+      .regex(/^([a-z0-9]([a-z0-9._-]*[a-z0-9])?)?$/, "Use letters, digits, dots, hyphens or underscores. A plus sign marks a tag, so it can’t be part of an address."),
     name: z.string().trim().max(200, "Use 200 characters or fewer."),
     destinations: addresses,
     active: z.boolean(),

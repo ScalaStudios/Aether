@@ -24,7 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api"
 import { folderLabel } from "@/lib/mail"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
-import type { AutoReply, Mailbox, MailRule, RuleCondition, RuleField } from "@/lib/types"
+import type { AutoReply, Mailbox, MailRule, RuleCondition, RuleField, TaggedMail, TaggedMailMode } from "@/lib/types"
 
 const fields: Record<RuleField, string> = {
   from: "From",
@@ -168,6 +168,7 @@ export function MailboxRules({ mailboxId }: { mailboxId: string }) {
   return (
     <>
       <RuleList mailboxId={mailboxId} />
+      <TaggedMailCard mailboxId={mailboxId} />
       <AutoReplyCard mailboxId={mailboxId} />
     </>
   )
@@ -526,5 +527,48 @@ function AutoReplyCard({ mailboxId }: { mailboxId: string }) {
         Save automatic replies
       </Button>
     </form>
+  )
+}
+
+const taggedModes: Record<TaggedMailMode, string> = {
+  inbox: "Deliver to the Inbox",
+  create_folder: "File into a folder named after the tag, creating it if needed",
+  existing_folder: "File into a folder named after the tag if it exists, otherwise the Inbox",
+  reject: "Refuse the message",
+}
+
+function TaggedMailCard({ mailboxId }: { mailboxId: string }) {
+  const qc = useQueryClient()
+  const key = ["tagged-mail", mailboxId]
+  const current = useQuery({ queryKey: key, queryFn: () => api<TaggedMail>(`/mailboxes/${mailboxId}/tagged-mail`) })
+  const save = useMutation({
+    mutationFn: (mode: TaggedMailMode) => api<TaggedMail>(`/mailboxes/${mailboxId}/tagged-mail`, { method: "PUT", body: { mode } }),
+    onSuccess: (saved) => {
+      qc.setQueryData(key, saved)
+      toast.success("Tagged mail setting saved")
+    },
+  })
+
+  return (
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6" aria-busy={current.isPending}>
+      <SectionHeader
+        title="Tagged addresses"
+        description="Add a plus sign and a tag to this address, such as name+shop@example.com, to see who shares it or to sort sign-ups. When filing into folders, tags with characters other than letters, digits, hyphens and underscores go to the Inbox."
+      />
+      <Field id="tagged-mail" label="Mail sent to a tagged address">
+        <Select value={save.isPending ? save.variables : current.data?.mode} onValueChange={(mode) => save.mutate(mode as TaggedMailMode)} disabled={current.isPending || save.isPending}>
+          <SelectTrigger id="tagged-mail" className="w-full sm:w-auto">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(taggedModes).map(([mode, label]) => (
+              <SelectItem key={mode} value={mode}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+    </section>
   )
 }

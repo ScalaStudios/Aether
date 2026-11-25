@@ -196,3 +196,43 @@ func (s *Server) saveAutoReply(w http.ResponseWriter, r *http.Request, p *princi
 	}
 	s.installSieve(w, r, p, m, rules, reply, reply)
 }
+
+type taggedMail struct {
+	Mode string `json:"mode"`
+}
+
+func (s *Server) getTaggedMail(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.managedMailbox(w, r, p)
+	if !ok {
+		return
+	}
+	var out taggedMail
+	if err := s.db.QueryRow(r.Context(), `SELECT tagged_mail FROM mailboxes WHERE id = $1`, m.ID).Scan(&out.Mode); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) saveTaggedMail(w http.ResponseWriter, r *http.Request, p *principal) {
+	m, ok := s.managedMailbox(w, r, p)
+	if !ok {
+		return
+	}
+	var in taggedMail
+	if !decode(w, r, 1<<10, &in) {
+		return
+	}
+	switch in.Mode {
+	case "inbox", "create_folder", "existing_folder", "reject":
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "invalid_mode", "Mode must be inbox, create_folder, existing_folder or reject.")
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `UPDATE mailboxes SET tagged_mail = $2 WHERE id = $1`, m.ID, in.Mode); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r.Context(), r, p, &m.OrgID, "mailbox.tagged_mail.update", "mailbox", m.ID, map[string]any{"mode": in.Mode})
+	writeJSON(w, http.StatusOK, in)
+}

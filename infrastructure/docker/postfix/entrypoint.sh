@@ -35,6 +35,9 @@ write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s'"
 write_map senders "SELECT login FROM mail_senders WHERE sender = '%s'"
 write_map restricted-lists "SELECT 'aether_list_policy' FROM mail_restricted_lists WHERE address = '%s'"
 write_map journal "SELECT archive_address FROM mail_journal WHERE match = '%s'"
+tagged_mailbox="address = split_part('%u', '+', 1) || '@' || COALESCE((SELECT target_name FROM mail_alias_domains WHERE alias_name = '%d'), '%d') AND strpos('%u', '+') > 0"
+write_map tagged-mail "SELECT address FROM mail_users WHERE ${tagged_mailbox} AND (tagged_mail IN ('inbox', 'reject') OR substr('%u', strpos('%u', '+') + 1) !~ '^[a-z0-9_-]+\$')"
+write_map tagged-rejects "SELECT '550 5.1.1 This mailbox does not accept tagged addresses' FROM mail_users WHERE ${tagged_mailbox} AND tagged_mail = 'reject' AND NOT EXISTS (SELECT 1 FROM mail_aliases WHERE address = '%s')"
 write_map hosted-senders "SELECT '%s' FROM mail_domains WHERE name = '%d'"
 
 srs_secret=/var/spool/postfix/srs.secret

@@ -15,7 +15,7 @@ import (
 	"github.com/scalastudios/aether/internal/secrets"
 )
 
-var localPartPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._+-]{0,62}[a-z0-9])?$`)
+var localPartPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$`)
 
 type mailbox struct {
 	ID          string     `json:"id"`
@@ -142,7 +142,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Give the room or equipment a name of up to 200 characters.")
 		return
 	case !localPartPattern.MatchString(in.LocalPart):
-		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, underscores, or plus signs for the address.")
+		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, or underscores for the address. A plus sign marks a tag, so it cannot be part of an address.")
 		return
 	case in.QuotaBytes < 0:
 		writeError(w, http.StatusUnprocessableEntity, "invalid_quota", "The quota cannot be negative.")
