@@ -178,11 +178,11 @@ func (s *Server) assessSender(ctx context.Context, m *ownedMailbox, folder strin
 			out.Warnings = append(out.Warnings, senderWarning{Kind: "spoofed", Domain: senderDomain(from.Address)})
 		}
 		rows, err := s.db.Query(ctx, `
-			SELECT coalesce(nullif(m.display_name, ''), u.display_name, ''), m.address, 'directory'
+			SELECT coalesce(nullif(m.display_name, ''), u.display_name, ''), m.address, 'directory', '', '', ''
 			FROM mailboxes m LEFT JOIN users u ON u.id = m.owner_user_id
 			WHERE m.org_id = $1 AND m.kind = 'user' AND m.active
 			UNION
-			SELECT u.display_name, u.email, 'directory' FROM organization_members om JOIN users u ON u.id = om.user_id
+			SELECT u.display_name, u.email, 'directory', '', '', '' FROM organization_members om JOIN users u ON u.id = om.user_id
 			WHERE om.org_id = $1 AND u.status = 'active' AND u.display_name <> ''`, m.OrgID)
 		if err != nil {
 			return nil, err
