@@ -4,7 +4,7 @@ RUN groupadd -g 102 postfix && groupadd -g 103 postdrop \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postfix postfix-pgsql postsrsd libsasl2-modules ca-certificates netbase \
  && rm -rf /var/lib/apt/lists/*
-COPY main.cf master.cf submission_header_checks /etc/postfix/
+COPY main.cf master.cf submission_header_checks trace_header_checks trace_milter_header_checks /etc/postfix/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 EXPOSE 25 465 587

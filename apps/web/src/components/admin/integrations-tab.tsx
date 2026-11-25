@@ -39,6 +39,7 @@ const resources: { value: string; label: string; description: string; levels: Ac
   { value: "aliases", label: "Aliases", description: "Aliases and distribution lists, with their members, sender restrictions and owners.", levels: ["", "read", "write"] },
   { value: "members", label: "Members", description: "Members and their roles. Write also adds and removes members.", levels: ["", "read", "write"] },
   { value: "audit", label: "Audit log", description: "The organization’s audit log.", levels: ["", "read"] },
+  { value: "message-trace", label: "Message trace", description: "Search and export delivery records for the organization’s domains.", levels: ["", "read"] },
   { value: "webhooks", label: "Webhooks", description: "Webhooks, their delivery history and test deliveries.", levels: ["", "read", "write"] },
   { value: "senders", label: "Senders", description: "Allowed and blocked senders for the organization and its domains.", levels: ["", "read", "write"] },
   { value: "mailflow", label: "Mail flow", description: "Mail flow rules, their recent matches and held messages. Write also approves and rejects held messages.", levels: ["", "read", "write"] },

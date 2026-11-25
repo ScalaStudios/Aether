@@ -20,6 +20,7 @@ import { MailFlowTab } from "@/components/admin/mail-flow-tab"
 import { MembersTab } from "@/components/admin/members-tab"
 import { QuarantineTab } from "@/components/admin/quarantine-tab"
 import { SendersTab } from "@/components/admin/senders-tab"
+import { MessageTraceTab } from "@/components/admin/message-trace/trace-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { Field } from "@/components/field"
@@ -55,6 +56,7 @@ const orgTabs = [
   { value: "quarantine", label: "Quarantine", Component: QuarantineTab },
   { value: "spam", label: "Spam filter", Component: SpamFilterTab },
   { value: "mail-flow", label: "Mail flow", Component: MailFlowTab },
+  { value: "message-trace", label: "Message trace", Component: MessageTraceTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

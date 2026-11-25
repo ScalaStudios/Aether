@@ -120,6 +120,9 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/organizations/{orgId}/quarantine/delete", s.deleteOrgQuarantine)
 	authed("GET /api/v1/organizations/{orgId}/quarantine-policy", s.getQuarantinePolicy)
 	authed("PUT /api/v1/organizations/{orgId}/quarantine-policy", s.saveQuarantinePolicy)
+	authed("GET /api/v1/organizations/{orgId}/message-trace", s.listMessageTrace)
+	authed("GET /api/v1/organizations/{orgId}/message-trace/export", s.exportMessageTrace)
+	authed("GET /api/v1/organizations/{orgId}/message-trace/{id}", s.getMessageTrace)
 	authed("GET /api/v1/organizations/{orgId}/api-keys", s.listAPIKeys)
 	authed("POST /api/v1/organizations/{orgId}/api-keys", s.createAPIKey)
 	authed("DELETE /api/v1/api-keys/{keyId}", s.revokeAPIKey)
@@ -240,6 +243,9 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/v1/admin/identity-providers/{id}/scim-token", s.enableSCIM)
 	authed("DELETE /api/v1/admin/identity-providers/{id}/scim-token", s.disableSCIM)
 	authed("PATCH /api/v1/admin/users/{id}", s.updateUserStatus)
+	authed("GET /api/v1/admin/message-trace", s.listMessageTrace)
+	authed("GET /api/v1/admin/message-trace/export", s.exportMessageTrace)
+	authed("GET /api/v1/admin/message-trace/{id}", s.getMessageTrace)
 
 	return instrument(securityHeaders(mux))
 }

@@ -191,7 +191,7 @@ Two mail services also serve metrics inside the Compose network:
 - Dovecot, on port 9900: mailbox sign-ins, IMAP commands, and deliveries.
 - Rspamd, on port 11334: scanned messages and filter actions. The endpoint requires the `Password` header, set to `AETHER_RSPAMD_METRICS_PASSWORD`. That password is read-only and cannot train the filter or change settings.
 
-Postfix writes its log to `/var/log/postfix/mail.log` on the `postfix-logs` volume. The container also prints it, so `docker compose logs postfix` still works. It rotates the log daily and keeps 7 days. With the `monitoring` profile, `postfix-exporter` reads that log and the queue, and serves on port 9154: queue depth by queue, outbound results (sent, deferred, bounced), connections, rejections, and failed SMTP sign-ins.
+Postfix writes its log to `/var/log/postfix/mail.log` on the `postfix-logs` volume. The container also prints it, so `docker compose logs postfix` still works. It rotates the log daily and keeps 7 days. With the `monitoring` profile, `postfix-exporter` reads that log and the queue, and serves on port 9154: queue depth by queue, outbound results (sent, deferred, bounced), connections, rejections, and failed SMTP sign-ins. The `mail-trace` service reads the same log into the [message trace](message-trace.md), which administrators search under **Administration → Message trace**.
 
 ### Tracing
 

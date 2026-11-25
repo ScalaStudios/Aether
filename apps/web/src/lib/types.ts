@@ -154,6 +154,52 @@ export interface AuditEvent {
   ip?: string
 }
 
+export type MessageTraceStatus = "rejected" | "bounced" | "discarded" | "deleted" | "deferred" | "held" | "queued" | "unknown" | "junk" | "delivered"
+
+export interface MessageTraceSummary {
+  id: number
+  receivedAt: string
+  status: MessageTraceStatus
+  sender: string
+  recipients: string[]
+  subject: string
+  messageId: string
+  queueId: string | null
+  service: string
+  clientIp: string
+  tls: string | null
+  spamScore: number | null
+  spam: boolean
+  lastEvent: string | null
+  detail: string | null
+}
+
+export interface MessageTracePage {
+  messages: MessageTraceSummary[]
+  retentionDays: number | null
+  readAt: string | null
+}
+
+export interface MessageTraceEvent {
+  at: string
+  kind: "delivered" | "relayed" | "forwarded" | "deferred" | "bounced" | "expired" | "rejected" | "discarded" | "held" | "released" | "deleted" | "notified"
+  recipient: string
+  origRecipient: string
+  relay: string
+  dsn: string
+  detail: string
+  tls: string
+}
+
+export interface MessageTraceDetail extends MessageTraceSummary {
+  clientName: string
+  saslUsername: string
+  size: number | null
+  recipientStatus: Record<string, MessageTraceStatus>
+  events: MessageTraceEvent[]
+  related: { id: number; receivedAt: string; service: string; sender: string; status: MessageTraceStatus }[]
+}
+
 export interface APIKey {
   id: string
   name: string

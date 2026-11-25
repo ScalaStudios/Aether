@@ -19,6 +19,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `aliases:read`, `aliases:write` | Listing, creating, changing, and removing aliases and distribution lists |
 | `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
 | `audit:read` | Reading the audit log |
+| `message-trace:read` | Searching and exporting the [message trace](message-trace.md) |
 | `webhooks:read`, `webhooks:write` | Managing webhooks and reading deliveries |
 | `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
 

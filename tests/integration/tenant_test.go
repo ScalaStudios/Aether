@@ -26,6 +26,9 @@ func TestTenantIsolation(t *testing.T) {
 		{"GET", "/organizations/" + b.orgID + "/audit"},
 		{"GET", "/organizations/" + b.orgID + "/forwarding"},
 		{"PUT", "/organizations/" + b.orgID + "/forwarding"},
+		{"GET", "/organizations/" + b.orgID + "/message-trace"},
+		{"GET", "/organizations/" + b.orgID + "/message-trace/export"},
+		{"GET", "/organizations/" + b.orgID + "/message-trace/1"},
 		{"GET", "/domains/" + b.domainID},
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},
@@ -70,6 +73,9 @@ func TestTenantIsolation(t *testing.T) {
 	}
 	if got := orgAdmin.do("GET", "/admin/identity-providers", nil, nil); got != 403 {
 		t.Errorf("org admin listed identity providers: %d", got)
+	}
+	if got := orgAdmin.do("GET", "/admin/message-trace", nil, nil); got != 403 {
+		t.Errorf("org admin searched the whole server's message trace: %d", got)
 	}
 
 	member := b.bob

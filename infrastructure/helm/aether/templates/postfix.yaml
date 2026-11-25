@@ -54,7 +54,26 @@ spec:
           volumeMounts:
             - { name: spool, mountPath: /var/spool/postfix }
             - { name: mail-tls, mountPath: /tls, readOnly: true }
-      volumes: {{- include "aether.tlsVolume" . | nindent 8 }}
+            - { name: logs, mountPath: /var/log/postfix }
+        - name: mail-trace
+          image: {{ include "aether.image" (dict "name" "api" "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["mail-trace"]
+          env:
+            - { name: AETHER_MAIL_TRACE_RETENTION_DAYS, value: {{ .Values.mailTrace.retentionDays | quote }} }
+            {{- include "aether.secretEnv" (dict "env" "AETHER_DATABASE_URL" "key" "databaseUrl" "root" .) | nindent 12 }}
+          resources: {{- toYaml .Values.resources.mailTrace | nindent 12 }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: logs, mountPath: /var/log/postfix, readOnly: true }
+      volumes:
+        {{- include "aether.tlsVolume" . | nindent 8 }}
+        - { name: logs, emptyDir: {} }
   volumeClaimTemplates:
     - metadata:
         name: spool

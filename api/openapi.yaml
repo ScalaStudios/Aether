@@ -25,6 +25,7 @@ tags:
   - name: integrations
   - name: branding
   - name: mail-flow
+  - name: message-trace
 paths:
   /auth/providers:
     get:
@@ -895,7 +896,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write"]
+                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write"]
                 expiresAt: { type: string, format: date-time }
       responses:
         "201":
@@ -1001,6 +1002,112 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
+  /organizations/{orgId}/message-trace:
+    get:
+      tags: [message-trace]
+      summary: Search the delivery records of mail sent to or from the organization's domains
+      description: Owners and admins only. Inbound mail is matched on the organization's recipient domains and only those recipients are shown; mail sent by the organization's signed-in users shows every recipient. Text filters match anywhere in the value and ignore case; messageId matches exactly, with or without angle brackets.
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/traceSender" }
+        - { $ref: "#/components/parameters/traceRecipient" }
+        - { $ref: "#/components/parameters/traceSubject" }
+        - { $ref: "#/components/parameters/traceMessageId" }
+        - { $ref: "#/components/parameters/traceStatus" }
+        - { $ref: "#/components/parameters/traceFrom" }
+        - { $ref: "#/components/parameters/traceTo" }
+        - { name: before, in: query, description: Return messages with an id below this one, for the next page, schema: { type: integer } }
+      responses:
+        "200":
+          description: Newest first, 50 per page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageTracePage" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/message-trace/export:
+    get:
+      tags: [message-trace]
+      summary: Download the matching delivery records as CSV
+      description: Takes the same filters as the search, returns up to 50,000 rows, and is recorded in the audit log as message_trace.export.
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/traceSender" }
+        - { $ref: "#/components/parameters/traceRecipient" }
+        - { $ref: "#/components/parameters/traceSubject" }
+        - { $ref: "#/components/parameters/traceMessageId" }
+        - { $ref: "#/components/parameters/traceStatus" }
+        - { $ref: "#/components/parameters/traceFrom" }
+        - { $ref: "#/components/parameters/traceTo" }
+      responses:
+        "200":
+          description: CSV with a header row
+          content:
+            text/csv:
+              schema: { type: string }
+  /organizations/{orgId}/message-trace/{id}:
+    get:
+      tags: [message-trace]
+      summary: One message's path through the server
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageTraceDetail" }
+        "404": { $ref: "#/components/responses/Error" }
+  /admin/message-trace:
+    get:
+      tags: [message-trace]
+      summary: Search every delivery record on the server
+      description: Platform administrators only. Same filters and response as the organization search, including mail for domains no organization owns.
+      parameters:
+        - { $ref: "#/components/parameters/traceSender" }
+        - { $ref: "#/components/parameters/traceRecipient" }
+        - { $ref: "#/components/parameters/traceSubject" }
+        - { $ref: "#/components/parameters/traceMessageId" }
+        - { $ref: "#/components/parameters/traceStatus" }
+        - { $ref: "#/components/parameters/traceFrom" }
+        - { $ref: "#/components/parameters/traceTo" }
+        - { name: before, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Newest first, 50 per page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageTracePage" }
+  /admin/message-trace/export:
+    get:
+      tags: [message-trace]
+      summary: Download every matching delivery record as CSV
+      parameters:
+        - { $ref: "#/components/parameters/traceSender" }
+        - { $ref: "#/components/parameters/traceRecipient" }
+        - { $ref: "#/components/parameters/traceSubject" }
+        - { $ref: "#/components/parameters/traceMessageId" }
+        - { $ref: "#/components/parameters/traceStatus" }
+        - { $ref: "#/components/parameters/traceFrom" }
+        - { $ref: "#/components/parameters/traceTo" }
+      responses:
+        "200":
+          description: CSV with a header row
+          content:
+            text/csv:
+              schema: { type: string }
+  /admin/message-trace/{id}:
+    get:
+      tags: [message-trace]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageTraceDetail" }
+        "404": { $ref: "#/components/responses/Error" }
   /me/mailboxes:
     get:
       tags: [mail]
@@ -2045,6 +2152,13 @@ components:
     mailboxId: { name: mailboxId, in: path, required: true, schema: { type: string, format: uuid } }
     uid: { name: uid, in: path, required: true, schema: { type: integer } }
     folder: { name: folder, in: query, schema: { type: string, default: INBOX } }
+    traceSender: { name: sender, in: query, description: Part of the envelope sender address, schema: { type: string } }
+    traceRecipient: { name: recipient, in: query, description: Part of a recipient address, including the alias it was sent to, schema: { type: string } }
+    traceSubject: { name: subject, in: query, schema: { type: string } }
+    traceMessageId: { name: messageId, in: query, schema: { type: string } }
+    traceStatus: { name: status, in: query, schema: { $ref: "#/components/schemas/MessageTraceStatus" } }
+    traceFrom: { name: from, in: query, description: Received at or after this time, schema: { type: string, format: date-time } }
+    traceTo: { name: to, in: query, description: Received before this time, schema: { type: string, format: date-time } }
   responses:
     Error:
       description: Error
@@ -2332,6 +2446,72 @@ components:
         targetType: { type: string }
         targetId: { type: string }
         ip: { type: string }
+    MessageTraceStatus:
+      type: string
+      description: For a message with several recipients, the least successful outcome among the recipients you can see. junk means delivered to the recipient's Junk folder.
+      enum: [rejected, bounced, discarded, deleted, deferred, held, queued, unknown, junk, delivered]
+    MessageTraceSummary:
+      type: object
+      required: [id, receivedAt, status, sender, recipients, subject, messageId, service, clientIp, spam]
+      properties:
+        id: { type: integer }
+        receivedAt: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/MessageTraceStatus" }
+        sender: { type: string, description: Envelope sender with SRS rewriting undone; empty for bounce reports }
+        recipients: { type: array, items: { type: string } }
+        subject: { type: string }
+        messageId: { type: string }
+        queueId: { type: [string, "null"], description: Postfix queue ID; null when the message was rejected before it was queued }
+        service: { type: string, description: "Where it arrived: smtpd (port 25), submission, submissions, sieve-relay (forwarded by a mail rule), pickup, or cleanup for reports Postfix generated" }
+        clientIp: { type: string }
+        tls: { type: [string, "null"], description: Protocol and cipher of the incoming connection; empty when unencrypted, null when not known }
+        spamScore: { type: [number, "null"] }
+        spam: { type: boolean }
+        lastEvent: { type: [string, "null"] }
+        detail: { type: [string, "null"], description: Server reply or reason of the latest event }
+    MessageTracePage:
+      type: object
+      required: [messages]
+      properties:
+        messages: { type: array, items: { $ref: "#/components/schemas/MessageTraceSummary" } }
+        retentionDays: { type: [integer, "null"], description: How long records are kept; null until the mail-trace service has run }
+        readAt: { type: [string, "null"], format: date-time, description: When the mail-trace service last read the Postfix log }
+    MessageTraceDetail:
+      allOf:
+        - { $ref: "#/components/schemas/MessageTraceSummary" }
+        - type: object
+          required: [clientName, saslUsername, recipientStatus, events, related]
+          properties:
+            clientName: { type: string }
+            saslUsername: { type: string }
+            size: { type: [integer, "null"] }
+            recipientStatus: { type: object, additionalProperties: { $ref: "#/components/schemas/MessageTraceStatus" } }
+            events:
+              type: array
+              items:
+                type: object
+                required: [at, kind, recipient, origRecipient, relay, dsn, detail, tls]
+                properties:
+                  at: { type: string, format: date-time }
+                  kind: { type: string, enum: [delivered, relayed, forwarded, deferred, bounced, expired, rejected, discarded, held, released, deleted, notified] }
+                  recipient: { type: string }
+                  origRecipient: { type: string, description: The alias the recipient was reached through }
+                  relay: { type: string }
+                  dsn: { type: string }
+                  detail: { type: string }
+                  tls: { type: string }
+            related:
+              type: array
+              description: Other records with the same Message-ID, such as a copy forwarded by a mail rule
+              items:
+                type: object
+                required: [id, receivedAt, service, sender, status]
+                properties:
+                  id: { type: integer }
+                  receivedAt: { type: string, format: date-time }
+                  service: { type: string }
+                  sender: { type: string }
+                  status: { $ref: "#/components/schemas/MessageTraceStatus" }
     AppPassword:
       type: object
       required: [id, name, mailboxId, mailboxAddress, createdAt]

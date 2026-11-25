@@ -52,6 +52,10 @@ export function formatListDate(iso: string) {
   }).format(date)
 }
 
+export function formatPreciseDateTime(iso: string) {
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(iso))
+}
+
 export function formatShortDateTime(date: Date) {
   return new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date)
 }

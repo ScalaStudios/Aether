@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +32,7 @@ import (
 	"github.com/scalastudios/aether/internal/config"
 	"github.com/scalastudios/aether/internal/db"
 	"github.com/scalastudios/aether/internal/mail"
+	"github.com/scalastudios/aether/internal/mailtrace"
 	"github.com/scalastudios/aether/internal/secrets"
 )
 
@@ -49,8 +52,10 @@ func main() {
 		err = bootstrapAdmin(os.Args[2:])
 	case "healthcheck":
 		err = healthcheck()
+	case "mail-trace":
+		err = mailTrace(log)
 	default:
-		err = fmt.Errorf("unknown command %q; use serve, migrate, bootstrap-admin, or healthcheck", cmd)
+		err = fmt.Errorf("unknown command %q; use serve, migrate, bootstrap-admin, healthcheck, or mail-trace", cmd)
 	}
 	if err != nil {
 		log.Error("aether exited with an error", "command", cmd, "err", err)
@@ -71,6 +76,29 @@ func migrate(log *slog.Logger) error {
 	applied, err := db.Migrate(context.Background(), pool)
 	log.Info("migrations complete", "applied", applied)
 	return err
+}
+
+func mailTrace(log *slog.Logger) error {
+	url := os.Getenv("AETHER_DATABASE_URL")
+	if url == "" {
+		return errors.New("AETHER_DATABASE_URL is required")
+	}
+	retention, err := strconv.Atoi(cmp.Or(os.Getenv("AETHER_MAIL_TRACE_RETENTION_DAYS"), "30"))
+	if err != nil || retention < 1 {
+		return errors.New("AETHER_MAIL_TRACE_RETENTION_DAYS must be a whole number of days, at least 1")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	pool, err := db.Open(ctx, url)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer pool.Close()
+	if _, err := db.Migrate(ctx, pool); err != nil {
+		return err
+	}
+	mailtrace.New(pool, log, cmp.Or(os.Getenv("AETHER_MAIL_LOG"), "/var/log/postfix/mail.log"), retention).Run(ctx)
+	return nil
 }
 
 func serve(log *slog.Logger) error {

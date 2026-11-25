@@ -223,6 +223,7 @@ services:
       - postfix
       - dovecot
       - toxiproxy
+      - mail-trace
 
   postfix-exporter:
     profiles: ["monitoring"]
@@ -240,6 +241,24 @@ services:
       - postfix-logs:/var/log/postfix:ro
     depends_on:
       - postfix
+
+  mail-trace:
+    image: aether/api:dev
+    restart: unless-stopped
+    command: ["mail-trace"]
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    environment:
+      AETHER_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
+      AETHER_MAIL_TRACE_RETENTION_DAYS: ${AETHER_MAIL_TRACE_RETENTION_DAYS:-30}
+    volumes:
+      - postfix-logs:/var/log/postfix:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   prometheus:
     profiles: ["monitoring"]

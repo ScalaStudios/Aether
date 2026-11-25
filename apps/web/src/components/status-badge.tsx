@@ -3,7 +3,7 @@ import { cn } from "cn"
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral"
 
-const tones: Record<Tone, { icon: LucideIcon; className: string }> = {
+export const tones: Record<Tone, { icon: LucideIcon; className: string }> = {
   success: { icon: CircleCheck, className: "text-success bg-success/12" },
   warning: { icon: CircleAlert, className: "text-warning bg-warning/12" },
   danger: { icon: CircleX, className: "text-danger bg-danger/12" },
