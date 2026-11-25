@@ -326,7 +326,7 @@ func (s *Server) quarantineReviewer(w http.ResponseWriter, r *http.Request, p *p
 	if !ok {
 		return "", false
 	}
-	switch role := p.orgRole(orgID); {
+	switch role := p.grants[orgID].Role; {
 	case role == "owner" || role == "admin":
 		return orgID, true
 	case p.orgRole(orgID) == "":
