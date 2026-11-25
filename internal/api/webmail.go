@@ -214,6 +214,7 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, p *principal
 	if err != nil {
 		s.log.Warn("assessing sender failed", "mailbox", m.ID, "err", err)
 	}
+	msg.Unsubscribe = unsubscribeOffer(msg.ParsedUnsubscribe(), s.cfg.WebhookAllowPrivate)
 	writeJSON(w, http.StatusOK, struct {
 		*mailpkg.Message
 		Invitation *invitation       `json:"invitation,omitempty"`

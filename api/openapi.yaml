@@ -2906,6 +2906,29 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/messages/{uid}/unsubscribe:
+    post:
+      tags: [mail]
+      summary: Unsubscribe from the list that sent this message
+      description: |
+        Reads `List-Unsubscribe` and `List-Unsubscribe-Post` from the message again.
+        With `List-Unsubscribe-Post: List-Unsubscribe=One-Click` and an https URI, Aether POSTs `List-Unsubscribe=One-Click` (`application/x-www-form-urlencoded`) to that URI. The request sends no cookies and does not follow redirects.
+        Otherwise an https URI is returned as `url` for the browser to open, or the `mailto:` URI is sent from this mailbox when the caller has Send as or Send on behalf.
+        Usernames in the URL, schemes other than https, and private or reserved addresses are refused. `AETHER_WEBHOOK_ALLOW_PRIVATE=true` also allows http and those addresses. Read-only access can use one-click and the link.
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { $ref: "#/components/parameters/uid" }
+        - { $ref: "#/components/parameters/folder" }
+      responses:
+        "200":
+          description: The unsubscribe was sent, or the browser should open url
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UnsubscribeResult" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}/attachments/{part}:
     get:
       tags: [mail]
@@ -3144,6 +3167,50 @@ paths:
         - { $ref: "#/components/parameters/uid" }
       responses:
         "204": { description: Deleted }
+  /mailboxes/{mailboxId}/newsletters:
+    get:
+      tags: [mail]
+      summary: Senders of recent inbox messages that include List-Unsubscribe
+      description: Searches the Inbox for the header and returns at most the 200 most recent matches, grouped by the sender. Each sender uses the same action as Unsubscribe on its latest message.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: Senders, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [senders]
+                properties:
+                  senders: { type: array, items: { $ref: "#/components/schemas/NewsletterSender" } }
+        "429": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/newsletters/block:
+    post:
+      tags: [mail]
+      summary: Delete future messages from a sender
+      description: Adds a mail rule, run first, that discards messages whose From header contains this address and then stops. The rule can be changed with the mail rules. Read-only access is refused. Blocking an address that is already blocked changes nothing.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string, format: email }
+      responses:
+        "200":
+          description: The sender is blocked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [blocked]
+                properties:
+                  blocked: { type: boolean }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/rules:
     get:
       tags: [mail]
@@ -4443,6 +4510,9 @@ components:
             text: { type: string }
             html: { type: string, description: Sanitized HTML. Render inside a sandboxed iframe. }
             attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+            unsubscribe:
+              $ref: "#/components/schemas/Unsubscribe"
+              description: Present when the message has a usable List-Unsubscribe header. Exactly one of oneClick, link and mailto is true, and that is the action Unsubscribe performs.
             invitation: { $ref: "#/components/schemas/Invitation" }
             protection: { $ref: "#/components/schemas/MessageProtection" }
             related:
@@ -4455,6 +4525,34 @@ components:
                   folder: { type: string }
                   uid: { type: integer }
                   date: { type: string, format: date-time }
+    Unsubscribe:
+      type: object
+      description: Present on a message when Unsubscribe can do something. Exactly one of the flags is true, and that is the action performed.
+      properties:
+        oneClick: { type: boolean, description: The server POSTs List-Unsubscribe=One-Click to the https URI }
+        link: { type: boolean, description: The response includes a url for the browser to open }
+        mailto: { type: boolean, description: The server sends the mailto request from this mailbox }
+    UnsubscribeResult:
+      type: object
+      required: [method]
+      properties:
+        method: { type: string, enum: [one-click, link, mailto] }
+        url: { type: string, description: Present when method is link }
+    NewsletterSender:
+      type: object
+      required: [address, name, subject, count, latestUid, folder, date, oneClick, link, mailto, blocked]
+      properties:
+        address: { type: string, format: email }
+        name: { type: string }
+        subject: { type: string }
+        count: { type: integer, description: How many of the latest 200 matching inbox messages are from this sender }
+        latestUid: { type: integer }
+        folder: { type: string }
+        date: { type: string, format: date-time }
+        oneClick: { type: boolean }
+        link: { type: boolean }
+        mailto: { type: boolean }
+        blocked: { type: boolean, description: A mail rule already deletes messages from this address }
     Invitation:
       type: object
       required: [method, event, organizer, status, applied]

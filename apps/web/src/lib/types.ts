@@ -530,6 +530,7 @@ export interface Message extends MessageSummary {
   attachments: Attachment[]
   invitation?: Invitation
   protection?: MessageProtection
+  unsubscribe?: Unsubscribe
   related?: { folder: string; uid: number; date: string }[]
   sender?: SenderInsight | null
 }
@@ -568,6 +569,31 @@ export interface SenderWarningSettings {
   externalTag: boolean
   firstContact: boolean
   impersonation: boolean
+}
+
+export interface Unsubscribe {
+  oneClick: boolean
+  link: boolean
+  mailto: boolean
+}
+
+export interface UnsubscribeResult {
+  method: "one-click" | "link" | "mailto"
+  url?: string
+}
+
+export interface NewsletterSender {
+  address: string
+  name: string
+  subject: string
+  count: number
+  latestUid: number
+  folder: string
+  date: string
+  oneClick: boolean
+  link: boolean
+  mailto: boolean
+  blocked: boolean
 }
 
 export interface OutgoingMessage {

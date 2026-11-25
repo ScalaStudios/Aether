@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { ArchiveRestore, CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, PenSquare, ShieldAlert, Trash2, type LucideIcon } from "lucide-react"
+import { ArchiveRestore, CalendarClock, Ellipsis, FolderInput, FolderPen, FolderPlus, FolderX, MailOpen, Newspaper, PenSquare, ShieldAlert, Trash2, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -10,6 +10,7 @@ import { cn } from "cn"
 import { FolderDialog, folderLeaf, type FolderAction } from "@/components/mail/folder-dialog"
 import { RecoverDialog } from "@/components/mail/recover-dialog"
 import { MailOrganize } from "@/components/mail/organize"
+import { NewslettersDialog } from "@/components/mail/newsletters-dialog"
 import { ErrorState, RowsSkeleton } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -354,6 +355,7 @@ export function FolderPane({
 }) {
   const userId = useSession().data?.user.id
   const readOnly = (shared.find((t) => t.mailbox.id === active.mailboxId) ?? primary)?.mailbox.access === "read"
+  const [newslettersOpen, setNewslettersOpen] = useState(false)
 
   const tree = ({ mailbox, folders }: Tree) => {
     const current = mailbox.id === active.mailboxId
@@ -406,6 +408,13 @@ export function FolderPane({
       ) : (
         readOnly && <p className="rounded-lg bg-muted px-3 py-2 text-sm text-fg-secondary">Read only. You can read this mailbox but not send, move, or delete.</p>
       )}
+      {active.mailboxId && (
+        <Button variant="quiet" className="w-full" onClick={() => setNewslettersOpen(true)}>
+          <Newspaper aria-hidden />
+          Newsletters
+        </Button>
+      )}
+      <NewslettersDialog open={newslettersOpen} onOpenChange={setNewslettersOpen} mailboxId={active.mailboxId} readOnly={readOnly} />
       <nav aria-label="Mail folders" className="-mx-2 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2">
         {primary && tree(primary)}
         {shared.map((t) => {

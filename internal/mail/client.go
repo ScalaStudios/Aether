@@ -562,18 +562,21 @@ type Attachment struct {
 
 type Message struct {
 	Summary
-	DeliveredTo string             `json:"deliveredTo,omitempty"`
-	Cc          []Address          `json:"cc"`
-	Bcc         []Address          `json:"bcc"`
-	ReplyTo     []Address          `json:"replyTo"`
-	MessageID   string             `json:"messageId"`
-	InReplyTo   string             `json:"inReplyTo"`
-	References  []string           `json:"references"`
-	Text        string             `json:"text"`
-	HTML        string             `json:"html"`
-	Attachments []Attachment       `json:"attachments"`
-	Calendar    string             `json:"-"`
-	Protection  *MessageProtection `json:"protection,omitempty"`
+	DeliveredTo         string             `json:"deliveredTo,omitempty"`
+	Cc                  []Address          `json:"cc"`
+	Bcc                 []Address          `json:"bcc"`
+	ReplyTo             []Address          `json:"replyTo"`
+	MessageID           string             `json:"messageId"`
+	InReplyTo           string             `json:"inReplyTo"`
+	References          []string           `json:"references"`
+	Text                string             `json:"text"`
+	HTML                string             `json:"html"`
+	Attachments         []Attachment       `json:"attachments"`
+	Calendar            string             `json:"-"`
+	Protection          *MessageProtection `json:"protection,omitempty"`
+	Unsubscribe         *Unsubscribe       `json:"unsubscribe,omitempty"`
+	listUnsubscribe     string
+	listUnsubscribePost string
 
 	Authentication *Authentication `json:"-"`
 }
@@ -598,7 +601,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			return ErrNotFound
 		}
 		uidSet := imap.UIDSetNum(imap.UID(uid))
-		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader, "Autocrypt"}, Peek: true}
+		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader, "Autocrypt", "List-Unsubscribe", "List-Unsubscribe-Post"}, Peek: true}
 		msgs, err := ic.Fetch(uidSet, &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true}, BodySection: []*imap.FetchItemBodySection{refs},
@@ -626,6 +629,8 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 				out.DeliveredTo = strings.Trim(e.Header.Get("X-Original-To"), " <>")
 				out.Authentication = ParseAuthentication(e.Header.Values(AuthenticationHeader))
 				out.Protection = WithAutocrypt(out.Protection, e.Header.Get("Autocrypt"))
+				out.listUnsubscribe = headerJoined(e.Header, "List-Unsubscribe")
+				out.listUnsubscribePost = headerJoined(e.Header, "List-Unsubscribe-Post")
 			}
 		}
 		out.Protection = mergeProtection(DescribeProtection(m.BodyStructure), out.Protection)

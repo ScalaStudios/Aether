@@ -15,6 +15,18 @@ export const folderIcons: Record<SpecialUse, LucideIcon> = {
 
 export const snoozedFolder = "Snoozed"
 
+export function openUnsubscribeLink(url: string) {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false
+  window.open(parsed.href, "_blank", "noopener,noreferrer")
+  return true
+}
+
 export function folderLabel(folder: Pick<Folder, "name" | "specialUse">) {
   return folder.specialUse === "inbox" ? "Inbox" : folder.name
 }

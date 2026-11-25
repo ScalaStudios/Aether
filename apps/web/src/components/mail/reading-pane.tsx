@@ -31,11 +31,47 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
-import { api, apiUrl } from "@/lib/api"
+import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatAddress, formatBytes, formatDateTime } from "@/lib/format"
-import { folderIcons, folderLabel, messageDocument, type ComposeMode } from "@/lib/mail"
+import { folderIcons, folderLabel, messageDocument, openUnsubscribeLink, type ComposeMode } from "@/lib/mail"
 import { foldersQuery, labelsQuery } from "@/lib/queries"
-import type { Address, Folder, Label, Mailbox, Message, SenderEntry } from "@/lib/types"
+import type { Address, Folder, Label, Mailbox, Message, SenderEntry, UnsubscribeResult } from "@/lib/types"
+
+function UnsubscribeBar({ message, mailboxId, folder, readOnly }: { message: Message; mailboxId: string; folder: string; readOnly?: boolean }) {
+  const offer = message.unsubscribe
+  const [done, setDone] = useState(false)
+  const unsubscribe = useMutation({
+    mutationFn: () => api<UnsubscribeResult>(`/mailboxes/${mailboxId}/messages/${message.uid}/unsubscribe`, { method: "POST", query: { folder } }),
+    onSuccess: (result) => {
+      if (result.url) {
+        if (!openUnsubscribeLink(result.url)) toast.error("This unsubscribe link cannot be opened.")
+        else toast.success("Opened the unsubscribe page.")
+        return
+      }
+      setDone(true)
+      toast.success(result.method === "mailto" ? "Unsubscribe request sent." : "Unsubscribed.")
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+  if (!offer || (!offer.oneClick && !offer.link && !offer.mailto)) return null
+  const mailtoOnly = offer.mailto && !offer.oneClick && !offer.link
+  const detail = offer.oneClick ? "Aether sends the one-click unsubscribe request for you." : offer.link ? "Opens the sender's unsubscribe page." : "Sends an unsubscribe message from this mailbox."
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted px-4 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">This message includes an unsubscribe link.</p>
+        <p className="text-sm text-fg-secondary">{detail}</p>
+      </div>
+      {mailtoOnly && readOnly ? (
+        <p className="text-sm text-fg-tertiary">Unsubscribing sends a message, and this access cannot send.</p>
+      ) : (
+        <Button size="sm" variant="secondary" loading={unsubscribe.isPending} disabled={done} onClick={() => unsubscribe.mutate()}>
+          {done ? "Unsubscribed" : "Unsubscribe"}
+        </Button>
+      )}
+    </div>
+  )
+}
 
 export function AddressLine({ label, addresses }: { label: string; addresses: Address[] }) {
   if (!addresses.length) return null
@@ -92,7 +128,7 @@ function messageQuery(mailboxId: string, folder: string, uid: number) {
   }
 }
 
-function Conversation({ message, earlier, mailboxId, folder }: { message: Message; earlier: number[]; mailboxId: string; folder: string }) {
+function Conversation({ message, earlier, mailboxId, folder, readOnly }: { message: Message; earlier: number[]; mailboxId: string; folder: string; readOnly?: boolean }) {
   const items = [...earlier.map((uid) => ({ folder, uid })), ...(message.related ?? [])]
   const queries = useQueries({ queries: items.map((i) => messageQuery(mailboxId, i.folder, i.uid)) })
   if (items.length === 0) return null
@@ -102,13 +138,13 @@ function Conversation({ message, earlier, mailboxId, folder }: { message: Messag
     <section aria-label="More in this conversation" className="flex flex-col gap-2 border-t border-border pt-4">
       <h3 className="text-label text-fg-tertiary">More in this conversation</h3>
       {order.map(({ item, query }) => (
-        <EarlierMessage key={`${item.folder}-${item.uid}`} query={query} mailboxId={mailboxId} folder={item.folder} showFolder={item.folder !== folder} />
+        <EarlierMessage key={`${item.folder}-${item.uid}`} query={query} mailboxId={mailboxId} folder={item.folder} showFolder={item.folder !== folder} readOnly={readOnly} />
       ))}
     </section>
   )
 }
 
-function EarlierMessage({ query, mailboxId, folder, showFolder }: { query: UseQueryResult<Message>; mailboxId: string; folder: string; showFolder: boolean }) {
+function EarlierMessage({ query, mailboxId, folder, showFolder, readOnly }: { query: UseQueryResult<Message>; mailboxId: string; folder: string; showFolder: boolean; readOnly?: boolean }) {
   const [open, setOpen] = useState(false)
   const m = query.data
   return (
@@ -138,6 +174,7 @@ function EarlierMessage({ query, mailboxId, folder, showFolder }: { query: UseQu
       </button>
       {open && m && (
         <div className="flex flex-col gap-4 px-4 pb-4">
+          <UnsubscribeBar message={m} mailboxId={mailboxId} folder={folder} readOnly={readOnly} />
           <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
         </div>
       )}
@@ -421,11 +458,12 @@ export function ReadingPane({
                 <AddressLine label="Cc" addresses={m.cc} />
               </dl>
               {m.sender && m.from[0] && <SenderVerification sender={m.sender} from={m.from[0]} />}
+              <UnsubscribeBar key={`${folder}-${m.uid}`} message={m} mailboxId={mailboxId} folder={folder} readOnly={readOnly} />
             </header>
             {m.sender && m.from[0] && <SenderNotice sender={m.sender} from={m.from[0]} />}
             {m.invitation && !readOnly && <InvitationCard key={`${m.uid}-${m.invitation.method}`} message={m} mailboxId={mailboxId} folder={folder} />}
             <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
-            <Conversation message={m} earlier={earlier} mailboxId={mailboxId} folder={folder} />
+            <Conversation message={m} earlier={earlier} mailboxId={mailboxId} folder={folder} readOnly={readOnly} />
           </article>
         )
       )}
