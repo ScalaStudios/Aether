@@ -44,6 +44,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { featureOff, useSession } from "@/hooks/use-session"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatDate } from "@/lib/format"
+import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
 import { roleLabel } from "@/lib/permissions"
 import { myMailboxesQuery } from "@/lib/queries"
 import type { AppPassword, AppPasswordScope, CreatedAppPassword, Session } from "@/lib/types"
@@ -90,6 +91,7 @@ export function SettingsView() {
               </dd>
             </div>
           </dl>
+          <LanguagePreference locale={session.user.locale ?? ""} />
           <SignatureDetails title={session.user.title} phone={session.user.phone} />
         </section>
       )}
@@ -161,6 +163,46 @@ function Sending({ title, phone, seconds }: { title: string; phone: string; seco
       />
       <p className="text-sm text-fg-tertiary">In Mail, Ctrl+Z or ⌘Z undoes the message you just sent. Off sends immediately.</p>
     </section>
+  )
+}
+
+function LanguagePreference({ locale }: { locale: string }) {
+  const { t, automaticLocale } = useI18n()
+  const qc = useQueryClient()
+  const save = useMutation({
+    mutationFn: (next: string) => api<Session>("/me/profile", { method: "PUT", body: { locale: next } }),
+    onSuccess: (saved) => {
+      qc.setQueryData(["session"], saved)
+      toast.success(t("settings.profile.languageUpdatedToast"))
+    },
+  })
+
+  return (
+    <div className="border-t border-border pt-4">
+      <div className="max-w-sm">
+        <Field id="profile-language" label={t("settings.profile.language")} hint={t("settings.profile.languageHint")}>
+          <Select
+            value={locale || "auto"}
+            disabled={save.isPending}
+            onValueChange={(value) => save.mutate(value === "auto" ? "" : value)}
+          >
+            <SelectTrigger id="profile-language" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">
+                {t("common.automaticWithLocale", { language: LOCALE_LABELS[automaticLocale] })}
+              </SelectItem>
+              {SUPPORTED_LOCALES.map((code) => (
+                <SelectItem key={code} value={code}>
+                  {LOCALE_LABELS[code]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      </div>
+    </div>
   )
 }
 
