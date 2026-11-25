@@ -567,7 +567,18 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		out.Sender = &mailpkg.Address{Name: p.User.DisplayName, Address: p.User.Email}
 	}
 	if in.SendAt != nil {
-		s.scheduleMessage(w, r, p, m, &in, out)
+		s.scheduleMessage(w, r, p, m, &in, out, false)
+		return
+	}
+	delay, err := s.undoDelay(r.Context(), p.User.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if delay > 0 {
+		at := time.Now().Add(delay).UTC()
+		in.SendAt = &at
+		s.scheduleMessage(w, r, p, m, &in, out, true)
 		return
 	}
 	raw, messageID, err := out.Build(s.cfg.MailHostname)

@@ -222,7 +222,7 @@ The Postfix container runs `aether-postfix-api` on port 8025 inside the Compose 
 
 ## Monitoring
 
-The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, the loop that sends DMARC and TLS reports, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks. The report loop is the one that `AETHER_SEND_REPORTS=false` switches off. The metrics cover:
+The API serves Prometheus metrics on port 9090 inside the Compose network (`AETHER_METRICS_LISTEN`). That port is not published, and the reverse proxy does not route it. Every API process also runs the loop for scheduled sends, snoozes and webhooks, the loop that sends DMARC and TLS reports, and two access workers that reconcile shared mailbox rights in Dovecot and deliver IMAP session kicks. The report loop is the one that `AETHER_SEND_REPORTS=false` switches off. The schedule loop also wakes when a message is due within 30 seconds, so an undo delay is not rounded up to the 15 second pass. The metrics cover:
 
 - request rate, errors, and latency by route,
 - sign-in attempts by method and result,

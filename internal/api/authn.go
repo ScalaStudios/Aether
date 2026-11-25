@@ -29,6 +29,16 @@ type User struct {
 	Status          string `json:"status"`
 	Title           string `json:"title"`
 	Phone           string `json:"phone"`
+	UndoSendSeconds int    `json:"undoSendSeconds"`
+}
+
+func allowedUndoDelay(seconds int) bool {
+	switch seconds {
+	case 0, 5, 10, 20, 30:
+		return true
+	default:
+		return false
+	}
 }
 
 type membership struct {
@@ -163,8 +173,8 @@ func (s *Server) startSession(ctx context.Context, w http.ResponseWriter, r *htt
 
 func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionResponse, error) {
 	resp := &sessionResponse{Memberships: []membership{}}
-	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone, `+twoFactorSetupPending+` FROM users u WHERE id = $1`, userID).
-		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone, &resp.TwoFactorSetupRequired)
+	err := s.db.QueryRow(ctx, `SELECT id, email, display_name, is_platform_admin, status, title, phone, undo_send_seconds, `+twoFactorSetupPending+` FROM users u WHERE id = $1`, userID).
+		Scan(&resp.User.ID, &resp.User.Email, &resp.User.DisplayName, &resp.User.IsPlatformAdmin, &resp.User.Status, &resp.User.Title, &resp.User.Phone, &resp.User.UndoSendSeconds, &resp.TwoFactorSetupRequired)
 	if err != nil {
 		return nil, err
 	}
@@ -190,8 +200,9 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request, p *principal) {
 
 func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request, p *principal) {
 	var in struct {
-		Title string `json:"title"`
-		Phone string `json:"phone"`
+		Title           string `json:"title"`
+		Phone           string `json:"phone"`
+		UndoSendSeconds *int   `json:"undoSendSeconds"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
@@ -201,7 +212,17 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request, p *princi
 		writeError(w, http.StatusUnprocessableEntity, "invalid_profile", "Keep the job title to 100 characters and the phone number to 40.")
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, updated_at = now() WHERE id = $1`, p.User.ID, in.Title, in.Phone); err != nil {
+	if in.UndoSendSeconds != nil && !allowedUndoDelay(*in.UndoSendSeconds) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_undo_send", "Choose off, or a delay of 5, 10, 20 or 30 seconds.")
+		return
+	}
+	var err error
+	if in.UndoSendSeconds != nil {
+		_, err = s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, undo_send_seconds = $4, updated_at = now() WHERE id = $1`, p.User.ID, in.Title, in.Phone, *in.UndoSendSeconds)
+	} else {
+		_, err = s.db.Exec(r.Context(), `UPDATE users SET title = $2, phone = $3, updated_at = now() WHERE id = $1`, p.User.ID, in.Title, in.Phone)
+	}
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}

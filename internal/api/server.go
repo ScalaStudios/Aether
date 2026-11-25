@@ -51,11 +51,12 @@ type Server struct {
 	apnsMu        sync.Mutex
 	apnsKey       string
 	apns          *apnsClient
+	scheduleWake  chan struct{}
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
 	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
-		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1),
+		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1),
 	}
 }
 

@@ -16,6 +16,7 @@ const (
 	maxScheduledPerMailbox = 100
 	maxScheduleAhead       = 366 * 24 * time.Hour
 	maxSendAttempts        = 5
+	scheduleLead           = 30 * time.Second
 )
 
 type scheduledMessage struct {
@@ -24,11 +25,17 @@ type scheduledMessage struct {
 	Subject string            `json:"subject"`
 	To      []mailpkg.Address `json:"to"`
 	Error   *string           `json:"error"`
+	Undo    bool              `json:"undo"`
 }
 
-func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, in *outgoingRequest, out *mailpkg.Outgoing) {
+func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, in *outgoingRequest, out *mailpkg.Outgoing, undo bool) {
 	sendAt := in.SendAt.UTC()
-	if sendAt.Before(time.Now().Add(5*time.Second)) || sendAt.After(time.Now().Add(maxScheduleAhead)) {
+	if undo {
+		if !sendAt.After(time.Now()) || sendAt.After(time.Now().Add(time.Minute)) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_send_at", "Choose a send time in the future and within a year.")
+			return
+		}
+	} else if sendAt.Before(time.Now().Add(5*time.Second)) || sendAt.After(time.Now().Add(maxScheduleAhead)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_send_at", "Choose a send time in the future and within a year.")
 		return
 	}
@@ -41,7 +48,9 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *prin
 		writeError(w, http.StatusUnprocessableEntity, "too_many_scheduled", "This mailbox already has 100 scheduled messages.")
 		return
 	}
-	out.Date = sendAt
+	if !undo {
+		out.Date = sendAt
+	}
 	raw, _, err := out.Build(s.cfg.MailHostname)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -61,10 +70,10 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *prin
 	}
 	var item scheduledMessage
 	err = s.db.QueryRow(r.Context(), `
-		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw, sender_user_id, sender_mode, from_address)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, send_at, subject, to_addresses, error`,
-		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw, p.User.ID, mode, out.From.Address).
-		Scan(&item.ID, &item.SendAt, &item.Subject, &item.To, &item.Error)
+		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw, sender_user_id, sender_mode, from_address, undo)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, send_at, subject, to_addresses, error, undo`,
+		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw, p.User.ID, mode, out.From.Address, undo).
+		Scan(&item.ID, &item.SendAt, &item.Subject, &item.To, &item.Error, &item.Undo)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -74,6 +83,9 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *prin
 			s.log.Error("removing scheduled draft failed", "mailbox", m.ID, "err", err)
 		}
 	}
+	if time.Until(sendAt) <= scheduleLead {
+		wake(s.scheduleWake)
+	}
 	writeJSON(w, http.StatusAccepted, item)
 }
 
@@ -82,7 +94,7 @@ func (s *Server) listScheduled(w http.ResponseWriter, r *http.Request, p *princi
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT id, send_at, subject, to_addresses, error FROM scheduled_messages
+	rows, err := s.db.Query(r.Context(), `SELECT id, send_at, subject, to_addresses, error, undo FROM scheduled_messages
 		WHERE mailbox_id = $1 AND protected_reply_id IS NULL ORDER BY send_at`, m.ID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -90,7 +102,7 @@ func (s *Server) listScheduled(w http.ResponseWriter, r *http.Request, p *princi
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (scheduledMessage, error) {
 		var it scheduledMessage
-		return it, row.Scan(&it.ID, &it.SendAt, &it.Subject, &it.To, &it.Error)
+		return it, row.Scan(&it.ID, &it.SendAt, &it.Subject, &it.To, &it.Error, &it.Undo)
 	})
 	if err != nil {
 		s.internalError(w, r, err)
@@ -100,7 +112,7 @@ func (s *Server) listScheduled(w http.ResponseWriter, r *http.Request, p *princi
 }
 
 func (s *Server) cancelScheduled(w http.ResponseWriter, r *http.Request, p *principal) {
-	m, ok := s.ownedMailbox(w, r, p)
+	m, ok := s.cancellableMailbox(w, r, p)
 	if !ok {
 		return
 	}
@@ -119,7 +131,7 @@ func (s *Server) cancelScheduled(w http.ResponseWriter, r *http.Request, p *prin
 	err = tx.QueryRow(r.Context(), `DELETE FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 AND protected_reply_id IS NULL
 		RETURNING raw, bcc`, id, m.ID).Scan(&raw, &bcc)
 	if errors.Is(err, pgx.ErrNoRows) {
-		notFound(w)
+		writeError(w, http.StatusNotFound, "not_found", "That message is no longer waiting to be sent. It may already have gone out.")
 		return
 	}
 	if err != nil {
@@ -234,10 +246,66 @@ func (s *Server) unsnoozeMessage(w http.ResponseWriter, r *http.Request, p *prin
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) cancellableMailbox(w http.ResponseWriter, r *http.Request, p *principal) (*ownedMailbox, bool) {
+	id, ok := pathID(w, r, "mailboxId")
+	if !ok {
+		return nil, false
+	}
+	m, access, err := s.accessibleMailbox(r.Context(), id, p.User.ID)
+	if err != nil {
+		notFound(w)
+		return nil, false
+	}
+	if access == "read" && !m.SendAs && !m.SendOnBehalf {
+		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to this mailbox.")
+		return nil, false
+	}
+	return m, true
+}
+
+func (s *Server) undoDelay(ctx context.Context, userID string) (time.Duration, error) {
+	var seconds int
+	if err := s.db.QueryRow(ctx, `SELECT undo_send_seconds FROM users WHERE id = $1`, userID).Scan(&seconds); err != nil {
+		return 0, err
+	}
+	if seconds == 0 || !allowedUndoDelay(seconds) {
+		return 0, nil
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
+
+func (s *Server) nextSendAt(ctx context.Context) (time.Time, bool) {
+	var at time.Time
+	err := s.db.QueryRow(ctx, `SELECT send_at FROM scheduled_messages WHERE error IS NULL AND send_at > now() ORDER BY send_at LIMIT 1`).Scan(&at)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.log.Error("loading the next scheduled send failed", "err", err)
+		}
+		return time.Time{}, false
+	}
+	return at, true
+}
+
 func (s *Server) RunScheduler(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	var cleaned time.Time
+	var early *time.Timer
+	var earlyC <-chan time.Time
+	stopEarly := func() {
+		if early == nil {
+			return
+		}
+		if !early.Stop() {
+			select {
+			case <-early.C:
+			default:
+			}
+		}
+		early = nil
+		earlyC = nil
+	}
+	defer stopEarly()
 	for {
 		if _, err := s.db.Exec(ctx, `DELETE FROM protected_messages WHERE id IN (
 			SELECT id FROM protected_messages WHERE expires_at <= now() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`); err != nil && ctx.Err() == nil {
@@ -258,10 +326,23 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		s.pruneMailboxAudit(ctx)
 		s.expireHeldMessages(ctx)
 		s.deliverQueuedListMessages(ctx)
+		stopEarly()
+		if at, ok := s.nextSendAt(ctx); ok {
+			wait := time.Until(at)
+			if wait < 0 {
+				wait = 0
+			}
+			if wait <= scheduleLead {
+				early = time.NewTimer(wait)
+				earlyC = early.C
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.scheduleWake:
+		case <-earlyC:
 		}
 	}
 }

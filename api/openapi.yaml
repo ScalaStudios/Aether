@@ -586,7 +586,8 @@ paths:
   /me/profile:
     put:
       tags: [auth]
-      summary: Set your job title and phone, which signature templates fill in
+      summary: Set your job title, phone and undo-send delay
+      description: Title and phone are filled into signature templates. undoSendSeconds is optional; leave it out to keep the current delay.
       requestBody:
         required: true
         content:
@@ -597,6 +598,7 @@ paths:
               properties:
                 title: { type: string, maxLength: 100 }
                 phone: { type: string, maxLength: 40 }
+                undoSendSeconds: { type: integer, enum: [0, 5, 10, 20, 30], description: "Seconds to hold a message after sending so it can be undone. 0 sends immediately." }
       responses:
         "200":
           description: Saved
@@ -3016,8 +3018,8 @@ paths:
   /mailboxes/{mailboxId}/send:
     post:
       tags: [mail]
-      summary: Submit a message through the SMTP submission service and save it to Sent, or schedule it when sendAt is set
-      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error. sealed replaces the text, HTML and attachments with ciphertext built in the browser. The organization encryption policy is checked again when a scheduled message is sent.
+      summary: Submit a message through the SMTP submission service and save it to Sent, schedule it when sendAt is set, or hold it for undo
+      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error. sealed replaces the text, HTML and attachments with ciphertext built in the browser. The organization encryption policy is checked again when a scheduled message is sent. When sendAt is omitted and the account's undo delay is 5, 10, 20 or 30 seconds, the message is held for that long and the response is a ScheduledMessage with undo set. The delay is not added to a request that sets sendAt. Cancelling the hold puts the draft back. The message is sent when the delay ends, including if the browser is closed.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -3026,7 +3028,7 @@ paths:
             schema: { $ref: "#/components/schemas/OutgoingMessage" }
       responses:
         "202":
-          description: Accepted by the submission service, or a ScheduledMessage when sendAt was set
+          description: Accepted by the submission service, or a ScheduledMessage when sendAt was set or the account's undo delay held the message
           content:
             application/json:
               schema:
@@ -3039,7 +3041,7 @@ paths:
   /mailboxes/{mailboxId}/scheduled:
     get:
       tags: [mail]
-      summary: List messages waiting to be sent, including ones that failed
+      summary: List messages waiting to be sent, including undo holds and ones that failed
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       responses:
         "200":
@@ -3050,7 +3052,8 @@ paths:
   /mailboxes/{mailboxId}/scheduled/{scheduledId}:
     delete:
       tags: [mail]
-      summary: Cancel a scheduled message and put it back in Drafts
+      summary: Cancel a scheduled message, including an undo hold, and put it back in Drafts
+      description: Owners and members with full access can cancel. A read-only member can cancel when they are allowed to send from the mailbox.
       parameters:
         - { $ref: "#/components/parameters/mailboxId" }
         - { name: scheduledId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3826,7 +3829,7 @@ components:
         hasCredentials: { type: boolean }
     User:
       type: object
-      required: [id, email, displayName, isPlatformAdmin, status, title, phone]
+      required: [id, email, displayName, isPlatformAdmin, status, title, phone, undoSendSeconds]
       properties:
         id: { type: string, format: uuid }
         email: { type: string }
@@ -3835,6 +3838,7 @@ components:
         status: { type: string, enum: [active, suspended, deprovisioned] }
         title: { type: string }
         phone: { type: string }
+        undoSendSeconds: { type: integer, enum: [0, 5, 10, 20, 30], description: "How long an ordinary send is held so it can be undone. 0 sends immediately." }
     Session:
       type: object
       required: [user, memberships, csrfToken, twoFactorSetupRequired]
@@ -4715,13 +4719,14 @@ components:
         createdAt: { type: string, format: date-time }
     ScheduledMessage:
       type: object
-      required: [id, sendAt, subject, to, error]
+      required: [id, sendAt, subject, to, error, undo]
       properties:
         id: { type: string, format: uuid }
         sendAt: { type: string, format: date-time }
         subject: { type: string }
         to: { type: array, items: { $ref: "#/components/schemas/Address" } }
         error: { type: [string, "null"], description: "Set when sending failed after five attempts, when the sender no longer has the right the message was scheduled with or their account is no longer active, or for a message scheduled before the upgrade that added sender tracking. Cancel it and schedule it again." }
+        undo: { type: boolean, description: "True when an ordinary send is held for the account's undo delay. It is sent at sendAt, including if the browser is closed. Cancelling it restores the draft." }
     SnoozedMessage:
       type: object
       required: [uid, until, returnFolder]
@@ -4820,7 +4825,15 @@ components:
             uid: { type: integer }
             parts: { type: array, items: { type: string } }
         draftUid: { type: integer, description: The draft this message replaces. On send it is deleted from Drafts. }
-        sendAt: { type: string, format: date-time, description: Schedule the message instead of sending it now. The Date header is set to this time. }
+        sendAt: { type: string, format: date-time, description: Schedule the message instead of sending it now. The Date header is set to this time. The account's undo delay is not added. }
+        sealed:
+          type: object
+          description: S/MIME or OpenPGP body built in the browser. Do not also send text, html, attachments or forwardFrom.
+          required: [contentType, body]
+          properties:
+            contentType: { type: string }
+            body: { type: string, format: byte }
+        autocrypt: { type: string, description: One Autocrypt header for the From address. The keydata is a public key. }
     QueueName:
       type: string
       enum: [maildrop, incoming, active, deferred, hold]
@@ -4871,14 +4884,6 @@ components:
             oldestArrival: { type: string, format: date-time, description: Arrival of the oldest message that is not on hold }
         matched: { type: integer }
         messages: { type: array, items: { $ref: "#/components/schemas/QueuedMessage" } }
-        sealed:
-          type: object
-          description: S/MIME or OpenPGP body built in the browser. Do not also send text, html, attachments or forwardFrom.
-          required: [contentType, body]
-          properties:
-            contentType: { type: string }
-            body: { type: string, format: byte }
-        autocrypt: { type: string, description: One Autocrypt header for the From address. The keydata is a public key. }
     EncryptionPolicy:
       type: object
       required: [smime, openpgp, password]

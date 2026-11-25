@@ -5,7 +5,7 @@ import { SettingsView } from "@/components/settings/settings-view"
 
 export const metadata: Metadata = {
   title: "Settings",
-  description: "Your Aether profile, password, two-factor authentication, sessions, mail rules, and the app passwords that connect mail clients over IMAP and SMTP.",
+  description: "Your Aether profile, password, two-factor authentication, sessions, undo send, mail rules, and the app passwords that connect mail clients over IMAP and SMTP.",
 }
 
 export default function SettingsPage() {

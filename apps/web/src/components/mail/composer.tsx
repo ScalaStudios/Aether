@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { bytesToBase64, readableSecret } from "@/lib/crypto/bytes"
 import { autocryptHeader } from "@/lib/crypto/openpgp"
@@ -31,7 +32,7 @@ import { signaturesQuery } from "@/lib/queries"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
 import type { Draft, SenderIdentity } from "@/lib/mail"
-import type { Attachment, EncryptionKey, EncryptionPolicy, OutgoingMessage, RecipientKey, SavedDraft } from "@/lib/types"
+import type { Attachment, EncryptionKey, EncryptionPolicy, OutgoingMessage, RecipientKey, SavedDraft, ScheduledMessage } from "@/lib/types"
 
 const address = z.object({ name: z.string().optional(), address: z.email() })
 
@@ -90,8 +91,21 @@ function flyAway(icon: SVGElement | null) {
     .finished.finally(() => plane.remove())
 }
 
-export function Composer({ identities, initial, draft, onClose }: { identities: SenderIdentity[]; initial: SenderIdentity; draft: Draft; onClose: () => void }) {
+export function Composer({
+  identities,
+  initial,
+  draft,
+  onClose,
+  onHeld,
+}: {
+  identities: SenderIdentity[]
+  initial: SenderIdentity
+  draft: Draft
+  onClose: () => void
+  onHeld?: (mailboxId: string, message: ScheduledMessage) => void
+}) {
   const qc = useQueryClient()
+  const undoSeconds = useSession().data?.user.undoSendSeconds ?? 0
   const [identity, setIdentity] = useState(initial)
   const { mailbox, from } = identity
   const [showCopies, setShowCopies] = useState(draft.cc.length > 0)
@@ -294,12 +308,12 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
       await pendingSave.current
       const plain = await payload(values, files)
       if (guard === "standard") {
-        return api(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...plain, sendAt: sendAt && toRFC3339(sendAt) } })
+        return api<ScheduledMessage | { messageId: string }>(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...plain, sendAt: sendAt && toRFC3339(sendAt) } })
       }
       const id = await protectedBody(values, plain, sendAt)
       if (id) setRevealed(secret)
     },
-    onSuccess: (_d, { sendAt }) => {
+    onSuccess: (result, { sendAt }) => {
       qc.invalidateQueries({ queryKey: ["scheduled", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
@@ -309,8 +323,15 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
         onClose()
         return
       }
-      if (!sendAt) flyAway(sendIcon.current)
-      toast.success(sendAt ? `Scheduled for ${formatShortDateTime(sendAt)}` : "Message sent")
+      if (sendAt) {
+        toast.success(`Scheduled for ${formatShortDateTime(sendAt)}`)
+      } else if (result && "undo" in result && result.undo) {
+        onHeld?.(mailbox.id, result)
+        qc.setQueryData<ScheduledMessage[]>(["scheduled", mailbox.id], (current) => [result, ...(current ?? []).filter((item) => item.id !== result.id)])
+      } else {
+        flyAway(sendIcon.current)
+        toast.success("Message sent")
+      }
       onClose()
     },
   })
@@ -520,12 +541,17 @@ export function Composer({ identities, initial, draft, onClose }: { identities: 
               <span role="status" className="text-sm whitespace-nowrap text-fg-tertiary">
                 {guard !== "standard" ? "Not saved as a draft" : saveDraft.isPending ? "Saving…" : saveDraft.isError ? "Couldn't save the draft" : savedAt ? `Saved ${formatListDate(savedAt.toISOString())}` : ""}
               </span>
+              {undoSeconds > 0 && (
+                <span id="compose-undo-hint" className="text-sm text-fg-tertiary">
+                  Undo for {undoSeconds} seconds after sending
+                </span>
+              )}
             </div>
             <Button type="button" variant="secondary" loading={discard.isPending} onClick={() => discard.mutate()}>
               Discard
             </Button>
             <div className="flex">
-              <Button type="submit" loading={send.isPending} disabled={signatures.isPending} className={guard === "password" ? undefined : "rounded-r-none hover:shadow-none"}>
+              <Button type="submit" loading={send.isPending} disabled={signatures.isPending} className={guard === "password" ? undefined : "rounded-r-none hover:shadow-none"} aria-describedby={undoSeconds > 0 ? "compose-undo-hint" : undefined}>
                 <Send ref={sendIcon} aria-hidden />
                 Send
               </Button>

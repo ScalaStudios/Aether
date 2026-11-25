@@ -52,7 +52,7 @@ export function SettingsView() {
     <PageContainer>
       <PageHeader
         title="Settings"
-        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, encryption keys, mail rules, notifications, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
+        description={setup ? "Set up two-factor authentication to keep using Aether." : "Your account details, sign-in security, encryption keys, undo send, mail rules, notifications, and the app passwords that let mail, calendar and contacts apps connect to your mailboxes."}
       />
       {session && !setup && (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
@@ -92,6 +92,7 @@ export function SettingsView() {
       <ActiveSessions />
       {session && !setup && (
         <>
+          <Sending title={session.user.title} phone={session.user.phone} seconds={session.user.undoSendSeconds ?? 0} />
           <Storage />
           <Signatures />
           <Encryption />
@@ -109,6 +110,49 @@ export function SettingsView() {
         </>
       )}
     </PageContainer>
+  )
+}
+
+const undoDelays = [
+  { value: 0, label: "Off" },
+  { value: 5, label: "5 seconds" },
+  { value: 10, label: "10 seconds" },
+  { value: 20, label: "20 seconds" },
+  { value: 30, label: "30 seconds" },
+]
+
+function Sending({ title, phone, seconds }: { title: string; phone: string; seconds: number }) {
+  const qc = useQueryClient()
+  const [pending, setPending] = useState<number | null>(null)
+  const shown = pending ?? seconds
+  const save = useMutation({
+    mutationFn: (undoSendSeconds: number) => api<Session>("/me/profile", { method: "PUT", body: { title, phone, undoSendSeconds } }),
+    onSuccess: (saved) => {
+      qc.setQueryData(["session"], saved)
+      setPending((current) => (current === saved.user.undoSendSeconds ? null : current))
+      toast.success(saved.user.undoSendSeconds ? `Undo send is ${saved.user.undoSendSeconds} seconds` : "Undo send is off")
+    },
+    onError: () => setPending(null),
+  })
+
+  return (
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6">
+      <SectionHeader
+        title="Sending"
+        description="After you send, Aether can hold the message so you can undo it. The hold keeps running if you close the tab, and the message goes out when the time is up. A message you schedule for a chosen time is not held."
+      />
+      <SegmentedControl
+        label="Undo send delay"
+        options={undoDelays}
+        value={shown}
+        onChange={(value) => {
+          if (save.isPending || value === shown) return
+          setPending(value)
+          save.mutate(value)
+        }}
+      />
+      <p className="text-sm text-fg-tertiary">In Mail, Ctrl+Z or ⌘Z undoes the message you just sent. Off sends immediately.</p>
+    </section>
   )
 }
 

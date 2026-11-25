@@ -18,6 +18,7 @@ import { ReadingPane } from "@/components/mail/reading-pane"
 import { ScheduledList } from "@/components/mail/scheduled-list"
 import { ShortcutsDialog } from "@/components/mail/shortcuts-dialog"
 import { StorageBanner } from "@/components/mail/storage-banner"
+import { UndoSendBar, isUndoHold, useNow, type UndoHold } from "@/components/mail/undo-send-bar"
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { useListView } from "@/hooks/use-list-view"
@@ -26,7 +27,7 @@ import { toRFC3339 } from "@/lib/calendar"
 import { formatShortDateTime } from "@/lib/format"
 import { buildDraft, composeIdentity, defaultListView, describeSearch, filtersFromFlags, folderLabel, retentionNotice, savedSearchBody, senderIdentities, snoozedFolder, type ComposeMode, type Draft, type ListView, type SenderIdentity } from "@/lib/mail"
 import { foldersQuery, labelsQuery, myMailboxesQuery, savedSearchesQuery } from "@/lib/queries"
-import type { Folder, Label, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedDraft, SavedSearch, ScheduledMessage, SnoozedMessage } from "@/lib/types"
+import type { Folder, Label, Mailbox, MailboxRetention, Message, MessagePage, MessageSummary, QuarantinePage, SavedSearch, ScheduledMessage, SnoozedMessage } from "@/lib/types"
 
 const POLL = 30_000
 
@@ -80,10 +81,19 @@ export function MailView() {
     queryKey: ["scheduled", mbx],
     queryFn: () => api<ScheduledMessage[]>(`/mailboxes/${mbx}/scheduled`),
     enabled: !!mailbox,
-    refetchInterval: refresh,
+    refetchInterval: (query) => (query.state.data?.some(isUndoHold) ? 2_000 : refresh),
+  })
+  const extraIds = [...new Set(identities.map((identity) => identity.mailbox.id))].filter((id) => id !== mbx)
+  const extraScheduled = useQueries({
+    queries: extraIds.map((id) => ({
+      queryKey: ["scheduled", id],
+      queryFn: () => api<ScheduledMessage[]>(`/mailboxes/${id}/scheduled`),
+      refetchInterval: (query: { state: { data?: ScheduledMessage[] } }) => (query.state.data?.some(isUndoHold) ? 2_000 : POLL),
+    })),
   })
   const [scheduledView, setScheduledView] = useState(false)
-  const showScheduled = scheduledView && !!scheduled.data?.length
+  const scheduledItems = (scheduled.data ?? []).filter((message) => !isUndoHold(message))
+  const showScheduled = scheduledView && scheduledItems.length > 0
 
   const quarantine = useInfiniteQuery({
     queryKey: ["quarantine", mbx],
@@ -163,8 +173,13 @@ export function MailView() {
   const [selected, setSelected] = useState<Selection | null>(null)
   const [showFolders, setShowFolders] = useState(false)
   const [compose, setCompose] = useState<{ key: number; draft: Draft; initial: SenderIdentity } | null>(null)
+  const [pendingHolds, setPendingHolds] = useState<UndoHold[]>([])
+  const [holdOrder, setHoldOrder] = useState<string[]>([])
+  const [seenHoldIds, setSeenHoldIds] = useState("")
   const [helpOpen, setHelpOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const seenHolds = useRef(new Set<string>())
+  const trackedRef = useRef<UndoHold[]>([])
   const router = useRouter()
   const params = useSearchParams()
   const composeTo = params.get("compose")
@@ -300,25 +315,34 @@ export function MailView() {
     },
   })
 
-  async function openDraft(uid: number, draftFolder: string) {
-    if (!mailbox || from?.mailbox.id !== mbx) return
+  async function openDraftOn(mailboxId: string, uid: number, draftFolder: string) {
+    const own = identities.filter((i) => i.mailbox.id === mailboxId)
+    const fallback = own[0]
+    if (!fallback) return
     const saved = await qc.fetchQuery({
-      queryKey: ["message", mbx, draftFolder, uid],
-      queryFn: () => api<Message>(`/mailboxes/${mbx}/messages/${uid}`, { query: { folder: draftFolder } }),
+      queryKey: ["message", mailboxId, draftFolder, uid],
+      queryFn: () => api<Message>(`/mailboxes/${mailboxId}/messages/${uid}`, { query: { folder: draftFolder } }),
     })
-    const initial = composeIdentity("draft", saved, identities.filter((i) => i.mailbox.id === mbx), from)
+    const initial = composeIdentity("draft", saved, own, fallback)
     if (saved.from[0] && initial.from.address !== saved.from[0].address.toLowerCase()) toast.info(`You can no longer send from ${saved.from[0].address}, so this draft now uses ${initial.from.address}.`)
-    const draft = buildDraft("draft", saved, [mailbox.address], draftFolder)
+    const draft = buildDraft("draft", saved, [fallback.mailbox.address], draftFolder)
     setCompose((current) => ({ key: (current?.key ?? 0) + 1, draft, initial }))
   }
 
-  const cancelScheduled = useMutation({
-    mutationFn: (id: string) => api<Omit<SavedDraft, "attachments">>(`/mailboxes/${mbx}/scheduled/${id}`, { method: "DELETE" }),
-    onSuccess: async (draft) => {
-      qc.invalidateQueries({ queryKey: ["scheduled", mbx] })
-      qc.invalidateQueries({ queryKey: ["folders", mbx] })
-      qc.invalidateQueries({ queryKey: ["messages", mbx] })
-      await openDraft(draft.uid, draft.folder)
+  async function openDraft(uid: number, draftFolder: string) {
+    if (!mailbox || from?.mailbox.id !== mbx) return
+    await openDraftOn(mbx, uid, draftFolder)
+  }
+
+  const undoSend = useMutation({
+    mutationFn: ({ mailboxId, id }: { mailboxId: string; id: string; hold?: boolean }) =>
+      api<{ uid: number; folder: string }>(`/mailboxes/${mailboxId}/scheduled/${id}`, { method: "DELETE" }),
+    onSuccess: async (draft, { mailboxId, id }) => {
+      setPendingHolds((current) => current.filter((item) => item.id !== id))
+      qc.invalidateQueries({ queryKey: ["scheduled", mailboxId] })
+      qc.invalidateQueries({ queryKey: ["folders", mailboxId] })
+      qc.invalidateQueries({ queryKey: ["messages", mailboxId] })
+      await openDraftOn(mailboxId, draft.uid, draft.folder)
     },
   })
 
@@ -476,9 +500,64 @@ export function MailView() {
     setShowFolders(false)
   }
 
+  const ticking =
+    pendingHolds.length > 0 ||
+    (scheduled.data ?? []).some(isUndoHold) ||
+    extraScheduled.some((query) => (query.data ?? []).some(isUndoHold))
+  const now = useNow(ticking)
+  const queryHolds: UndoHold[] = [
+    ...(scheduled.data ?? []).filter(isUndoHold).map((message) => ({ ...message, mailboxId: mbx })),
+    ...extraScheduled.flatMap((query, index) => (query.data ?? []).filter(isUndoHold).map((message) => ({ ...message, mailboxId: extraIds[index] }))),
+  ]
+  const queryHoldIds = new Set(queryHolds.map((item) => item.id))
+  const arrived = [...queryHolds, ...pendingHolds.filter((item) => !queryHoldIds.has(item.id) && Date.parse(item.sendAt) > now)]
+  const arrivedIds = arrived.map((item) => item.id).join("\n")
+  if (arrivedIds !== seenHoldIds) {
+    setSeenHoldIds(arrivedIds)
+    setHoldOrder((current) => {
+      const ids = arrivedIds ? arrivedIds.split("\n") : []
+      const present = new Set(ids)
+      const next = current.filter((id) => present.has(id))
+      for (const id of ids) if (!next.includes(id)) next.push(id)
+      return next
+    })
+  }
+  const newestId = [...holdOrder].reverse().find((id) => arrived.some((item) => item.id === id))
+  const holds = [...arrived].sort((a, b) => a.sendAt.localeCompare(b.sendAt))
+  const dueKey = holds.map((item) => `${item.id}@${item.sendAt}`).join("|")
+  const tracked = [
+    ...(scheduled.data ?? []).map((message) => ({ ...message, mailboxId: mbx })),
+    ...extraScheduled.flatMap((query, index) => (query.data ?? []).map((message) => ({ ...message, mailboxId: extraIds[index] }))),
+  ]
+  const trackedKey = tracked.map((message) => `${message.id}:${message.undo ? "1" : "0"}:${message.error ?? ""}`).join("|")
+
+  useEffect(() => {
+    trackedRef.current = tracked
+  })
+  useEffect(() => {
+    for (const message of trackedRef.current) {
+      if (isUndoHold(message)) seenHolds.current.add(message.id)
+      else if (message.undo && message.error && seenHolds.current.delete(message.id)) toast.error(message.error)
+    }
+  }, [trackedKey])
+
+  useEffect(() => {
+    if (!dueKey) return
+    const due = Math.min(...dueKey.split("|").map((part) => Date.parse(part.slice(part.indexOf("@") + 1))))
+    const timer = window.setTimeout(() => qc.invalidateQueries({ queryKey: ["scheduled"] }), Math.max(0, due - now) + 400)
+    return () => window.clearTimeout(timer)
+  }, [dueKey, now, qc])
+
   const shortcuts = useRef<(e: KeyboardEvent) => void>(() => {})
   useEffect(() => {
     shortcuts.current = (e: KeyboardEvent) => {
+      const newest = holds.find((item) => item.id === newestId)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") {
+        if (!newest || compose || helpOpen || isTyping(e.target) || undoSend.isPending) return
+        e.preventDefault()
+        undoSend.mutate({ mailboxId: newest.mailboxId, id: newest.id, hold: true })
+        return
+      }
       if (e.metaKey || e.ctrlKey || e.altKey || compose || helpOpen || isTyping(e.target)) return
       if (quarantineView && !["c", "?", "/"].includes(e.key)) {
         if (e.key === "Escape") setQuarantineId(null)
@@ -563,7 +642,7 @@ export function MailView() {
           shared={trees.filter((t) => t.mailbox.id !== primary?.id)}
           active={{ mailboxId: mbx, folder }}
           onFolderChange={selectFolder}
-          scheduled={scheduled.data?.length}
+          scheduled={scheduledItems.length}
           scheduledActive={showScheduled}
           onScheduled={() => {
             rememberSearch()
@@ -604,9 +683,9 @@ export function MailView() {
         ) : showScheduled ? (
           <ScheduledList
             className={cn("w-full shrink-0 md:flex md:w-[360px] xl:w-[400px]", showFolders ? "hidden" : "flex")}
-            messages={scheduled.data ?? []}
-            cancelling={cancelScheduled.isPending ? cancelScheduled.variables : undefined}
-            onCancel={(id) => cancelScheduled.mutate(id)}
+            messages={scheduledItems}
+            cancelling={undoSend.isPending && !undoSend.variables?.hold ? undoSend.variables?.id : undefined}
+            onCancel={(id) => undoSend.mutate({ mailboxId: mbx, id })}
             onShowFolders={() => setShowFolders(true)}
           />
         ) : (
@@ -680,13 +759,14 @@ export function MailView() {
             placedIn={spanning && selected ? folderLabel(folders?.data?.find((f) => f.name === selected.folder) ?? { name: selected.folder, specialUse: "" }) : undefined}
           />
         )}
-        {compose && from && (
+        {compose && (
           <Composer
             key={compose.key}
             identities={identities}
             initial={compose.initial}
             draft={compose.draft}
             onClose={() => setCompose(null)}
+            onHeld={(mailboxId, message) => setPendingHolds((current) => [...current.filter((item) => item.id !== message.id), { ...message, mailboxId }])}
           />
         )}
         <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
@@ -703,6 +783,7 @@ export function MailView() {
           />
         )}
       </div>
+      <UndoSendBar items={holds} undoing={undoSend.isPending ? undoSend.variables?.id : undefined} onUndo={(item) => undoSend.mutate({ mailboxId: item.mailboxId, id: item.id, hold: true })} />
     </div>
   )
 }

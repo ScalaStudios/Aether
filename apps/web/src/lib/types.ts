@@ -10,6 +10,7 @@ export interface User {
   status: "active" | "suspended" | "deprovisioned"
   title: string
   phone: string
+  undoSendSeconds: number
 }
 
 export interface Membership {
@@ -984,6 +985,7 @@ export interface ScheduledMessage {
   subject: string
   to: Address[]
   error: string | null
+  undo: boolean
 }
 
 export interface SnoozedMessage {

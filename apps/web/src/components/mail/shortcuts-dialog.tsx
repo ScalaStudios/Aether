@@ -12,6 +12,7 @@ const shortcuts: [string[], string][] = [
   [["e", "#"], "Delete"],
   [["/"], "Search"],
   [["Esc"], "Close the open message or composer"],
+  [["Ctrl+Z", "⌘Z"], "Undo the message you just sent"],
   [["?"], "Show this list"],
 ]
 
