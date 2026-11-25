@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 
 import { api } from "@/lib/api"
-import type { Branding, CalendarInfo, Domain, Folder, Mailbox, Member, Organization, SignatureSettings } from "@/lib/types"
+import type { Branding, CalendarInfo, ComplianceCase, ComplianceDirectory, Domain, Folder, Hold, JournalRule, Mailbox, Member, Organization, SignatureSettings } from "@/lib/types"
 
 export const myMailboxesQuery = queryOptions({
   queryKey: ["my-mailboxes"],
@@ -46,3 +46,33 @@ export const brandingQuery = queryOptions({
   queryKey: ["branding"],
   queryFn: () => api<Branding | null>("/branding", { query: { host: window.location.hostname } }),
 })
+
+export const casesQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["compliance-cases", orgId],
+    queryFn: () => api<ComplianceCase[]>(`/organizations/${orgId}/compliance/cases`),
+  })
+
+export const caseQuery = (caseId: string) =>
+  queryOptions({
+    queryKey: ["compliance-case", caseId],
+    queryFn: () => api<ComplianceCase>(`/compliance/cases/${caseId}`),
+  })
+
+export const holdsQuery = (caseId: string) =>
+  queryOptions({
+    queryKey: ["compliance-holds", caseId],
+    queryFn: () => api<Hold[]>(`/compliance/cases/${caseId}/holds`),
+  })
+
+export const complianceDirectoryQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["compliance-directory", orgId],
+    queryFn: () => api<ComplianceDirectory>(`/organizations/${orgId}/compliance/mailboxes`),
+  })
+
+export const journalRulesQuery = (orgId: string) =>
+  queryOptions({
+    queryKey: ["journal-rules", orgId],
+    queryFn: () => api<JournalRule[]>(`/organizations/${orgId}/journal-rules`),
+  })

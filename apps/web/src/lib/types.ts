@@ -15,6 +15,7 @@ export interface Membership {
   orgName: string
   orgSlug: string
   role: Role
+  compliance: boolean
 }
 
 export interface Session {
@@ -94,6 +95,7 @@ export interface Mailbox {
   active: boolean
   createdAt: string
   kind: MailboxKind
+  retainedAt?: string | null
   access?: "owner" | DelegateAccess
   sendAs?: boolean
   sendOnBehalf?: boolean
@@ -135,6 +137,7 @@ export interface Member {
   displayName: string
   role: Role
   status: string
+  compliance: boolean
 }
 
 export type ForwardingMode = "allowed" | "domains" | "blocked"
@@ -748,4 +751,89 @@ export interface RetentionRule {
 export interface MailboxRetention {
   keepDays: number
   folders: RetentionRule[]
+}
+
+export type CaseScope = "mailboxes" | "domains" | "organization"
+
+export interface CaseCriteria {
+  scope: CaseScope
+  mailboxIds: string[]
+  domainIds: string[]
+  from: string
+  to: string
+  subject: string
+  body: string
+  attachment: string
+  since: string
+  until: string
+}
+
+export interface ComplianceCase {
+  id: string
+  orgId: string
+  name: string
+  description: string
+  criteria: CaseCriteria
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+  closedAt: string | null
+  holds: number
+}
+
+export interface ComplianceMailbox {
+  id: string
+  domainId: string
+  address: string
+  displayName: string
+  kind: MailboxKind
+  active: boolean
+  retainedAt: string | null
+  held: boolean
+}
+
+export interface ComplianceDirectory {
+  mailboxes: ComplianceMailbox[]
+  domains: { id: string; name: string }[]
+}
+
+export interface Hold {
+  mailboxId: string
+  criteria: CaseCriteria | null
+  address: string
+  displayName: string
+  active: boolean
+  retainedAt: string | null
+  createdBy: string | null
+  createdAt: string
+}
+
+export interface SearchHit {
+  mailboxId: string
+  mailbox: string
+  folder: string
+  uid: number
+  messageId: string
+  subject: string
+  from: Address[]
+  to: Address[]
+  date: string
+  size: number
+  attachments: string[]
+}
+
+export interface CaseSearchResult {
+  results: SearchHit[]
+  truncated: boolean
+  searched: number
+  skipped: string[]
+  failed: { mailbox: string; error: string }[]
+}
+
+export interface JournalRule {
+  id: string
+  match: string
+  archiveAddress: string
+  createdBy: string | null
+  createdAt: string
 }

@@ -15,6 +15,7 @@ import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
+import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -29,6 +30,7 @@ const roles: Record<Role, string> = { owner: "Owner", admin: "Administrator", me
 const schema = z.object({
   email: z.email("Enter a valid email address."),
   role: z.enum(["owner", "admin", "member"]),
+  compliance: z.boolean(),
 })
 
 type Values = z.infer<typeof schema>
@@ -41,6 +43,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
   const [removing, setRemoving] = useState<Member | null>(null)
   const session = useSession()
   const platformAdmin = session.data?.user.isPlatformAdmin ?? false
+  const owner = platformAdmin || session.data?.memberships.some((m) => m.orgId === orgId && m.role === "owner")
 
   const setStatus = useMutation({
     mutationFn: ({ member, status }: { member: Member; status: "active" | "suspended" }) =>
@@ -60,10 +63,11 @@ export function MembersTab({ orgId }: { orgId: string }) {
       setRemoving(null)
     },
   })
-  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", role: "member" } })
+  const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { email: "", role: "member", compliance: false } })
 
   const save = useMutation({
-    mutationFn: (values: Values) => api(`/organizations/${orgId}/members`, { method: "POST", body: values }),
+    mutationFn: ({ compliance, ...values }: Values) =>
+      api(`/organizations/${orgId}/members`, { method: "POST", body: owner ? { ...values, compliance } : values }),
     meta: { silent: true },
     onSuccess: (_d, values) => {
       toast.success(editing === "new" ? `Added ${values.email}` : `Changed the role of ${values.email}`)
@@ -78,7 +82,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
   })
 
   function open(member: Member | "new") {
-    form.reset(member === "new" ? { email: "", role: "member" } : { email: member.email, role: member.role })
+    form.reset(member === "new" ? { email: "", role: "member", compliance: false } : { email: member.email, role: member.role, compliance: member.compliance })
     setEditing(member)
   }
 
@@ -118,7 +122,12 @@ export function MembersTab({ orgId }: { orgId: string }) {
                 <TableRow key={m.userId}>
                   <TableCell className="font-medium">{m.displayName || "—"}</TableCell>
                   <TableCell>{m.email}</TableCell>
-                  <TableCell>{roles[m.role]}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {roles[m.role]}
+                      {m.compliance && <StatusBadge tone="info">Compliance</StatusBadge>}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <StatusBadge tone={m.status === "active" ? "success" : "warning"}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</StatusBadge>
                   </TableCell>
@@ -191,6 +200,15 @@ export function MembersTab({ orgId }: { orgId: string }) {
             </Field>
           )}
         />
+        {owner && (
+          <SwitchField
+            control={form.control}
+            name="compliance"
+            id="member-compliance"
+            label="Compliance administrator"
+            hint="Can place legal holds, search every mailbox in this organization, export the results and set up journaling. Every action is recorded in the audit log."
+          />
+        )}
       </FormDialog>
       <ConfirmDialog
         open={!!suspending}

@@ -50,7 +50,12 @@ func (s *Server) restoreRecoverable(w http.ResponseWriter, r *http.Request, p *p
 		writeError(w, http.StatusUnprocessableEntity, "invalid_messages", "Choose between 1 and 500 messages.")
 		return
 	}
-	n, err := s.mail.Restore(m.Address, in.Items)
+	var held bool
+	if err := s.db.QueryRow(r.Context(), `SELECT `+mailboxHeld("$1"), m.ID).Scan(&held); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	n, err := s.mail.Restore(m.Address, in.Items, held)
 	if n > 0 {
 		var folders []string
 		for _, i := range in.Items {
@@ -74,26 +79,30 @@ func (s *Server) purgeRecoverable(ctx context.Context) {
 		return
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT mu.address, o.deleted_item_retention_days FROM mail_users mu
+		SELECT mu.id, mu.address, o.deleted_item_retention_days FROM mail_users mu
 		JOIN mailboxes m ON m.id = mu.id JOIN organizations o ON o.id = m.org_id`)
 	if err != nil {
 		s.log.Error("loading mailboxes for deleted item purge failed", "err", err)
 		return
 	}
 	type target struct {
-		address string
-		days    int
+		id, address string
+		days        int
 	}
 	targets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (target, error) {
 		var t target
-		return t, row.Scan(&t.address, &t.days)
+		return t, row.Scan(&t.id, &t.address, &t.days)
 	})
 	if err != nil {
 		s.log.Error("loading mailboxes for deleted item purge failed", "err", err)
 		return
 	}
 	for _, t := range targets {
-		if err := s.mail.PurgeRecoverable(ctx, t.address, t.days); err != nil {
+		hold, err := s.holdScope(ctx, t.id)
+		if err == nil {
+			err = s.mail.PurgeRecoverable(ctx, t.address, t.days, hold)
+		}
+		if err != nil {
 			s.log.Warn("purging expired deleted items failed; retrying in an hour", "address", t.address, "err", err)
 		}
 	}

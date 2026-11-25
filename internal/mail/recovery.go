@@ -120,7 +120,7 @@ func (c *Client) Recoverable(ctx context.Context, address string) ([]Recoverable
 	return out, nil
 }
 
-func (c *Client) Restore(address string, refs []RecoverableRef) (int, error) {
+func (c *Client) Restore(address string, refs []RecoverableRef, keep bool) (int, error) {
 	byFolder := map[string][]uint32{}
 	for _, r := range refs {
 		byFolder[r.Folder] = append(byFolder[r.Folder], r.UID)
@@ -135,7 +135,19 @@ func (c *Client) Restore(address string, refs []RecoverableRef) (int, error) {
 			if _, err := ic.Select(ExpungedPrefix+folder, nil).Wait(); err != nil {
 				continue
 			}
-			data, err := ic.Move(uidSet(uids), to).Wait()
+			var source imap.NumSet
+			var err error
+			if keep {
+				var data *imap.CopyData
+				if data, err = ic.Copy(uidSet(uids), to).Wait(); data != nil {
+					source = data.SourceUIDs
+				}
+			} else {
+				var data *imapclient.MoveData
+				if data, err = ic.Move(uidSet(uids), to).Wait(); data != nil {
+					source = data.SourceUIDs
+				}
+			}
 			var ie *imap.Error
 			if errors.As(err, &ie) && ie.Code == imap.ResponseCodeOverQuota {
 				return ErrOverQuota
@@ -143,11 +155,9 @@ func (c *Client) Restore(address string, refs []RecoverableRef) (int, error) {
 			if err != nil {
 				return err
 			}
-			if data != nil {
-				if moved, ok := data.SourceUIDs.(imap.UIDSet); ok {
-					nums, _ := moved.Nums()
-					n += len(nums)
-				}
+			if moved, ok := source.(imap.UIDSet); ok {
+				nums, _ := moved.Nums()
+				n += len(nums)
 			}
 		}
 		return nil
@@ -158,10 +168,11 @@ func (c *Client) Restore(address string, refs []RecoverableRef) (int, error) {
 	return n, err
 }
 
-func (c *Client) PurgeRecoverable(ctx context.Context, address string, days int) error {
-	_, err := c.doveadmOK(ctx, "expunge", map[string]any{
-		"user":  address,
-		"query": []string{"mailbox", ExpungedPrefix + "*", "savedbefore", strconv.Itoa(days) + "d"},
-	}, 64<<10)
+func (c *Client) PurgeRecoverable(ctx context.Context, address string, days int, hold HoldScope) error {
+	query := []string{"mailbox", ExpungedPrefix + "*", "savedbefore", strconv.Itoa(days) + "d"}
+	if hold.Whole || len(hold.Attachment) > 0 {
+		return c.ExpungeHeld(ctx, address, query, hold)
+	}
+	_, err := c.doveadmOK(ctx, "expunge", map[string]any{"user": address, "query": append(query, hold.Exclude...)}, 64<<10)
 	return err
 }

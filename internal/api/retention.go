@@ -337,11 +337,13 @@ func (s *Server) applyNextRetention(ctx context.Context) bool {
 		return false
 	}
 	policy, err := s.effectiveRetention(ctx, orgID, id)
+	hold, holdErr := s.holdScope(ctx, id)
+	err = errors.Join(err, holdErr)
 	for _, rule := range policy.Folders {
 		if err != nil {
 			break
 		}
-		err = s.mail.Expunge(ctx, address, expungeQuery(rule.Folder, rule.Days, policy.KeepDays))
+		err = s.mail.ExpungeHeld(ctx, address, expungeQuery(rule.Folder, rule.Days, policy.KeepDays), hold)
 	}
 	next := "1 day"
 	if err != nil {

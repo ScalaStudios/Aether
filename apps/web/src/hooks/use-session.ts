@@ -20,3 +20,7 @@ export function useSession() {
 export function canAdminister(session: Session) {
   return session.user.isPlatformAdmin || session.memberships.some((m) => m.role !== "member")
 }
+
+export function canInvestigate(session: Session) {
+  return session.memberships.some((m) => m.compliance)
+}

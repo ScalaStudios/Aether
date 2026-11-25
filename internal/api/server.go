@@ -258,6 +258,20 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/admin/mail-queue", s.listMailQueue)
 	authed("POST /api/v1/admin/mail-queue/{action}", s.changeMailQueue)
 
+	authed("GET /api/v1/organizations/{orgId}/compliance/cases", s.listCases)
+	authed("POST /api/v1/organizations/{orgId}/compliance/cases", s.createCase)
+	authed("GET /api/v1/compliance/cases/{caseId}", s.getCase)
+	authed("PATCH /api/v1/compliance/cases/{caseId}", s.updateCase)
+	authed("POST /api/v1/compliance/cases/{caseId}/search", s.searchCase)
+	authed("GET /api/v1/compliance/cases/{caseId}/export", s.exportCase)
+	authed("GET /api/v1/compliance/cases/{caseId}/holds", s.listHolds)
+	authed("POST /api/v1/compliance/cases/{caseId}/holds", s.addHolds)
+	authed("DELETE /api/v1/compliance/cases/{caseId}/holds/{mailboxId}", s.releaseHold)
+	authed("GET /api/v1/organizations/{orgId}/compliance/mailboxes", s.complianceMailboxes)
+	authed("GET /api/v1/organizations/{orgId}/journal-rules", s.listJournalRules)
+	authed("POST /api/v1/organizations/{orgId}/journal-rules", s.createJournalRule)
+	authed("DELETE /api/v1/journal-rules/{ruleId}", s.deleteJournalRule)
+
 	return instrument(securityHeaders(mux))
 }
 
@@ -293,6 +307,7 @@ type principal struct {
 	providerID  *string
 	idToken     *string
 	roles       map[string]string
+	compliance  map[string]bool
 	apiKey      *apiKeyIdentity
 }
 
@@ -301,6 +316,10 @@ func (p *principal) orgRole(orgID string) string {
 		return "owner"
 	}
 	return p.roles[orgID]
+}
+
+func (p *principal) canCompliance(orgID string) bool {
+	return p.compliance[orgID]
 }
 
 func (p *principal) canAdminOrg(orgID string) bool {
@@ -322,7 +341,7 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 			return
 		}
 		hash := secrets.SHA256(c.Value)
-		p := &principal{sessionHash: hash, roles: map[string]string{}}
+		p := &principal{sessionHash: hash, roles: map[string]string{}, compliance: map[string]bool{}}
 		err = s.db.QueryRow(r.Context(), `
 			UPDATE sessions s SET last_seen_at = now()
 			FROM users u
@@ -344,19 +363,21 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, *princ
 				return
 			}
 		}
-		rows, err := s.db.Query(r.Context(), `SELECT org_id, role FROM organization_members WHERE user_id = $1`, p.User.ID)
+		rows, err := s.db.Query(r.Context(), `SELECT org_id, role, compliance FROM organization_members WHERE user_id = $1`, p.User.ID)
 		if err != nil {
 			s.internalError(w, r, err)
 			return
 		}
 		for rows.Next() {
 			var org, role string
-			if err := rows.Scan(&org, &role); err != nil {
+			var compliance bool
+			if err := rows.Scan(&org, &role, &compliance); err != nil {
 				rows.Close()
 				s.internalError(w, r, err)
 				return
 			}
 			p.roles[org] = role
+			p.compliance[org] = compliance
 		}
 		rows.Close()
 		h(w, r, p)
@@ -456,7 +477,7 @@ func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID
 		s.log.Error("audit write failed", "action", action, "err", err)
 		return
 	}
-	if orgID != nil {
+	if orgID != nil && !strings.HasPrefix(action, "compliance.") {
 		s.enqueueWebhooks(ctx, *orgID, action, map[string]any{
 			"id": strconv.FormatInt(eventID, 10), "type": action, "createdAt": at, "organizationId": *orgID,
 			"actor":  map[string]any{"userId": actor, "apiKeyId": meta["apiKeyId"]},

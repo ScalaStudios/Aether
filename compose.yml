@@ -218,6 +218,8 @@ services:
       AETHER_TEST_WEBHOOKS: ${AETHER_WEBHOOK_ALLOW_PRIVATE:-false}
       AETHER_TEST_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
       AETHER_TEST_TOXIPROXY: http://toxiproxy:8474
+      AETHER_TEST_DOVECOT_API_KEY: ${AETHER_DOVECOT_API_KEY}
+      AETHER_TEST_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
     volumes:
       - .:/src:ro
       - tls:/tls:ro

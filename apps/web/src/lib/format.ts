@@ -23,8 +23,8 @@ export const attendeeStatusLabels: Record<AttendeeStatus, string> = {
   declined: "Not going",
 }
 
-export function plural(count: number, noun: string) {
-  return `${count.toLocaleString()} ${noun}${count === 1 ? "" : "s"}`
+export function plural(count: number, noun: string, many = `${noun}s`) {
+  return `${count.toLocaleString()} ${count === 1 ? noun : many}`
 }
 
 export function formatPercent(part: number, total: number) {

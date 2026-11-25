@@ -157,8 +157,9 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, p *principa
 		DisplayName string `json:"displayName"`
 		Role        string `json:"role"`
 		Status      string `json:"status"`
+		Compliance  bool   `json:"compliance"`
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT u.id, u.email, u.display_name, m.role, u.status FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY u.email`, orgID)
+	rows, err := s.db.Query(r.Context(), `SELECT u.id, u.email, u.display_name, m.role, u.status, m.compliance FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY u.email`, orgID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -211,8 +212,9 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	var in struct {
-		Email string `json:"email"`
-		Role  string `json:"role"`
+		Email      string `json:"email"`
+		Role       string `json:"role"`
+		Compliance *bool  `json:"compliance"`
 	}
 	if !decode(w, r, 8<<10, &in) {
 		return
@@ -236,16 +238,21 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	var current string
-	s.db.QueryRow(r.Context(), `SELECT role FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&current)
-	if current == "owner" && p.orgRole(orgID) != "owner" {
+	var compliance bool
+	s.db.QueryRow(r.Context(), `SELECT role, compliance FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&current, &compliance)
+	complianceChanged := in.Compliance != nil && *in.Compliance != compliance
+	if (current == "owner" || complianceChanged) && p.orgRole(orgID) != "owner" {
 		forbidden(w)
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role`, orgID, userID, in.Role); err != nil {
+	if _, err := s.db.Exec(r.Context(), `INSERT INTO organization_members (org_id, user_id, role, compliance) VALUES ($1, $2, $3, coalesce($4, false)) ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, compliance = coalesce($4, organization_members.compliance)`, orgID, userID, in.Role, in.Compliance); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r.Context(), r, p, &orgID, "member.set_role", "user", userID, map[string]any{"role": in.Role, "previous": current})
+	if complianceChanged {
+		s.audit(r.Context(), r, p, &orgID, "member.set_compliance", "user", userID, map[string]any{"compliance": *in.Compliance})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

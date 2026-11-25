@@ -330,9 +330,11 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
       }),
   })
   const remove = useMutation({
-    mutationFn: (id: string) => api(`/mailboxes/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
-      toast.success("Mailbox deleted")
+    mutationFn: (id: string) => api<Mailbox | undefined>(`/mailboxes/${id}`, { method: "DELETE" }),
+    onSuccess: (retained) => {
+      if (retained?.retainedAt) {
+        toast.success(`${retained.address} is retained`, { description: "A legal hold keeps its mail. It stays inactive and can be deleted once the hold is released." })
+      } else toast.success("Mailbox deleted")
       setDeleting(null)
       refresh()
     },
@@ -395,7 +397,11 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                         onCheckedChange={() => toggle.mutate(m)}
                         aria-label={`${m.active ? "Deactivate" : "Activate"} ${m.address}`}
                       />
-                      <StatusBadge tone={m.active ? "success" : "neutral"}>{m.active ? "Active" : "Inactive"}</StatusBadge>
+                      {m.retainedAt ? (
+                        <StatusBadge tone="warning">Retained</StatusBadge>
+                      ) : (
+                        <StatusBadge tone={m.active ? "success" : "neutral"}>{m.active ? "Active" : "Inactive"}</StatusBadge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>

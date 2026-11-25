@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation } from "@tanstack/react-query"
-import { BookUser, CalendarDays, LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
+import { BookUser, CalendarDays, Gavel, LogOut, Mail, Settings, ShieldCheck, type LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
@@ -21,16 +21,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import { canAdminister, useSession } from "@/hooks/use-session"
+import { canAdminister, canInvestigate, useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import type { User } from "@/lib/types"
 
-const nav: { href: string; label: string; icon: LucideIcon; admin?: boolean }[] = [
+const nav: { href: string; label: string; icon: LucideIcon; admin?: boolean; compliance?: boolean }[] = [
   { href: "/mail", label: "Mail", icon: Mail },
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/contacts", label: "Contacts", icon: BookUser },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/admin", label: "Administration", icon: ShieldCheck, admin: true },
+  { href: "/compliance", label: "Compliance", icon: Gavel, compliance: true },
 ]
 
 const railClass =
@@ -48,7 +49,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     )
   }
 
-  const items = session.data ? nav.filter((item) => !item.admin || canAdminister(session.data)) : []
+  const items = session.data
+    ? nav.filter((item) => (!item.admin || canAdminister(session.data)) && (!item.compliance || canInvestigate(session.data)))
+    : []
 
   return (
     <div className="flex h-dvh flex-col md:flex-row">

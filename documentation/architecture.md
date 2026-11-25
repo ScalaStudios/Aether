@@ -216,4 +216,3 @@ A mailbox's policy for a folder replaces the organization's policy for the same 
 The API applies the policies once a day per active mailbox on an active, verified domain. Each replica claims one due mailbox at a time with a 30-minute lease in `retention_runs`, which never locks rows in `mailboxes`, and for each folder asks Dovecot's doveadm HTTP API to `expunge` with a search query: `savedbefore` for Trash and Junk, `before` for other folders, and `before` with the keep days when a keep policy applies. A folder that does not exist is skipped. If Dovecot cannot be reached, the mailbox is tried again an hour later. A change to a policy schedules the affected mailboxes straight away.
 
 Keep for limits what retention deletes. It does not stop a person, or an IMAP client, from deleting a message themselves; those deletions are permanent until deleted mail can be recovered.
-

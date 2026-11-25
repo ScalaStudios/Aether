@@ -33,6 +33,7 @@ write_map mailboxes "SELECT 1 FROM mail_users WHERE address = '%s'"
 write_map aliases "SELECT destination FROM mail_aliases WHERE address = '%s'"
 write_map senders "SELECT login FROM mail_senders WHERE sender = '%s'"
 write_map restricted-lists "SELECT 'aether_list_policy' FROM mail_restricted_lists WHERE address = '%s'"
+write_map journal "SELECT archive_address FROM mail_journal WHERE match = '%s'"
 write_map hosted-senders "SELECT '%s' FROM mail_domains WHERE name = '%d'"
 
 srs_secret=/var/spool/postfix/srs.secret

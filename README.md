@@ -256,6 +256,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Message trace](documentation/message-trace.md): follow a message from arrival to delivery, search and export delivery records, and how the Postfix log gets there.
 - [Mail queue](documentation/mail-queue.md): see why outgoing mail is waiting, and retry, hold, release or delete it without a shell on the host.
 - [Recovering deleted mail](documentation/deleted-items.md): restoring permanently deleted messages, the retention period, and what Dovecot keeps.
+- [Compliance](documentation/compliance.md): legal holds, retained mailboxes, searches across mailboxes, exports and journaling.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

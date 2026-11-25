@@ -32,10 +32,11 @@ type User struct {
 }
 
 type membership struct {
-	OrgID   string `json:"orgId"`
-	OrgName string `json:"orgName"`
-	OrgSlug string `json:"orgSlug"`
-	Role    string `json:"role"`
+	OrgID      string `json:"orgId"`
+	OrgName    string `json:"orgName"`
+	OrgSlug    string `json:"orgSlug"`
+	Role       string `json:"role"`
+	Compliance bool   `json:"compliance"`
 }
 
 type sessionResponse struct {
@@ -147,7 +148,7 @@ func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionRespons
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(ctx, `SELECT o.id, o.name, o.slug, m.role FROM organization_members m JOIN organizations o ON o.id = m.org_id WHERE m.user_id = $1 ORDER BY o.name`, userID)
+	rows, err := s.db.Query(ctx, `SELECT o.id, o.name, o.slug, m.role, m.compliance FROM organization_members m JOIN organizations o ON o.id = m.org_id WHERE m.user_id = $1 ORDER BY o.name`, userID)
 	if err != nil {
 		return nil, err
 	}

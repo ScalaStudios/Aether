@@ -311,6 +311,8 @@ func (s *Server) retireError(w http.ResponseWriter, r *http.Request, err error) 
 		writeError(w, http.StatusServiceUnavailable, "mail_unavailable", "The mail server could not be reached to remove the members' access. Nothing was changed; try again.")
 	case errors.Is(err, pgx.ErrNoRows):
 		notFound(w)
+	case isForeignKeyViolation(err):
+		writeError(w, http.StatusConflict, "mailbox_held", "A legal hold was placed on this mailbox while it was being deleted. Nothing was deleted; try again to retain it instead.")
 	default:
 		s.internalError(w, r, err)
 	}

@@ -17,20 +17,21 @@ import (
 var localPartPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._+-]{0,62}[a-z0-9])?$`)
 
 type mailbox struct {
-	ID          string    `json:"id"`
-	OrgID       string    `json:"orgId"`
-	DomainID    string    `json:"domainId"`
-	Address     string    `json:"address"`
-	LocalPart   string    `json:"localPart"`
-	DisplayName string    `json:"displayName"`
-	OwnerUserID *string   `json:"ownerUserId"`
-	QuotaBytes  int64     `json:"quotaBytes"`
-	Active      bool      `json:"active"`
-	CreatedAt   time.Time `json:"createdAt"`
-	Kind        string    `json:"kind"`
+	ID          string     `json:"id"`
+	OrgID       string     `json:"orgId"`
+	DomainID    string     `json:"domainId"`
+	Address     string     `json:"address"`
+	LocalPart   string     `json:"localPart"`
+	DisplayName string     `json:"displayName"`
+	OwnerUserID *string    `json:"ownerUserId"`
+	QuotaBytes  int64      `json:"quotaBytes"`
+	Active      bool       `json:"active"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	Kind        string     `json:"kind"`
+	RetainedAt  *time.Time `json:"retainedAt"`
 }
 
-const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind`
+const mailboxColumns = `id, org_id, domain_id, address, local_part, display_name, owner_user_id, quota_bytes, active, created_at, kind, retained_at`
 
 func collectMailboxes(rows pgx.Rows, err error) ([]mailbox, error) {
 	if err != nil {
@@ -43,6 +44,11 @@ func collectMailboxes(rows pgx.Rows, err error) ([]mailbox, error) {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
 func (s *Server) listMailboxes(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -176,7 +182,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+mailboxColumns,
 			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Kind).
-			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind)
+			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
 		if err != nil || owner == nil {
 			return err
 		}
@@ -208,7 +214,7 @@ func (s *Server) mailboxForAdmin(w http.ResponseWriter, r *http.Request, p *prin
 	}
 	var m mailbox
 	err := s.db.QueryRow(r.Context(), `SELECT `+mailboxColumns+` FROM mailboxes WHERE id = $1`, id).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind)
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.orgRole(m.OrgID) == "") {
 		notFound(w)
 		return nil, false
@@ -256,9 +262,10 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		}
 	}
 	err := s.db.QueryRow(r.Context(), `
-		UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active)
+		UPDATE mailboxes SET display_name = coalesce($2, display_name), quota_bytes = coalesce($3, quota_bytes), active = coalesce($4, active),
+			retained_at = CASE WHEN $4 THEN NULL ELSE retained_at END
 		WHERE id = $1 RETURNING `+mailboxColumns, m.ID, in.DisplayName, in.QuotaBytes, in.Active).
-		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind)
+		Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -275,6 +282,29 @@ func (s *Server) updateMailbox(w http.ResponseWriter, r *http.Request, p *princi
 func (s *Server) deleteMailbox(w http.ResponseWriter, r *http.Request, p *principal) {
 	m, ok := s.mailboxForAdmin(w, r, p)
 	if !ok {
+		return
+	}
+	var held bool
+	if err := s.db.QueryRow(r.Context(), `SELECT `+mailboxHeld("$1"), m.ID).Scan(&held); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if held {
+		if m.RetainedAt != nil {
+			writeError(w, http.StatusConflict, "mailbox_retained", "This mailbox is retained for a legal hold. It can be deleted once every hold on it is released.")
+			return
+		}
+		if err := s.retireMailbox(r.Context(), m, false); err != nil {
+			s.retireError(w, r, err)
+			return
+		}
+		if err := s.db.QueryRow(r.Context(), `UPDATE mailboxes SET retained_at = now() WHERE id = $1 RETURNING retained_at`, m.ID).Scan(&m.RetainedAt); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		m.Active = false
+		s.audit(r.Context(), r, p, &m.OrgID, "mailbox.retain", "mailbox", m.ID, map[string]any{"address": m.Address})
+		writeJSON(w, http.StatusOK, m)
 		return
 	}
 	if err := s.retireMailbox(r.Context(), m, true); err != nil {

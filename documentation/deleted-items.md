@@ -35,6 +35,8 @@ API keys cannot use these routes, because the list shows the subjects and sender
 
 Dovecot runs the `lazy_expunge` plugin. An expunged message is copied into a hidden namespace with the prefix `.EXPUNGED/`, stored in `Expunged/` next to `Maildir/` in the mailbox's home directory, under the name of the folder it came from. The namespace is left out of folder lists and of the quota. A global ACL in `/etc/dovecot/dovecot-acl` lets the owner read, flag and expunge there but not store messages, so a mail app cannot use it as free space; the plugin itself writes past the ACL. Copying only the last instance of a message keeps moves from creating copies.
 
+While a mailbox is on a legal hold, the messages the hold keeps are not removed after the retention period and the person cannot remove them; see [Compliance](compliance.md#holds).
+
 Disk use grows by the mail deleted during the retention period. `doveadm mailbox status -u <address> messages '.EXPUNGED/*'` shows what a mailbox holds.
 
 ### Upgrading an existing installation

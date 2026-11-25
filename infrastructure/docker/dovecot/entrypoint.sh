@@ -17,7 +17,7 @@ cat > /run/dovecot-secrets/sql.conf.ext <<SQL
 driver = pgsql
 connect = host=${DB_HOST} dbname=${DB_NAME} user=aether_mail password=${AETHER_MAIL_DB_PASSWORD}
 password_query = SELECT address AS user, NULL AS password, 'Y' AS nopassword FROM mail_credentials WHERE address = '%u' AND token_hash = '%{sha256:password}' LIMIT 1
-user_query = SELECT '/var/vmail/' || id AS home, 'vmail' AS uid, 'vmail' AS gid, CASE WHEN quota_bytes > 0 THEN '*:bytes=' || quota_bytes END AS quota_rule FROM mail_users WHERE address = '%u'
+user_query = SELECT '/var/vmail/' || id AS home, 'vmail' AS uid, 'vmail' AS gid, CASE WHEN quota_bytes > 0 THEN '*:bytes=' || quota_bytes END AS quota_rule, CASE WHEN held THEN '0' END AS "namespace/expunged/mailbox/*/autoexpunge", CASE WHEN held THEN 'vfile:/etc/dovecot/dovecot-acl-held' END AS acl, CASE WHEN held THEN '' END AS lazy_expunge_exclude FROM mail_userdb WHERE address = '%u'
 iterate_query = SELECT address AS user FROM mail_users
 SQL
 
