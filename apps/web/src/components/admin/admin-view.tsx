@@ -26,6 +26,7 @@ import { MessageTraceTab } from "@/components/admin/message-trace/trace-tab"
 import { RetentionTab } from "@/components/admin/retention-tab"
 import { ResourcesTab } from "@/components/admin/resources-tab"
 import { SecurityTab } from "@/components/admin/security-tab"
+import { OutboundRoutingTab } from "@/components/admin/outbound-routing-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { Field } from "@/components/field"
@@ -99,7 +100,7 @@ export function AdminView() {
   const org = administered.find((o) => o.id === orgId) ?? administered[0]
   const reviewer = session.memberships.some((m) => m.orgId === org?.id && m.role !== "member")
   const tabs = org ? orgTabs.filter((t) => t.value !== "quarantine" || reviewer) : []
-  const active = platformAdmin && (tab === "identity" || tab === "mail-queue") ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
+  const active = platformAdmin && ["identity", "mail-queue", "routing"].includes(tab) ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
 
   return (
     <PageContainer>
@@ -157,6 +158,7 @@ export function AdminView() {
             ))}
             {platformAdmin && <TabsTrigger value="identity">Identity providers</TabsTrigger>}
             {platformAdmin && <TabsTrigger value="mail-queue">Mail queue</TabsTrigger>}
+            {platformAdmin && <TabsTrigger value="routing">Outbound routing</TabsTrigger>}
           </TabsList>
           {org &&
             tabs.map(({ value, Component }) => (
@@ -164,6 +166,9 @@ export function AdminView() {
                 <Component key={org.id} orgId={org.id} />
               </TabsContent>
             ))}
+          {platformAdmin && (
+            <TabsContent value="routing"><OutboundRoutingTab /></TabsContent>
+          )}
           {platformAdmin && (
             <TabsContent value="identity">
               <IdentityProvidersTab organizations={orgs.data} />

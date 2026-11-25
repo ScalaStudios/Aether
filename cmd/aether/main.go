@@ -152,7 +152,7 @@ func serve(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 7)
 	if cfg.MetricsListen != "" {
 		metrics := &http.Server{Addr: cfg.MetricsListen, Handler: api.MetricsHandler(), ReadHeaderTimeout: 10 * time.Second}
 		go func() {
@@ -199,6 +199,14 @@ func serve(log *slog.Logger) error {
 		errCh <- srv.ServeAuditMilter(auditMilter)
 	}()
 	defer auditMilter.Close()
+	if cfg.MailDBPassword != "" {
+		outboundSASL, err := net.Listen("tcp", cfg.OutboundSASLListen)
+		if err != nil {
+			return err
+		}
+		defer outboundSASL.Close()
+		go func() { errCh <- srv.ServeOutboundSASL(outboundSASL) }()
+	}
 	go func() {
 		log.Info("aether api listening", "addr", cfg.Listen, "public_url", cfg.PublicURL.String())
 		errCh <- httpServer.ListenAndServe()

@@ -4,9 +4,17 @@ package integration
 
 import (
 	"bytes"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/emersion/go-sasl"
+	"github.com/emersion/go-smtp"
 )
 
 type world struct {
@@ -450,4 +458,172 @@ func createAppPassword(t *testing.T, c *apiClient, mailbox string) string {
 	}
 	c.must("POST", "/me/app-passwords", map[string]string{"name": "integration", "mailboxId": mailbox}, &ap, 201)
 	return ap.Password
+}
+
+type outboundDelivery struct {
+	sender, recipient, username string
+	tls                         bool
+}
+
+type outboundSMTPSession struct {
+	conn                        *smtp.Conn
+	delivered                   chan<- outboundDelivery
+	passwords                   map[string]string
+	sender, recipient, username string
+}
+
+func (s *outboundSMTPSession) Reset()        { s.sender, s.recipient = "", "" }
+func (s *outboundSMTPSession) Logout() error { return nil }
+
+func (s *outboundSMTPSession) Mail(from string, _ *smtp.MailOptions) error {
+	if len(s.passwords) > 0 && s.username == "" {
+		return &smtp.SMTPError{Code: 530, Message: "Authentication required"}
+	}
+	s.sender = from
+	return nil
+}
+
+func (s *outboundSMTPSession) Rcpt(to string, _ *smtp.RcptOptions) error {
+	s.recipient = to
+	return nil
+}
+
+func (s *outboundSMTPSession) Data(r io.Reader) error {
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return err
+	}
+	_, encrypted := s.conn.TLSConnectionState()
+	s.delivered <- outboundDelivery{s.sender, s.recipient, s.username, encrypted}
+	return nil
+}
+
+func (s *outboundSMTPSession) AuthMechanisms() []string {
+	if len(s.passwords) == 0 {
+		return nil
+	}
+	return []string{sasl.Plain}
+}
+
+func (s *outboundSMTPSession) Auth(_ string) (sasl.Server, error) {
+	return sasl.NewPlainServer(func(_, username, password string) error {
+		if want, ok := s.passwords[username]; !ok || password != want {
+			return &smtp.SMTPError{Code: 535, Message: "Invalid credentials"}
+		}
+		s.username = username
+		return nil
+	}), nil
+}
+
+func outboundSMTPFixture(t *testing.T, cert *tls.Certificate, passwords map[string]string) (string, <-chan outboundDelivery) {
+	t.Helper()
+	conn, err := net.Dial("udp4", env(t, "AETHER_TEST_SMTP", "postfix:25"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := conn.LocalAddr().(*net.UDPAddr).IP.String()
+	conn.Close()
+	listener, err := net.Listen("tcp4", net.JoinHostPort(host, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivered := make(chan outboundDelivery, 16)
+	server := smtp.NewServer(smtp.BackendFunc(func(c *smtp.Conn) (smtp.Session, error) {
+		return &outboundSMTPSession{conn: c, delivered: delivered, passwords: passwords}, nil
+	}))
+	server.Domain = "smtp.integration.test"
+	if cert != nil {
+		server.TLSConfig = &tls.Config{Certificates: []tls.Certificate{*cert}}
+	}
+	go server.Serve(listener)
+	t.Cleanup(func() { server.Close() })
+	return fmt.Sprintf("[%s]:%d", host, listener.Addr().(*net.TCPAddr).Port), delivered
+}
+
+func TestOutboundRouting(t *testing.T) {
+	a, b := setupWorld(t), setupWorld(t)
+	cert, err := tls.LoadX509KeyPair("/tls/fullchain.pem", "/tls/privkey.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := a.admin
+	const path = "/admin/outbound-routing"
+	put := func(kind, key string, body map[string]any) {
+		t.Helper()
+		endpoint := path + "/" + kind + "/" + key
+		admin.must("PUT", endpoint, body, nil, 200)
+		t.Cleanup(func() { admin.must("DELETE", endpoint, nil, nil, 204) })
+	}
+	send := func(w *world, recipients ...string) {
+		t.Helper()
+		user := "alice@" + w.domain
+		message := rfc822(user, recipients[0], randomSuffix(), "outbound fixture")
+		err := submit(t, env(t, "AETHER_TEST_SUBMISSION", "postfix:587"), user, w.aliceAppPassword, user, recipients, message, false)
+		for deadline := time.Now().Add(time.Minute); err != nil && strings.Contains(err.Error(), "454") && time.Now().Before(deadline); {
+			err = submit(t, env(t, "AETHER_TEST_SUBMISSION", "postfix:587"), user, w.aliceAppPassword, user, recipients, message, false)
+		}
+		if err != nil {
+			t.Fatalf("submit to %v: %v", recipients, err)
+		}
+	}
+	expect := func(delivered <-chan outboundDelivery, want outboundDelivery) {
+		t.Helper()
+		select {
+		case got := <-delivered:
+			if got != want {
+				t.Fatalf("delivery %+v, want %+v", got, want)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatalf("no delivery for %+v", want)
+		}
+	}
+	relay, relayMail := outboundSMTPFixture(t, &cert, map[string]string{"relay-a": "a-test-secret", "relay-b": "b:test:secret"})
+	for _, config := range []struct {
+		w              *world
+		user, password string
+	}{{a, "relay-a", "a-test-secret"}, {b, "relay-b", "b:test:secret"}} {
+		put("relay", config.w.domain, map[string]any{"target": relay, "username": config.user, "password": config.password})
+	}
+	raw := admin.raw("GET", path)
+	if bytes.Contains(raw, []byte("test-secret")) || bytes.Contains(raw, []byte("relay-a")) ||
+		bytes.Contains(raw, []byte("b:test:secret")) || !bytes.Contains(raw, []byte(`"hasCredentials":true`)) {
+		t.Fatal("routing response did not redact the relay credentials")
+	}
+	for _, config := range []struct {
+		w    *world
+		user string
+	}{{a, "relay-a"}, {b, "relay-b"}} {
+		recipient := "receiver@routing-" + randomSuffix() + ".test"
+		send(config.w, recipient)
+		expect(relayMail, outboundDelivery{"alice@" + config.w.domain, recipient, config.user, true})
+	}
+
+	plain, plainMail := outboundSMTPFixture(t, nil, nil)
+	partner := "routing-" + randomSuffix() + ".test"
+	put("transport", partner, map[string]any{"target": plain})
+	put("tls", plain, map[string]any{"tlsMode": "may"})
+	external := "receiver@routing-" + randomSuffix() + ".test"
+	send(a, "receiver@"+partner, external)
+	expect(plainMail, outboundDelivery{"alice@" + a.domain, "receiver@" + partner, "", false})
+	expect(relayMail, outboundDelivery{"alice@" + a.domain, external, "relay-a", true})
+	admin.must("PUT", path+"/transport/"+b.domain, map[string]any{"target": plain}, nil, 422)
+
+	trustedName := env(t, "AETHER_TEST_OUTBOUND_TRUSTED_NAME", "disabled")
+	for _, mode := range []string{"none", "may", "encrypt", "dane", "verify", "secure"} {
+		t.Run(mode, func(t *testing.T) {
+			if (mode == "verify" || mode == "secure") && trustedName == "disabled" {
+				t.Skip("requires the fixture CA configured as Postfix's outbound trust store")
+			}
+			target, inbox := outboundSMTPFixture(t, &cert, nil)
+			domain := "routing-" + randomSuffix() + ".test"
+			policy := map[string]any{"tlsMode": mode}
+			if mode == "verify" || mode == "secure" {
+				policy["matchNames"] = []string{trustedName}
+			}
+			put("tls", target, policy)
+			put("transport", domain, map[string]any{"target": target})
+			recipient := "receiver@" + domain
+			send(a, recipient)
+			expect(inbox, outboundDelivery{"alice@" + a.domain, recipient, "", mode != "none"})
+		})
+	}
 }

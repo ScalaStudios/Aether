@@ -152,6 +152,14 @@ AETHER_RELAY_PASSWORD=...
 
 With these set, Postfix requires TLS to the relay. Mail between Aether's own domains is still delivered locally. Make sure the domain's SPF record includes the relay.
 
+## Outbound routing
+
+Platform administrators can manage routing in **Administration → Outbound routing**. A sender relay applies to a verified hosted sender domain. A recipient transport applies to an external recipient domain and takes precedence over the sender relay. Use a fixed SMTP endpoint such as `[smtp.partner.example]:587`. Unmatched messages use the server’s global relay or direct delivery.
+
+TLS policies apply to the delivery next hop. Use the recipient domain for direct MX delivery and the exact endpoint for a fixed transport or relay. Routes through the same endpoint share its TLS policy. `none` uses plaintext, `may` attempts STARTTLS, `encrypt` requires TLS, and `dane` uses DNSSEC and TLSA when available. `verify` and `secure` validate certificates and support an optional list of matching hostnames. Authenticated relays always require TLS and honor stricter `verify` and `secure` policies.
+
+Per-sender relay credentials are encrypted under `AETHER_SECRET_KEY`. Postfix retrieves them from the API over the internal socketmap listener. Custom deployments must provide the same `AETHER_MAIL_DB_PASSWORD` to the API and Postfix and allow Postfix to reach the API’s `AETHER_OUTBOUND_SASL_LISTEN` (default `:10041`). Set `AETHER_OUTBOUND_SASL_SERVICE` on Postfix if the API endpoint differs from `api:10041`. Keep the listener on a private network.
+
 ## Distribution list policy service
 
 Postfix decides who may send to a restricted distribution list by asking the API on port 10040 during the SMTP session. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). In Compose the port is not published and is reachable only inside the Compose network. If the API runs elsewhere, open that port to Postfix and set `AETHER_POLICY_SERVICE` on the Postfix container.

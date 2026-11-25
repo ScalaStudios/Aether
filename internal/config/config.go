@@ -42,6 +42,8 @@ type Config struct {
 	MilterListen          string
 	MilterAfterListen     string
 	AuditMilterListen     string
+	OutboundSASLListen    string
+	MailDBPassword        string
 	CustomCSS             bool
 }
 
@@ -77,6 +79,8 @@ func Load() (*Config, error) {
 		MilterListen:          env("AETHER_MILTER_LISTEN", ":10045"),
 		MilterAfterListen:     env("AETHER_MILTER_AFTER_LISTEN", ":10046"),
 		AuditMilterListen:     env("AETHER_AUDIT_MILTER_LISTEN", ":10047"),
+		OutboundSASLListen:    env("AETHER_OUTBOUND_SASL_LISTEN", ":10041"),
+		MailDBPassword:        os.Getenv("AETHER_MAIL_DB_PASSWORD"),
 		CustomCSS:             env("AETHER_CUSTOM_CSS", "true") == "true",
 	}
 	var errs []error

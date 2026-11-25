@@ -40,6 +40,16 @@ write_map tagged-mail "SELECT address FROM mail_users WHERE ${tagged_mailbox} AN
 write_map tagged-rejects "SELECT '550 5.1.1 This mailbox does not accept tagged addresses' FROM mail_users WHERE ${tagged_mailbox} AND tagged_mail = 'reject' AND NOT EXISTS (SELECT 1 FROM mail_aliases WHERE address = '%s')"
 write_map hosted-senders "SELECT '%s' FROM mail_domains WHERE name = '%d'"
 
+write_map outbound-transports "SELECT transport FROM mail_outbound_transports WHERE name = lower('%s')"
+write_map outbound-relays "SELECT transport FROM mail_outbound_relays WHERE name = lower(regexp_replace('%s', '^.*@', '')) AND position('@' in '%s') > 0"
+write_map outbound-tls "SELECT policy FROM mail_outbound_tls WHERE name = lower('%s')"
+write_map outbound-tls-required "SELECT policy FROM mail_outbound_tls WHERE name = lower('%s') AND tls_mode IN ('encrypt', 'verify', 'secure')"
+
+sasl_token=$(printf '%s' "$AETHER_MAIL_DB_PASSWORD" | sha256sum)
+postconf -P "aether-sender-auth/unix/smtp_sasl_password_maps=socketmap:inet:${AETHER_OUTBOUND_SASL_SERVICE:-api:10041}:${sasl_token%% *}"
+chmod 0640 /etc/postfix/master.cf
+chgrp postfix /etc/postfix/master.cf
+
 srs_secret=/var/spool/postfix/srs.secret
 [ -s "$srs_secret" ] || (umask 077 && head -c 32 /dev/urandom | base64 > "$srs_secret")
 postsrsd -s"$srs_secret" -d"$AETHER_MAIL_HOSTNAME" -l127.0.0.1 -4 -upostsrsd -D
@@ -54,6 +64,7 @@ if [ -n "${AETHER_RELAYHOST:-}" ] && [ -n "${AETHER_RELAY_USER:-}" ]; then
     smtp_sasl_password_maps=hash:/etc/postfix/sasl_passwd \
     smtp_sasl_security_options=noanonymous \
     smtp_sasl_tls_security_options=noanonymous \
+    smtp_tls_policy_maps=pgsql:/etc/postfix/pgsql/outbound-tls-required.cf \
     smtp_tls_security_level=encrypt
 fi
 

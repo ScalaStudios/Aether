@@ -14,6 +14,14 @@ func TestTenantIsolation(t *testing.T) {
 	orgAdmin := newClient(t)
 	orgAdmin.login("alice@"+a.domain, "alice-integration-pw")
 
+	for _, request := range []struct{ method, path string }{
+		{"GET", "/admin/outbound-routing"},
+		{"PUT", "/admin/outbound-routing/relay/" + a.domain},
+		{"DELETE", "/admin/outbound-routing/relay/" + a.domain},
+	} {
+		orgAdmin.must(request.method, request.path, nil, nil, 403)
+	}
+
 	var orgs []idOnly
 	orgAdmin.must("GET", "/organizations", nil, &orgs, 200)
 	if len(orgs) != 1 || orgs[0].ID != a.orgID {

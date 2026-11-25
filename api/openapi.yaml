@@ -28,6 +28,7 @@ tags:
   - name: branding
   - name: mail-flow
   - name: message-trace
+  - name: outbound-routing
 paths:
   /auth/providers:
     get:
@@ -2739,6 +2740,68 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: Deprovisioned }
+  /admin/outbound-routing:
+    get:
+      tags: [outbound-routing]
+      security: [{ session: [] }]
+      summary: List outbound routes and TLS policies as a platform administrator
+      responses:
+        "200":
+          description: Routing rules with credential presence only
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/OutboundRoute" } }
+        "403":
+          description: Platform administrator required
+  /admin/outbound-routing/{kind}/{name}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: { type: string, enum: [relay, transport, tls] }
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Sender domain, recipient domain, or exact TLS next-hop key
+    put:
+      tags: [outbound-routing]
+      security: [{ session: [] }]
+      summary: Create or replace an outbound routing rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target: { type: string, description: "Fixed relay or transport endpoint in [hostname]:port form" }
+                tlsMode: { type: string, enum: ["", none, may, encrypt, dane, verify, secure] }
+                matchNames: { type: array, items: { type: string } }
+                username: { type: string, writeOnly: true }
+                password: { type: string, writeOnly: true }
+              description: Relay rules accept a username and password together. Omitting both removes credentials when replacing a rule.
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OutboundRoute" }
+        "403":
+          description: Platform administrator required
+        "422":
+          description: Invalid routing rule
+    delete:
+      tags: [outbound-routing]
+      security: [{ session: [] }]
+      summary: Remove an outbound routing rule
+      responses:
+        "204":
+          description: Removed
+        "403":
+          description: Platform administrator required
+        "404":
+          description: Routing rule not found
   /admin/identity-providers:
     get:
       tags: [identity-providers]
@@ -2967,6 +3030,16 @@ components:
                   code: { type: string }
                   message: { type: string }
   schemas:
+    OutboundRoute:
+      type: object
+      required: [kind, name, target, tlsMode, matchNames, hasCredentials]
+      properties:
+        kind: { type: string, enum: [relay, transport, tls] }
+        name: { type: string }
+        target: { type: string }
+        tlsMode: { type: string, enum: ["", none, may, encrypt, dane, verify, secure] }
+        matchNames: { type: array, items: { type: string } }
+        hasCredentials: { type: boolean }
     User:
       type: object
       required: [id, email, displayName, isPlatformAdmin, status, title, phone]

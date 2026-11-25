@@ -48,6 +48,17 @@ relay     unix  -       -       n       -       -       smtp
 smtp-tls  unix  -       -       n       -       -       smtp
   -o syslog_name=postfix/smtp-tls
   -o smtp_tls_security_level=encrypt
+aether-outbound unix -  -       n       -       -       smtp
+  -o smtp_sasl_auth_enable=no
+  -o smtp_tls_security_level=dane
+  -o smtp_tls_policy_maps=pgsql:/etc/postfix/pgsql/outbound-tls.cf
+aether-sender-auth unix - -     n       -       -       smtp
+  -o smtp_sender_dependent_authentication=yes
+  -o smtp_sasl_auth_enable=yes
+  -o smtp_sasl_security_options=noanonymous,noplaintext
+  -o smtp_sasl_tls_security_options=noanonymous
+  -o smtp_tls_security_level=encrypt
+  -o smtp_tls_policy_maps=pgsql:/etc/postfix/pgsql/outbound-tls-required.cf
 showq     unix  n       -       n       -       -       showq
 error     unix  -       -       n       -       -       error
 retry     unix  -       -       n       -       -       error

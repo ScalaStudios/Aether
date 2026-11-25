@@ -110,6 +110,9 @@ func (s *Server) Handler() http.Handler {
 	duringSetup("GET /api/v1/me/sessions", s.listMySessions)
 	duringSetup("DELETE /api/v1/me/sessions", s.endMySessions)
 	duringSetup("DELETE /api/v1/me/sessions/{sessionId}", s.endMySessions)
+	authed("GET /api/v1/admin/outbound-routing", s.listOutboundRoutes)
+	authed("PUT /api/v1/admin/outbound-routing/{kind}/{name}", s.saveOutboundRoute)
+	authed("DELETE /api/v1/admin/outbound-routing/{kind}/{name}", s.deleteOutboundRoute)
 
 	authed("GET /api/v1/organizations", s.listOrganizations)
 	authed("POST /api/v1/organizations", s.createOrganization)
