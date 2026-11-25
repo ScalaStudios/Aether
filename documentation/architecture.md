@@ -325,7 +325,7 @@ A platform administrator sets an organization's limits with `PUT /api/v1/organiz
 | Limit | Checked when | Error |
 | --- | --- | --- |
 | Mailboxes | Creating a mailbox in the console or API, by SCIM, or on first OIDC sign-in | `409 mailbox_limit_reached` |
-| Aliases, lists | Creating an alias or list, or changing an alias to a list or a list to an alias | `409 alias_limit_reached`, `409 list_limit_reached` |
+| Aliases, lists | Creating an alias or list, or changing an alias to a list or a list to an alias. Personal aliases do not count; their own policy limits them | `409 alias_limit_reached`, `409 list_limit_reached` |
 | Domains | Adding a domain | `409 domain_limit_reached` |
 | Storage | Creating a mailbox, raising its quota, or setting its quota to 0 | `409 storage_limit_reached`, `409 quota_required` |
 The storage limit is a cap on the sum of all mailbox quotas, not on the disk space actually used. While it is set, every new mailbox needs a quota above 0. Set a default quota so that SCIM and OIDC provisioning keep working; without one, they are refused with `quota_required`. Mailboxes that existed with a quota of 0 before the limit was set are not counted. `usage.mailboxesWithoutQuota` reports how many there are. Lowering a limit below current use is allowed. It stops new resources until use falls under the limit again and removes nothing.

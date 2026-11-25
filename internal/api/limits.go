@@ -82,7 +82,7 @@ func (s *Server) lockOrgLimits(ctx context.Context, tx pgx.Tx, orgID string) (or
 	err = tx.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM mailboxes WHERE org_id = $1),
-			(SELECT count(*) FROM aliases WHERE org_id = $1 AND kind = 'alias'),
+			(SELECT count(*) FROM aliases WHERE org_id = $1 AND kind = 'alias' AND personal_owner_id IS NULL),
 			(SELECT count(*) FROM aliases WHERE org_id = $1 AND kind = 'list'),
 			(SELECT count(*) FROM domains WHERE org_id = $1),
 			(SELECT least(coalesce(sum(quota_bytes), 0), 9223372036854775807)::bigint FROM mailboxes WHERE org_id = $1),
