@@ -348,7 +348,7 @@ func purgeRecoverableNow(t *testing.T, db *pgx.Conn, mailboxID, address string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := mc.PurgeRecoverable(ctx, address, 0, mailpkg.NewHoldScope(queries)); err != nil {
+	if err := mc.PurgeRecoverable(ctx, address, 0, 0, mailpkg.NewHoldScope(queries)); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
 }

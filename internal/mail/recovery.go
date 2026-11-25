@@ -168,8 +168,11 @@ func (c *Client) Restore(address string, refs []RecoverableRef, keep bool) (int,
 	return n, err
 }
 
-func (c *Client) PurgeRecoverable(ctx context.Context, address string, days int, hold HoldScope) error {
+func (c *Client) PurgeRecoverable(ctx context.Context, address string, days, keep int, hold HoldScope) error {
 	query := []string{"mailbox", ExpungedPrefix + "*", "savedbefore", strconv.Itoa(days) + "d"}
+	if keep > 0 {
+		query = append(query, "before", strconv.Itoa(keep)+"d")
+	}
 	if hold.Whole || len(hold.Attachment) > 0 {
 		return c.ExpungeHeld(ctx, address, query, hold)
 	}
