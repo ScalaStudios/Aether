@@ -290,8 +290,10 @@ func (s *Server) applyRemoteImages(ctx context.Context, userID, orgID, folder st
 func (s *Server) writeMessage(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, msg *mailpkg.Message) {
 	var inv *invitation
 	if msg.Calendar != "" && len(msg.From) > 0 {
-		if ctx, err := s.pimContext(r, p); err == nil {
-			inv = s.describeInvitation(ctx, p.User, m, strings.ToLower(msg.From[0].Address), msg.Calendar)
+		if on, err := s.userFeaturesOn(r.Context(), p.User.ID, featureCalendar); err == nil && on {
+			if ctx, err := s.pimContext(r, p); err == nil {
+				inv = s.describeInvitation(ctx, p.User, m, strings.ToLower(msg.From[0].Address), msg.Calendar)
+			}
 		}
 	}
 	related, err := s.mail.Related(m.Address, folderParam(r), msg)

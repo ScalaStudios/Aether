@@ -134,10 +134,15 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 			return
 		}
 		for _, addr := range rule.Actions.ForwardTo {
-			if !forward.Allows(addr) {
-				writeError(w, http.StatusUnprocessableEntity, "forwarding_blocked", rule.Name+": your organization does not allow forwarding to "+addr+".")
+			if forward.Allows(addr) {
+				continue
+			}
+			if forward.FeatureOff {
+				writeError(w, http.StatusForbidden, "feature_disabled", "Forwarding to addresses outside the organization is turned off, so rules cannot forward to "+addr+".")
 				return
 			}
+			writeError(w, http.StatusUnprocessableEntity, "forwarding_blocked", rule.Name+": your organization does not allow forwarding to "+addr+".")
+			return
 		}
 		for _, keyword := range rule.Actions.Labels {
 			if !labelKeywords[keyword] {

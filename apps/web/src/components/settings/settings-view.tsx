@@ -41,7 +41,7 @@ import { DialogClose } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { useSession } from "@/hooks/use-session"
+import { featureOff, useSession } from "@/hooks/use-session"
 import { api, apiUrl, errorMessage } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { roleLabel } from "@/lib/permissions"
@@ -51,6 +51,7 @@ import type { AppPassword, AppPasswordScope, CreatedAppPassword, Session } from 
 export function SettingsView() {
   const session = useSession().data
   const setup = session?.twoFactorSetupRequired ?? false
+  const appPasswordsOff = !!session && featureOff(session, "appPasswords")
 
   return (
     <PageContainer>
@@ -109,11 +110,11 @@ export function SettingsView() {
           <FlowApprovals queryKey={["my-held"]} path="/me/mail-flow/held" hideWhenEmpty />
           <HeldMessages />
           <ManagedLists />
-          <ImportMail />
+          {!featureOff(session, "mailImport") && <ImportMail />}
           <ExportMail />
           <MailboxAccess />
-          <AppPasswords />
-          <CalendarApps />
+          <AppPasswords off={appPasswordsOff} />
+          {!featureOff(session, "calendar", "dav", "appPasswords") && <CalendarApps />}
         </>
       )}
     </PageContainer>
@@ -283,7 +284,7 @@ const scopeLabel = (scope: AppPasswordScope) => scopes.find((s) => s.value === s
 
 type CreateValues = z.infer<typeof createSchema>
 
-function AppPasswords() {
+function AppPasswords({ off }: { off: boolean }) {
   const qc = useQueryClient()
   const list = useQuery({ queryKey: ["app-passwords"], queryFn: () => api<AppPassword[]>("/me/app-passwords") })
   const mailboxes = useQuery(myMailboxesQuery)
@@ -339,28 +340,36 @@ function AppPasswords() {
 
   const host = typeof window === "undefined" ? "" : window.location.hostname
 
+  if (off && !list.data?.length) return null
+
   return (
     <section id="app-passwords" className="flex scroll-mt-8 flex-col gap-6">
       <SectionHeader
         title="App passwords"
-        description="Use an app password instead of your sign-in password in mail, calendar and contacts apps. Each one works for a single mailbox, and you can limit it to mail or to calendar and contacts. Shared mailboxes appear in your mail app automatically under Shared; they never need their own password."
+        description={
+          off
+            ? "Your organization has turned app passwords off, so these no longer work in mail, calendar and contacts apps. They work again if an owner turns app passwords back on. You can still revoke them."
+            : "Use an app password instead of your sign-in password in mail, calendar and contacts apps. Each one works for a single mailbox, and you can limit it to mail or to calendar and contacts. Shared mailboxes appear in your mail app automatically under Shared; they never need their own password."
+        }
         actions={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setProfileMailbox(writable.length === 1 ? writable[0].id : "")
-                setProfiling(true)
-              }}
-            >
-              <Smartphone aria-hidden />
-              Set up an Apple device
-            </Button>
-            <Button variant="secondary" onClick={() => setCreating(true)}>
-              <Plus aria-hidden />
-              Create app password
-            </Button>
-          </>
+          !off && (
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setProfileMailbox(writable.length === 1 ? writable[0].id : "")
+                  setProfiling(true)
+                }}
+              >
+                <Smartphone aria-hidden />
+                Set up an Apple device
+              </Button>
+              <Button variant="secondary" onClick={() => setCreating(true)}>
+                <Plus aria-hidden />
+                Create app password
+              </Button>
+            </>
+          )
         }
       />
       <QueryView

@@ -53,7 +53,8 @@ func (s *Server) davAuthenticate(r *http.Request) (string, bool) {
 		JOIN mailboxes m ON m.id = p.mailbox_id
 		JOIN users u ON u.id = p.user_id
 		WHERE m.address = lower($1) AND p.token_hash = $2 AND p.revoked_at IS NULL AND m.active AND u.status = 'active' AND m.owner_user_id = u.id
-		  AND 'dav' = ANY(m.protocols) AND p.scope IN ('all', 'dav')`,
+		  AND 'dav' = ANY(m.protocols) AND p.scope IN ('all', 'dav')
+		  AND NOT EXISTS (SELECT 1 FROM organization_disabled_features f WHERE f.org_id = m.org_id AND f.feature = 'appPasswords')`,
 		strings.TrimSpace(username), secrets.SHA256Hex(password)).Scan(&userID)
 	return userID, err == nil
 }
@@ -76,6 +77,15 @@ func (s *Server) serveDAV(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Basic realm="Aether", charset="UTF-8"`)
 		http.Error(w, "Sign in with your mailbox address and an app password.", http.StatusUnauthorized)
+		return
+	}
+	on, err := s.userFeaturesOn(r.Context(), userID, featureCalendar, featureDAV)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if !on {
+		http.NotFound(w, r)
 		return
 	}
 	ctx := context.WithValue(r.Context(), davUserKey{}, userID)

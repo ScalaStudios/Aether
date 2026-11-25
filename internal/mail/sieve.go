@@ -37,6 +37,7 @@ type ForwardPolicy struct {
 	Mode       string   `json:"mode"`
 	Domains    []string `json:"domains"`
 	OrgDomains []string `json:"-"`
+	FeatureOff bool     `json:"-"`
 }
 
 func (p ForwardPolicy) External(address string) bool {

@@ -41,7 +41,7 @@ import { downloadCsv, exportMailboxesCsv } from "@/lib/csv"
 import { formatBytes, formatDateTime, megabytes, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
 import { canReadDelegates, hasPerm } from "@/lib/permissions"
-import { domainDefaultsQuery, domainsQuery, limitsQuery, mailboxesQuery, organizationsQuery } from "@/lib/queries"
+import { domainDefaultsQuery, domainsQuery, featuresQuery, limitsQuery, mailboxesQuery, organizationsQuery } from "@/lib/queries"
 import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, OrganizationLimits, Protocol, QuotaDefault, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
@@ -624,6 +624,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
   const domains = useQuery(domainsQuery(orgId))
   const limits = useQuery(limitsQuery(orgId))
+  const features = useQuery(featuresQuery(orgId)).data?.features
   const warnings = useQuery({ queryKey: ["quota-warnings", orgId], queryFn: () => api<QuotaWarnings>(`/organizations/${orgId}/quota-warnings`) })
   const [editingWarnings, setEditingWarnings] = useState(false)
   const [resizing, setResizing] = useState<Mailbox | null>(null)
@@ -1016,13 +1017,13 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                                     Mail rules and automatic replies
                                   </DropdownMenuItem>
                                 )}
-                                {canImport && (
+                                {canImport && features?.calendar !== false && (
                                   <DropdownMenuItem onSelect={() => pick(m, "calendar")}>
                                     <CalendarArrowUp aria-hidden />
                                     Import calendar (.ics)
                                   </DropdownMenuItem>
                                 )}
-                                {canImport && (
+                                {canImport && features?.calendar !== false && (
                                   <DropdownMenuItem onSelect={() => pick(m, "contacts")}>
                                     <Upload aria-hidden />
                                     Import contacts (.vcf)
@@ -1165,7 +1166,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <SheetTitle>Mail rules and automatic replies</SheetTitle>
             <SheetDescription>{managing?.address}</SheetDescription>
           </SheetHeader>
-          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} />}</div>
+          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} outsideForwardingOff={features?.externalForwarding === false} />}</div>
         </SheetContent>
       </Sheet>
 

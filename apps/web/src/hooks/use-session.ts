@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query"
 
 import { api, setCsrfToken } from "@/lib/api"
-import type { Session } from "@/lib/types"
+import type { Feature, Session } from "@/lib/types"
 
 export function useSession() {
   return useQuery({
@@ -23,4 +23,8 @@ export function canAdminister(session: Session) {
 
 export function canInvestigate(session: Session) {
   return session.memberships.some((m) => m.compliance)
+}
+
+export function featureOff(session: Session, ...features: Feature[]) {
+  return features.some((f) => session.disabledFeatures.includes(f))
 }

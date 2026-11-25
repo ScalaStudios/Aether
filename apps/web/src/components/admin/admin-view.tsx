@@ -20,6 +20,7 @@ import { DomainsTab } from "@/components/admin/domains-tab"
 import { ForwardingTab } from "@/components/admin/forwarding-tab"
 import { EncryptionTab } from "@/components/admin/encryption-tab"
 import { GeneralTab } from "@/components/admin/general-tab"
+import { FeaturesTab } from "@/components/admin/features-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab, Webhooks } from "@/components/admin/integrations-tab"
 import { MailQueueTab } from "@/components/admin/mail-queue-tab"
@@ -76,6 +77,11 @@ interface OrgTabDef {
   Component: React.ComponentType<{ orgId: string }>
 }
 
+function integrationsOff(session: Session, orgId: string) {
+  const off = orgMembership(session, orgId)?.disabledFeatures ?? []
+  return off.includes("apiKeys") && off.includes("webhooks")
+}
+
 function orgAdmin(session: Session, orgId: string) {
   const role = orgMembership(session, orgId)?.role
   return session.user.isPlatformAdmin || role === "owner" || role === "admin"
@@ -113,8 +119,9 @@ const orgTabs: OrgTabDef[] = [
   { value: "attachments", label: () => "Attachments", visible: (s, id) => orgAdmin(s, id), Component: AttachmentsTab },
   { value: "encryption", label: () => "Encryption", visible: (s, id) => orgAdmin(s, id), Component: EncryptionTab },
   { value: "limits", label: () => "Quotas and limits", visible: (s, id) => orgAdmin(s, id), Component: LimitsTab },
+  { value: "features", label: () => "Features", visible: (s, id) => orgAdmin(s, id), Component: FeaturesTab },
   { value: "audit", label: (_s, _id, t) => t("admin.tabs.audit"), visible: (s, id) => hasPerm(s, id, "audit:read"), Component: AuditTab },
-  { value: "integrations", label: (_s, _id, t) => t("admin.tabs.integrations"), visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read"), Component: IntegrationsTab },
+  { value: "integrations", label: (_s, _id, t) => t("admin.tabs.integrations"), visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read") && !integrationsOff(s, id), Component: IntegrationsTab },
 ]
 
 const reveal = (tab: HTMLElement | null) => tab?.scrollIntoView({ block: "nearest", inline: "nearest" })

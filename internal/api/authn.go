@@ -44,21 +44,23 @@ func allowedUndoDelay(seconds int) bool {
 }
 
 type membership struct {
-	OrgID          string   `json:"orgId"`
-	OrgName        string   `json:"orgName"`
-	OrgSlug        string   `json:"orgSlug"`
-	Role           string   `json:"role"`
-	CustomRoleID   *string  `json:"customRoleId,omitempty"`
-	CustomRoleName string   `json:"customRoleName,omitempty"`
-	DomainIDs      []string `json:"domainIds"`
-	Permissions    []string `json:"permissions"`
-	Compliance     bool     `json:"compliance"`
-	DefaultLocale  string   `json:"defaultLocale"`
+	OrgID            string   `json:"orgId"`
+	OrgName          string   `json:"orgName"`
+	OrgSlug          string   `json:"orgSlug"`
+	Role             string   `json:"role"`
+	CustomRoleID     *string  `json:"customRoleId,omitempty"`
+	CustomRoleName   string   `json:"customRoleName,omitempty"`
+	DomainIDs        []string `json:"domainIds"`
+	Permissions      []string `json:"permissions"`
+	Compliance       bool     `json:"compliance"`
+	DefaultLocale    string   `json:"defaultLocale"`
+	DisabledFeatures []string `json:"disabledFeatures"`
 }
 
 type sessionResponse struct {
 	User                   User         `json:"user"`
 	Memberships            []membership `json:"memberships"`
+	DisabledFeatures       []string     `json:"disabledFeatures"`
 	CSRFToken              string       `json:"csrfToken"`
 	TwoFactorSetupRequired bool         `json:"twoFactorSetupRequired"`
 }
@@ -216,7 +218,8 @@ func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionRespons
 	rows, err := s.db.Query(ctx, `
 		SELECT o.id, o.name, o.slug, m.role, m.custom_role_id, coalesce(r.name, ''), coalesce(r.scopes, '{}'), m.compliance,
 			coalesce((SELECT array_agg(d.domain_id::text ORDER BY d.domain_id) FROM organization_member_domains d WHERE d.org_id = m.org_id AND d.user_id = m.user_id), '{}'),
-			o.default_locale
+			o.default_locale,
+			coalesce((SELECT array_agg(f.feature ORDER BY f.feature) FROM organization_disabled_features f WHERE f.org_id = o.id), '{}')
 		FROM organization_members m
 		JOIN organizations o ON o.id = m.org_id
 		LEFT JOIN organization_roles r ON r.id = m.custom_role_id
@@ -228,7 +231,7 @@ func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionRespons
 	for rows.Next() {
 		var item membership
 		var scopes []string
-		if err := rows.Scan(&item.OrgID, &item.OrgName, &item.OrgSlug, &item.Role, &item.CustomRoleID, &item.CustomRoleName, &scopes, &item.Compliance, &item.DomainIDs, &item.DefaultLocale); err != nil {
+		if err := rows.Scan(&item.OrgID, &item.OrgName, &item.OrgSlug, &item.Role, &item.CustomRoleID, &item.CustomRoleName, &scopes, &item.Compliance, &item.DomainIDs, &item.DefaultLocale, &item.DisabledFeatures); err != nil {
 			return nil, err
 		}
 		item.DomainIDs = nonNil(item.DomainIDs)
@@ -239,7 +242,11 @@ func (s *Server) sessionFor(ctx context.Context, userID string) (*sessionRespons
 		item.Permissions = grant.permissionList()
 		resp.Memberships = append(resp.Memberships, item)
 	}
-	return resp, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	err = s.db.QueryRow(ctx, `SELECT coalesce(array_agg(DISTINCT feature ORDER BY feature), '{}') FROM organization_disabled_features WHERE org_id IN `+userOrganizations, userID).Scan(&resp.DisabledFeatures)
+	return resp, err
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request, p *principal) {

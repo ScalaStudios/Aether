@@ -109,7 +109,8 @@ func enqueueWebhooks(ctx context.Context, db interface {
 	}
 	tag, err := db.Exec(ctx, `
 		INSERT INTO webhook_deliveries (webhook_id, event, payload)
-		SELECT id, $2, $3 FROM webhooks WHERE org_id IS NOT DISTINCT FROM $1::uuid AND active AND ($2 = ANY (events) OR '*' = ANY (events))`, orgID, event, body)
+		SELECT id, $2, $3 FROM webhooks WHERE org_id IS NOT DISTINCT FROM $1::uuid AND active AND ($2 = ANY (events) OR '*' = ANY (events))
+		  AND NOT EXISTS (SELECT 1 FROM organization_disabled_features f WHERE f.org_id = webhooks.org_id AND f.feature = 'webhooks')`, orgID, event, body)
 	return tag.RowsAffected(), err
 }
 
@@ -117,7 +118,9 @@ func (s *Server) deliverWebhooks(ctx context.Context) {
 	rows, err := s.db.Query(ctx, `
 		UPDATE webhook_deliveries d SET next_attempt_at = now() + interval '2 minutes'
 		FROM webhooks w
-		WHERE d.id IN (SELECT id FROM webhook_deliveries WHERE status = 'pending' AND next_attempt_at <= now() ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
+		WHERE d.id IN (SELECT id FROM webhook_deliveries WHERE status = 'pending' AND next_attempt_at <= now()
+			AND webhook_id IN (SELECT h.id FROM webhooks h WHERE NOT EXISTS (SELECT 1 FROM organization_disabled_features f WHERE f.org_id = h.org_id AND f.feature = 'webhooks'))
+			ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
 		  AND w.id = d.webhook_id
 		RETURNING d.id, d.event, d.payload, d.attempts, w.url, w.secret`)
 	if err != nil {
@@ -193,7 +196,11 @@ type webhookInput struct {
 }
 
 func (s *Server) webhookOrg(w http.ResponseWriter, r *http.Request, p *principal, perm string) (string, bool) {
-	return s.orgPerm(w, r, p, perm)
+	orgID, ok := s.orgPerm(w, r, p, perm)
+	if !ok {
+		return "", false
+	}
+	return orgID, s.requireFeature(w, r, orgID, featureWebhooks)
 }
 
 func (s *Server) ownedWebhook(w http.ResponseWriter, r *http.Request, p *principal, perm string) (id, orgID string, ok bool) {
@@ -208,7 +215,7 @@ func (s *Server) ownedWebhook(w http.ResponseWriter, r *http.Request, p *princip
 		forbidden(w)
 		return "", "", false
 	}
-	return id, orgID, true
+	return id, orgID, s.requireFeature(w, r, orgID, featureWebhooks)
 }
 
 func (s *Server) platformWebhook(w http.ResponseWriter, r *http.Request, p *principal) (string, bool) {

@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 
 import { CalendarView } from "@/components/calendar/calendar-view"
+import { FeatureGate } from "@/components/feature-gate"
 
 export const metadata: Metadata = {
   title: "Calendar",
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 }
 
 export default function CalendarPage() {
-  return <CalendarView />
+  return (
+    <FeatureGate feature="calendar" title="Calendar is turned off">
+      <CalendarView />
+    </FeatureGate>
+  )
 }

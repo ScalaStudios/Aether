@@ -29,9 +29,13 @@ type forwarder struct {
 func (s *Server) forwardPolicy(ctx context.Context, orgID string) (mailpkg.ForwardPolicy, error) {
 	var p mailpkg.ForwardPolicy
 	err := s.db.QueryRow(ctx, `
-		SELECT coalesce(f.mode, 'allowed'), coalesce(f.domains, '{}'), coalesce((SELECT array_agg(d.name) FROM domains d WHERE d.org_id = o.id), '{}')
+		SELECT coalesce(f.mode, 'allowed'), coalesce(f.domains, '{}'), coalesce((SELECT array_agg(d.name) FROM domains d WHERE d.org_id = o.id), '{}'),
+			EXISTS (SELECT 1 FROM organization_disabled_features x WHERE x.org_id = o.id AND x.feature = 'externalForwarding')
 		FROM organizations o LEFT JOIN organization_forwarding f ON f.org_id = o.id WHERE o.id = $1`, orgID).
-		Scan(&p.Mode, &p.Domains, &p.OrgDomains)
+		Scan(&p.Mode, &p.Domains, &p.OrgDomains, &p.FeatureOff)
+	if p.FeatureOff {
+		p.Mode = "blocked"
+	}
 	return p, err
 }
 
@@ -105,6 +109,9 @@ func (s *Server) saveForwarding(w http.ResponseWriter, r *http.Request, p *princ
 		writeError(w, http.StatusUnprocessableEntity, "invalid_forwarding", "Choose allowed, domains or blocked.")
 		return
 	}
+	if !s.requireFeature(w, r, orgID, featureExternalForwarding) {
+		return
+	}
 	domains := []string{}
 	for _, d := range in.Domains {
 		d = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(d)), "@")
@@ -141,10 +148,22 @@ func (s *Server) saveForwarding(w http.ResponseWriter, r *http.Request, p *princ
 	if before.Mode != policy.Mode || !slices.Equal(before.Domains, policy.Domains) {
 		s.audit(r.Context(), r, p, &orgID, "forwarding.policy.update", "organization", orgID, map[string]any{"mode": policy.Mode, "domains": policy.Domains})
 	}
-	forwarders, err := s.externalForwarders(r.Context(), orgID, policy)
+	failed, err := s.reinstallForwarders(r.Context(), orgID, policy)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	if len(failed) > 0 {
+		writeError(w, http.StatusBadGateway, "rules_not_updated", "The policy is saved, but the rules of "+strings.Join(failed, ", ")+" could not be updated on the mail server. The mail server still refuses forwarding the policy blocks. Save again to retry.")
+		return
+	}
+	s.writeForwarding(w, r, orgID, policy)
+}
+
+func (s *Server) reinstallForwarders(ctx context.Context, orgID string, policy mailpkg.ForwardPolicy) ([]string, error) {
+	forwarders, err := s.externalForwarders(ctx, orgID, policy)
+	if err != nil {
+		return nil, err
 	}
 	var failed []string
 	installed := map[string]bool{}
@@ -153,17 +172,13 @@ func (s *Server) saveForwarding(w http.ResponseWriter, r *http.Request, p *princ
 			continue
 		}
 		installed[f.MailboxID] = true
-		if err := s.reinstallSieve(r.Context(), orgID, f.MailboxID, f.Address, policy); err != nil {
+		if err := s.reinstallSieve(ctx, orgID, f.MailboxID, f.Address, policy); err != nil {
 			mailBackendErrs.Inc()
 			s.log.Error("reinstalling mail rules after a forwarding policy change failed", "mailbox", f.MailboxID, "err", err)
 			failed = append(failed, f.Address)
 		}
 	}
-	if len(failed) > 0 {
-		writeError(w, http.StatusBadGateway, "rules_not_updated", "The policy is saved, but the rules of "+strings.Join(failed, ", ")+" could not be updated on the mail server. The mail server still refuses forwarding the policy blocks. Save again to retry.")
-		return
-	}
-	s.writeForwarding(w, r, orgID, policy)
+	return failed, nil
 }
 
 func (s *Server) reinstallSieve(ctx context.Context, orgID, mailboxID, address string, policy mailpkg.ForwardPolicy) error {

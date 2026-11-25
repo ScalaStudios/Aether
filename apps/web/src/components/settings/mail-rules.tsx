@@ -23,6 +23,7 @@ import { Input, Textarea } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { folderLabel } from "@/lib/mail"
 import { foldersQuery, labelsQuery, myMailboxesQuery } from "@/lib/queries"
@@ -153,6 +154,7 @@ export function MailRules() {
   const mailboxes = useQuery({ ...myMailboxesQuery, select: (list) => list.filter((m) => m.access !== "read" && m.protocols.includes("webmail")) })
   const [chosen, setChosen] = useState<string | null>(null)
   const mailboxId = chosen ?? mailboxes.data?.[0]?.id ?? null
+  const outsideForwardingOff = useSession().data?.disabledFeatures.includes("externalForwarding")
 
   return (
     <section id="mail-rules" className="flex scroll-mt-8 flex-col gap-6">
@@ -162,7 +164,7 @@ export function MailRules() {
         actions={<MailboxPicker mailboxes={mailboxes.data} value={mailboxId} onChange={setChosen} />}
       />
       {mailboxId ? (
-        <MailboxRules key={mailboxId} mailboxId={mailboxId} />
+        <MailboxRules key={mailboxId} mailboxId={mailboxId} outsideForwardingOff={outsideForwardingOff} />
       ) : (
         !mailboxes.isPending && <EmptyState icon={ListFilter} title="No mailbox" description="Rules need a mailbox. Ask an administrator to create one for you." />
       )}
@@ -170,17 +172,17 @@ export function MailRules() {
   )
 }
 
-export function MailboxRules({ mailboxId }: { mailboxId: string }) {
+export function MailboxRules({ mailboxId, outsideForwardingOff }: { mailboxId: string; outsideForwardingOff?: boolean }) {
   return (
     <>
-      <RuleList mailboxId={mailboxId} />
+      <RuleList mailboxId={mailboxId} outsideForwardingOff={outsideForwardingOff} />
       <TaggedMailCard mailboxId={mailboxId} />
       <AutoReplyCard mailboxId={mailboxId} />
     </>
   )
 }
 
-function RuleList({ mailboxId }: { mailboxId: string }) {
+function RuleList({ mailboxId, outsideForwardingOff }: { mailboxId: string; outsideForwardingOff?: boolean }) {
   const qc = useQueryClient()
   const key = ["rules", mailboxId]
   const rules = useQuery({ queryKey: key, queryFn: () => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`) })
@@ -235,6 +237,12 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
           New rule
         </Button>
       </div>
+      {outsideForwardingOff && list.some((r) => r.actions.forwardTo?.length) && (
+        <div role="status" className="flex gap-3 rounded-lg border border-warning/40 bg-warning/12 p-4 text-sm">
+          <CircleAlert aria-hidden className="size-4 shrink-0 translate-y-0.5 text-warning" />
+          <span>Forwarding outside the organization is turned off, so these rules only forward to addresses on the organization’s domains.</span>
+        </div>
+      )}
       <QueryView query={rules} empty={<EmptyState icon={ListFilter} title="No rules yet" description="Create a rule to file, flag, label, or mark incoming mail automatically." />}>
         {(items) => (
           <Table>
@@ -449,7 +457,7 @@ function RuleList({ mailboxId }: { mailboxId: string }) {
           control={form.control}
           name="forwardTo"
           render={({ field, fieldState }) => (
-            <Field id="rule-forward" label="Forward to" hint="Up to 5 addresses. Replies from the recipients go to the original sender." error={fieldState.error?.message ?? fieldState.error?.root?.message}>
+            <Field id="rule-forward" label="Forward to" hint={`Up to 5 addresses${outsideForwardingOff ? " on your organization’s domains, because forwarding outside the organization is turned off" : ""}. Replies from the recipients go to the original sender.`} error={fieldState.error?.message ?? fieldState.error?.root?.message}>
               <RecipientInput id="rule-forward" value={field.value} onChange={field.onChange} invalid={!!fieldState.error} placeholder="name@example.com" />
             </Field>
           )}

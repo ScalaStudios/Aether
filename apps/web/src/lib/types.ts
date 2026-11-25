@@ -15,6 +15,13 @@ export interface User {
   locale: string
 }
 
+export type Feature = "calendar" | "dav" | "mailImport" | "appPasswords" | "externalForwarding" | "personalAliases" | "webhooks" | "apiKeys"
+
+export interface OrgFeatures {
+  features: Record<Feature, boolean>
+  platformAdminOnly: Feature[]
+}
+
 export interface Membership {
   orgId: string
   orgName: string
@@ -26,6 +33,7 @@ export interface Membership {
   domainIds: string[]
   permissions: string[]
   defaultLocale: string
+  disabledFeatures: Feature[]
 }
 
 export interface Session {
@@ -33,6 +41,7 @@ export interface Session {
   csrfToken: string
   memberships: Membership[]
   twoFactorSetupRequired: boolean
+  disabledFeatures: Feature[]
 }
 
 export interface TwoFactorPrompt {

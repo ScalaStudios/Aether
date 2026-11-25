@@ -58,6 +58,9 @@ func (s *Server) mailboxOwnerContext(w http.ResponseWriter, r *http.Request, p *
 			return nil, nil, false
 		}
 	}
+	if !s.requireFeature(w, r, m.OrgID, featureCalendar) {
+		return nil, nil, false
+	}
 	if owner == nil {
 		writeError(w, http.StatusUnprocessableEntity, "no_owner", "This mailbox has no owner whose calendar and contacts could receive the import.")
 		return nil, nil, false

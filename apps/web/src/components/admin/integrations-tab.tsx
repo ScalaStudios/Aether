@@ -16,7 +16,7 @@ import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
 import { SearchInput } from "@/components/search-input"
 import { SegmentedControl } from "@/components/segmented-control"
-import { EmptyState, QueryView } from "@/components/states"
+import { EmptyState, QueryView, RowsSkeleton } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
 import { SwitchField } from "@/components/switch-field"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,7 @@ import { formatDate, formatDateTime } from "@/lib/format"
 import { useI18n } from "@/lib/i18n"
 import { hasPerm } from "@/lib/permissions"
 import type { APIKey, Suppression, Webhook, WebhookDelivery } from "@/lib/types"
+import { featuresQuery } from "@/lib/queries"
 
 type Access = "" | "read" | "write"
 
@@ -83,16 +84,22 @@ export function IntegrationsTab({ orgId }: { orgId: string }) {
   const canReadHooks = hasPerm(session, orgId, "webhooks:read")
   const canWriteHooks = hasPerm(session, orgId, "webhooks:write")
 
+  const state = useQuery(featuresQuery(orgId))
+
   return (
-    <div className="flex flex-col gap-12">
-      {canReadKeys && <APIKeys orgId={orgId} canWrite={canWriteKeys} />}
-      {canReadHooks && <Webhooks orgId={orgId} canWrite={canWriteHooks} />}
-      {canReadHooks && <Suppressions orgId={orgId} />}
-    </div>
+    <QueryView query={state} skeleton={<RowsSkeleton rows={4} />}>
+      {({ features }) => (
+        <div className="flex flex-col gap-12">
+          {canReadKeys && features.apiKeys && <APIKeys orgId={orgId} canWrite={canWriteKeys} webhooks={features.webhooks} />}
+          {canReadHooks && features.webhooks && <Webhooks orgId={orgId} canWrite={canWriteHooks} />}
+          {canReadHooks && <Suppressions orgId={orgId} />}
+        </div>
+      )}
+    </QueryView>
   )
 }
 
-function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
+function APIKeys({ orgId, canWrite, webhooks }: { orgId: string; canWrite: boolean; webhooks: boolean }) {
   const { t } = useI18n()
   const qc = useQueryClient()
   const keys = useQuery({ queryKey: ["api-keys", orgId], queryFn: () => api<APIKey[]>(`/organizations/${orgId}/api-keys`) })
@@ -240,7 +247,7 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
               render={({ field, fieldState }) => (
                 <fieldset className="flex flex-col gap-4">
                   <legend className="mb-2 text-label text-fg-secondary">{t("admin.integrations.apiKeys.scopes")}</legend>
-                  {resources.map((r) => {
+                  {resources.filter((r) => webhooks || r.value !== "webhooks").map((r) => {
                     const label = t(`admin.integrations.apiKeys.resources.${r.value}`)
                     return (
                       <div key={r.value} className="flex items-center justify-between gap-4">

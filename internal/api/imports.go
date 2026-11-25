@@ -28,7 +28,7 @@ type mailImport struct {
 
 func (s *Server) listImports(w http.ResponseWriter, r *http.Request, p *principal) {
 	m, ok := s.ownedMailbox(w, r, p)
-	if !ok {
+	if !ok || !s.requireFeature(w, r, m.OrgID, featureMailImport) {
 		return
 	}
 	s.writeImportRuns(w, r, "i.mailbox_id = $1", m.ID)
@@ -94,7 +94,7 @@ func (s *Server) importSource(in importInput) mail.ImportSource {
 
 func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principal) {
 	m, ok := s.ownedMailbox(w, r, p)
-	if !ok {
+	if !ok || !s.requireFeature(w, r, m.OrgID, featureMailImport) {
 		return
 	}
 	var in importInput
@@ -130,7 +130,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-	s.imports.Store(job.ID, importRun{mailboxID: m.ID, cancel: cancel})
+	s.imports.Store(job.ID, importRun{mailboxID: m.ID, orgID: m.OrgID, cancel: cancel})
 	go func() {
 		defer cancel()
 		defer s.imports.Delete(job.ID)
@@ -142,8 +142,17 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 }
 
 type importRun struct {
-	mailboxID string
-	cancel    context.CancelFunc
+	mailboxID, orgID string
+	cancel           context.CancelFunc
+}
+
+func (s *Server) cancelOrgImports(orgID string) {
+	s.imports.Range(func(_, v any) bool {
+		if run := v.(importRun); run.orgID == orgID {
+			run.cancel()
+		}
+		return true
+	})
 }
 
 func (s *Server) lockImport(ctx context.Context, mailboxID string) (*pgx.Conn, error) {
@@ -227,7 +236,7 @@ func importFailure(err error) string {
 
 func (s *Server) cancelImport(w http.ResponseWriter, r *http.Request, p *principal) {
 	m, ok := s.ownedMailbox(w, r, p)
-	if !ok {
+	if !ok || !s.requireFeature(w, r, m.OrgID, featureMailImport) {
 		return
 	}
 	id, ok := pathID(w, r, "id")

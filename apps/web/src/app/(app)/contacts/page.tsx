@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 
 import { ContactsView } from "@/components/contacts/contacts-view"
+import { FeatureGate } from "@/components/feature-gate"
 
 export const metadata: Metadata = {
   title: "Contacts",
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 }
 
 export default function ContactsPage() {
-  return <ContactsView />
+  return (
+    <FeatureGate feature="calendar" title="Contacts are turned off">
+      <ContactsView />
+    </FeatureGate>
+  )
 }

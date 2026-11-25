@@ -156,6 +156,9 @@ func (s *Server) apiKeyPrincipal(w http.ResponseWriter, r *http.Request, token s
 		s.internalError(w, r, err)
 		return nil, false
 	}
+	if !s.requireFeature(w, r, orgID, featureAPIKeys) {
+		return nil, false
+	}
 	if !s.allow(r.Context(), "apikey:"+key.ID, 600) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "This API key is making too many requests. Wait a minute.")
 		return nil, false
@@ -189,7 +192,11 @@ func (s *Server) sessionAPIKeyOrg(w http.ResponseWriter, r *http.Request, p *pri
 		writeError(w, http.StatusForbidden, "api_key_not_allowed", "API keys cannot manage API keys.")
 		return "", false
 	}
-	return s.orgPerm(w, r, p, perm)
+	orgID, ok := s.orgPerm(w, r, p, perm)
+	if !ok {
+		return "", false
+	}
+	return orgID, s.requireFeature(w, r, orgID, featureAPIKeys)
 }
 
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -278,6 +285,9 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	if !p.can(orgID, permAPIKeysWrite) {
 		forbidden(w)
+		return
+	}
+	if !s.requireFeature(w, r, orgID, featureAPIKeys) {
 		return
 	}
 	if _, err := s.db.Exec(r.Context(), `UPDATE api_keys SET revoked_at = now() WHERE id = $1`, id); err != nil {

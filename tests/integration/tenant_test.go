@@ -77,6 +77,8 @@ func TestTenantIsolation(t *testing.T) {
 		{"PUT", "/organizations/" + b.orgID + "/defaults"},
 		{"GET", "/domains/" + b.domainID + "/defaults"},
 		{"PUT", "/domains/" + b.domainID + "/defaults"},
+		{"GET", "/organizations/" + b.orgID + "/features"},
+		{"PUT", "/organizations/" + b.orgID + "/features"},
 		{"GET", "/domains/" + b.domainID},
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},

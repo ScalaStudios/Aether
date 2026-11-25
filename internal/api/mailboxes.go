@@ -729,6 +729,12 @@ func (s *Server) issueAppPassword(w http.ResponseWriter, r *http.Request, p *pri
 	var out createdAppPassword
 	var orgID string
 	var ownerUserID *string
+	if uuidPattern.MatchString(mailboxID) {
+		s.db.QueryRow(r.Context(), `SELECT m.org_id FROM mailboxes m WHERE m.id = $2 AND `+signInAsMailbox("$1"), p.User.ID, mailboxID).Scan(&orgID)
+	}
+	if orgID != "" && !s.requireFeature(w, r, orgID, featureAppPasswords) {
+		return nil, false
+	}
 	out.Password = secrets.Token(20)
 	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO app_passwords (user_id, mailbox_id, name, token_hash, scope)

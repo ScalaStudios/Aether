@@ -3,9 +3,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "cn"
 import { usePathname } from "next/navigation"
-import { useEffect, useSyncExternalStore } from "react"
+import { useEffect } from "react"
 
 import { Skeleton } from "@/components/ui/skeleton"
+import { useHydrated } from "@/hooks/use-hydrated"
 import { brandCSS, brandingCache } from "@/lib/branding"
 import { brandingQuery } from "@/lib/queries"
 import type { Branding } from "@/lib/types"
@@ -70,10 +71,8 @@ function BrandLogo({ branding, className }: { branding: Branding; className: str
   )
 }
 
-const noSubscribe = () => () => {}
-
 function useBranding() {
-  const hydrated = useSyncExternalStore(noSubscribe, () => true, () => false)
+  const hydrated = useHydrated()
   const { data, isPending } = useQuery(brandingQuery)
   return { pending: !hydrated || isPending, b: data }
 }

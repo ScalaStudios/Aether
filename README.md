@@ -271,6 +271,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Storage and quota warnings](documentation/storage.md): how full each mailbox is, folder by folder, and the warning emails before it fills up.
 - [Sender warnings](documentation/sender-warnings.md): the External tag, first contact tips, impersonation warnings and sender verification in Aether Mail, and how the verdict is protected from forged headers.
 - [Notifications](documentation/notifications.md): live mail, browser notifications, calendar reminders, and the iOS Mail push slice.
+- [Organization features](documentation/organization-features.md): turning calendars, DAV, mail import, app passwords, outside forwarding, webhooks and API keys off per organization.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [Encryption](documentation/encryption.md): S/MIME, OpenPGP and password-protected messages, and where the keys stay.
 - [API keys, webhooks, and suppressions](documentation/integrations.md): automate Aether, react to audit and mail delivery events, and keep a suppression list.

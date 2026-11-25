@@ -25,18 +25,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import { canAdminister, canInvestigate, useSession } from "@/hooks/use-session"
+import { canAdminister, canInvestigate, featureOff, useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { lockKeys, rememberUser } from "@/lib/crypto/session"
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
 import { plural } from "@/lib/format"
 import { alertSummaryQuery } from "@/lib/queries"
-import type { Session, User } from "@/lib/types"
+import type { Feature, Session, User } from "@/lib/types"
 
-const nav: { href: string; labelKey: string; icon: LucideIcon; admin?: boolean; compliance?: boolean }[] = [
+const nav: { href: string; labelKey: string; icon: LucideIcon; admin?: boolean; compliance?: boolean; feature?: Feature }[] = [
   { href: "/mail", labelKey: "nav.mail", icon: Mail },
-  { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays },
-  { href: "/contacts", labelKey: "nav.contacts", icon: BookUser },
+  { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays, feature: "calendar" },
+  { href: "/contacts", labelKey: "nav.contacts", icon: BookUser, feature: "calendar" },
   { href: "/settings", labelKey: "nav.settings", icon: Settings },
   { href: "/admin", labelKey: "nav.administration", icon: ShieldCheck, admin: true },
   { href: "/compliance", labelKey: "nav.compliance", icon: Gavel, compliance: true },
@@ -63,7 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const items = session.data
-    ? nav.filter((item) => (!item.admin || canAdminister(session.data)) && (!item.compliance || canInvestigate(session.data)))
+    ? nav.filter((item) => (!item.admin || canAdminister(session.data)) && (!item.compliance || canInvestigate(session.data)) && !(item.feature && featureOff(session.data, item.feature)))
     : []
 
   return (
