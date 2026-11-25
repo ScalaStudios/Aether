@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { EditorContent, useEditor } from "@tiptap/react"
-import { ChevronDown, Paperclip, Send, X } from "lucide-react"
+import { ChevronDown, Link2, Paperclip, Send, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useSession } from "@/hooks/use-session"
-import { api } from "@/lib/api"
+import { api, errorMessage } from "@/lib/api"
 import { bytesToBase64, readableSecret } from "@/lib/crypto/bytes"
 import { autocryptHeader } from "@/lib/crypto/openpgp"
 import { sealProtected } from "@/lib/crypto/protected"
@@ -32,7 +32,7 @@ import { signaturesQuery } from "@/lib/queries"
 import { toRFC3339 } from "@/lib/calendar"
 import { formatAddress, formatBytes, formatListDate, formatShortDateTime } from "@/lib/format"
 import type { Draft, SenderIdentity } from "@/lib/mail"
-import type { Attachment, EncryptionKey, EncryptionPolicy, OutgoingMessage, RecipientKey, SavedDraft, ScheduledMessage } from "@/lib/types"
+import type { Attachment, EncryptionKey, EncryptionPolicy, FileLinkSummary, OutgoingMessage, RecipientKey, SavedDraft, ScheduledMessage, TransferLimits } from "@/lib/types"
 
 const address = z.object({ name: z.string().optional(), address: z.email() })
 
@@ -45,7 +45,31 @@ const schema = z.object({
 
 type Values = z.infer<typeof schema>
 
-const maxAttachmentBytes = 20 * 1024 * 1024
+const fallbackLimits: TransferLimits = {
+  messageBytes: 50 * 1024 * 1024,
+  attachmentBytes: 20 * 1024 * 1024,
+  linkThresholdBytes: 20 * 1024 * 1024,
+  linkFileBytes: 2 * 1024 * 1024 * 1024,
+  storageBytes: 10 * 1024 * 1024 * 1024,
+  usedBytes: 0,
+  maxInlineFiles: 20,
+  maxFileLinks: 20,
+  platform: { messageBytes: 50 * 1024 * 1024, linkFileBytes: 2 * 1024 * 1024 * 1024, storageBytes: 100 * 1024 * 1024 * 1024 },
+}
+
+interface ComposerLink {  localId: string
+  file?: File
+  id?: string
+  filename: string
+  size: number
+  contentType: string
+  expires: string
+  passwordProtected: boolean
+  password: string
+  clearPassword: boolean
+  uploading: boolean
+  error?: string
+}
 
 function readBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -56,12 +80,49 @@ function readBase64(file: File) {
   })
 }
 
-function AttachmentChip({ name, size, onRemove }: { name: string; size: number; onRemove: () => void }) {
+function toLocalInput(iso: string | null) {
+  if (!iso) return ""
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function linkFromSummary(link: FileLinkSummary): ComposerLink {
+  return {
+    localId: link.id,
+    id: link.id,
+    filename: link.filename,
+    size: link.sizeBytes,
+    contentType: link.contentType,
+    expires: toLocalInput(link.expiresAt),
+    passwordProtected: link.passwordProtected,
+    password: "",
+    clearPassword: false,
+    uploading: false,
+  }
+}
+
+function linkRefs(items: ComposerLink[], includePassword: boolean): NonNullable<OutgoingMessage["fileLinks"]> {
+  return items.flatMap((link) => {
+    if (!link.id) return []
+    const expires = link.expires ? new Date(link.expires) : null
+    return [{
+      id: link.id,
+      expiresAt: expires && !Number.isNaN(expires.getTime()) ? toRFC3339(expires) : undefined,
+      clearExpiry: link.expires ? undefined : true,
+      ...(includePassword ? { password: link.password || undefined, clearPassword: link.clearPassword || undefined } : {}),
+    }]
+  })
+}
+
+function AttachmentChip({ name, size, onRemove, action }: { name: string; size: number; onRemove: () => void; action?: React.ReactNode }) {
   return (
-    <li className="flex min-h-10 max-w-[280px] items-center gap-2 rounded-lg border border-strong py-1 pr-1 pl-3 text-sm">
+    <li className="flex min-h-10 max-w-full items-center gap-2 rounded-lg border border-strong py-1 pr-1 pl-3 text-sm sm:max-w-[360px]">
       <Paperclip aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
       <span className="truncate">{name}</span>
       <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(size)}</span>
+      {action}
       <IconButton type="button" label={`Remove ${name}`} size="icon-sm" onClick={onRemove}>
         <X />
       </IconButton>
@@ -110,6 +171,7 @@ export function Composer({
   const { mailbox, from } = identity
   const [showCopies, setShowCopies] = useState(draft.cc.length > 0)
   const [files, setFiles] = useState<File[]>([])
+  const [links, setLinks] = useState<ComposerLink[]>(() => (draft.fileLinks ?? []).map(linkFromSummary))
   const [forwarded, setForwarded] = useState<Attachment[]>(draft.forwardFrom?.attachments ?? [])
   const [source, setSource] = useState(draft.forwardFrom ? { folder: draft.forwardFrom.folder, uid: draft.forwardFrom.uid } : null)
   const [draftUid, setDraftUid] = useState(draft.draftUid)
@@ -129,23 +191,84 @@ export function Composer({
   const [revealed, setRevealed] = useState("")
   const policy = useQuery({ queryKey: ["encryption", mailbox.orgId], queryFn: () => api<EncryptionPolicy>(`/organizations/${mailbox.orgId}/encryption`) })
   const ownKeys = useQuery({ queryKey: ["encryption-keys"], queryFn: () => api<EncryptionKey[]>("/me/encryption-keys") })
-  const totalBytes = files.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
+  const limitsQuery = useQuery({ queryKey: ["transfer-limits", mailbox.id], queryFn: () => api<TransferLimits>(`/mailboxes/${mailbox.id}/transfer-limits`) })
+  const limits = limitsQuery.data ?? fallbackLimits
+  const inlineBytes = files.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
 
   const touch = useCallback(() => {
     dirty.current = true
     setChanges((n) => n + 1)
   }, [])
 
-  function addFiles(list: FileList | null) {
-    if (!list?.length) return
-    const next = [...files, ...Array.from(list)]
-    const size = next.reduce((n, f) => n + f.size, 0) + forwarded.reduce((n, a) => n + a.size, 0)
-    if (next.length + forwarded.length > 20 || size > maxAttachmentBytes) {
-      toast.error("Attachments can total at most 20 files and 20 MB per message.")
+  function uploadLink(localId: string, file: File) {
+    setLinks((current) => current.map((link) => (link.localId === localId ? { ...link, uploading: true, error: undefined } : link)))
+    api<FileLinkSummary>(`/mailboxes/${mailbox.id}/file-links`, { method: "POST", query: { filename: file.name }, body: file })
+      .then((saved) => {
+        setLinks((current) => current.map((link) => (link.localId === localId ? { ...linkFromSummary(saved), localId, file, password: link.password, expires: link.expires, clearPassword: link.clearPassword } : link)))
+        touch()
+      })
+      .catch((error) => {
+        const message = errorMessage(error)
+        toast.error(message)
+        setLinks((current) => current.map((link) => (link.localId === localId ? { ...link, uploading: false, error: message } : link)))
+      })
+  }
+
+  function removeLink(link: ComposerLink) {
+    setLinks((current) => current.filter((item) => item.localId !== link.localId))
+    if (link.id) {
+      api(`/mailboxes/${mailbox.id}/file-links/${link.id}`, { method: "DELETE" }).catch((error) => toast.error(errorMessage(error)))
+    }
+    touch()
+  }
+
+  function sendFileAsLink(file: File, index: number) {
+    if (links.length >= limits.maxFileLinks) {
+      toast.error(`Send ${limits.maxFileLinks} download links or fewer.`)
       return
     }
-    setFiles(next)
+    if (file.size > limits.linkFileBytes) {
+      toast.error(`${file.name} is larger than ${formatBytes(limits.linkFileBytes)}, the limit for a download link.`)
+      return
+    }
+    const localId = crypto.randomUUID()
+    setFiles((current) => current.filter((_, i) => i !== index))
+    setLinks((current) => [...current, { localId, file, filename: file.name, size: file.size, contentType: file.type || "application/octet-stream", expires: "", passwordProtected: false, password: "", clearPassword: false, uploading: true }])
+    uploadLink(localId, file)
     touch()
+  }
+
+  function addFiles(list: FileList | null) {
+    if (!list?.length) return
+    const rejected: string[] = []
+    const inline = [...files]
+    const linked = [...links]
+    let bytes = inline.reduce((n, file) => n + file.size, 0) + forwarded.reduce((n, file) => n + file.size, 0)
+    const uploads: { localId: string; file: File }[] = []
+    for (const file of Array.from(list)) {
+      if (file.size > limits.linkFileBytes) {
+        rejected.push(`${file.name} is larger than ${formatBytes(limits.linkFileBytes)}, the limit for a download link.`)
+        continue
+      }
+      const asLink = file.size > limits.linkThresholdBytes || inline.length + forwarded.length >= limits.maxInlineFiles || bytes + file.size > limits.attachmentBytes
+      if (asLink) {
+        if (linked.length >= limits.maxFileLinks) {
+          rejected.push(`Send ${limits.maxFileLinks} download links or fewer.`)
+          continue
+        }
+        const localId = crypto.randomUUID()
+        linked.push({ localId, file, filename: file.name, size: file.size, contentType: file.type || "application/octet-stream", expires: "", passwordProtected: false, password: "", clearPassword: false, uploading: true })
+        uploads.push({ localId, file })
+        continue
+      }
+      inline.push(file)
+      bytes += file.size
+    }
+    if (rejected.length) toast.error(rejected[0])
+    setFiles(inline)
+    setLinks(linked)
+    for (const item of uploads) uploadLink(item.localId, item.file)
+    if (uploads.length || inline.length !== files.length) touch()
   }
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -172,8 +295,9 @@ export function Composer({
     },
   })
 
-  async function payload(values: Values, uploads: File[]): Promise<OutgoingMessage> {
+  async function payload(values: Values, uploads: File[], includePassword: boolean): Promise<OutgoingMessage> {
     const attachments = await Promise.all(uploads.map(async (f) => ({ filename: f.name, contentType: f.type || "application/octet-stream", data: await readBase64(f) })))
+    const refs = linkRefs(links, includePassword)
     return {
       ...values,
       fromAddress: from.address,
@@ -182,19 +306,28 @@ export function Composer({
       inReplyTo: draft.inReplyTo,
       references: draft.references?.length ? draft.references : undefined,
       attachments: attachments.length ? attachments : undefined,
+      fileLinks: refs.length ? refs : undefined,
       forwardFrom: source && forwarded.length ? { ...source, parts: forwarded.map((a) => a.part) } : undefined,
       draftUid,
     }
   }
 
   const saveDraft = useMutation({
-    mutationFn: async (uploads: File[]) => api<SavedDraft>(`/mailboxes/${mailbox.id}/drafts`, { method: "PUT", body: await payload(form.getValues(), uploads) }),
+    mutationFn: async (uploads: File[]) => api<SavedDraft>(`/mailboxes/${mailbox.id}/drafts`, { method: "PUT", body: await payload(form.getValues(), uploads, false) }),
     meta: { silent: true },
     onSuccess: (saved, uploads) => {
       setDraftUid(saved.uid)
       setSource({ folder: saved.folder, uid: saved.uid })
       setForwarded(saved.attachments)
       setFiles((current) => current.filter((f) => !uploads.includes(f)))
+      setLinks((current) => {
+        const pending = current.filter((link) => !link.id)
+        const kept = saved.fileLinks.map((link) => {
+          const previous = current.find((item) => item.id === link.id)
+          return previous ? { ...linkFromSummary(link), localId: previous.localId, file: previous.file, password: previous.password, expires: previous.expires, clearPassword: previous.clearPassword } : linkFromSummary(link)
+        })
+        return [...kept, ...pending]
+      })
       setSavedAt(new Date())
       qc.invalidateQueries({ queryKey: ["messages", mailbox.id] })
       qc.invalidateQueries({ queryKey: ["folders", mailbox.id] })
@@ -306,7 +439,7 @@ export function Composer({
   const send = useMutation({
     mutationFn: async ({ values, sendAt }: { values: Values; sendAt?: Date }) => {
       await pendingSave.current
-      const plain = await payload(values, files)
+      const plain = await payload(values, files, true)
       if (guard === "standard") {
         return api<ScheduledMessage | { messageId: string }>(`/mailboxes/${mailbox.id}/send`, { method: "POST", body: { ...plain, sendAt: sendAt && toRFC3339(sendAt) } })
       }
@@ -378,7 +511,7 @@ export function Composer({
       onClose()
       return
     }
-    dirty.current = dirty.current || files.length > 0
+    dirty.current = dirty.current || files.length > 0 || links.some((link) => link.id)
     await save()
     if (!readOnly && (draftUid || savedAt || saveDraft.data)) toast.success("Saved to Drafts")
     onClose()
@@ -391,14 +524,28 @@ export function Composer({
     touch()
     if (next.mailbox.id === mailbox.id) return
     if (forwarded.length) toast.info(`Forwarded attachments can't be sent from ${next.from.address}, so they were left out.`)
+    if (links.length) toast.info(`Download links can't be sent from ${next.from.address}, so they were left out.`)
     setDraftUid(undefined)
     setSource(null)
     setForwarded([])
+    setLinks([])
   }
 
   const submit = (sendAt?: Date) =>
     form.handleSubmit((values) => {
       if (!editor || signatures.isPending) return
+      if (links.some((link) => link.uploading)) {
+        toast.error("Wait for the download links to finish uploading.")
+        return
+      }
+      if (links.some((link) => !link.id || link.error)) {
+        toast.error("A download link did not upload. Try it again, or remove it.")
+        return
+      }
+      if (links.some((link) => link.password && (link.password.length < 8 || link.password.length > 128))) {
+        toast.error("Use a download password between 8 and 128 characters.")
+        return
+      }
       send.mutate({ values, sendAt })
     })
 
@@ -503,10 +650,6 @@ export function Composer({
               onHours={setHours}
               onAutocrypt={setAutocrypt}
             />
-            <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">
-              {editor && <FormatToolbar editor={editor} signatures={signatures.data?.signatures} />}
-              <EditorContent editor={editor} />
-            </div>
             {(files.length > 0 || forwarded.length > 0) && (
               <ul aria-label="Attachments" className="flex flex-wrap gap-2">
                 {forwarded.map((a) => (
@@ -516,19 +659,109 @@ export function Composer({
                   }} />
                 ))}
                 {files.map((f, i) => (
-                  <AttachmentChip key={`${f.name}-${i}`} name={f.name} size={f.size} onRemove={() => {
-                    setFiles(files.filter((_, j) => j !== i))
-                    touch()
-                  }} />
+                  <AttachmentChip
+                    key={`${f.name}-${i}`}
+                    name={f.name}
+                    size={f.size}
+                    action={
+                      <Button type="button" variant="link" className="shrink-0 text-xs" onClick={() => sendFileAsLink(f, i)}>
+                        Send as link
+                      </Button>
+                    }
+                    onRemove={() => {
+                      setFiles(files.filter((_, j) => j !== i))
+                      touch()
+                    }}
+                  />
                 ))}
               </ul>
             )}
+            {links.length > 0 && (
+              <ul aria-label="Download links" className="flex flex-col gap-3">
+                {links.map((link) => (
+                  <li key={link.localId} className="flex flex-col gap-3 rounded-lg border border-strong bg-card p-3">
+                    <div className="flex min-h-10 items-center gap-2 text-sm">
+                      <Link2 aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
+                      <span className="min-w-0 flex-1 truncate">{link.filename}</span>
+                      <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(link.size)}</span>
+                      <IconButton type="button" label={`Remove ${link.filename}`} size="icon-sm" onClick={() => removeLink(link)}>
+                        <X />
+                      </IconButton>
+                    </div>
+                    <p className="text-sm text-fg-secondary">Download link</p>
+                    {link.uploading && <p role="status" className="text-sm text-fg-tertiary">Uploading {link.filename}…</p>}
+                    {link.error && (
+                      <p role="alert" className="text-sm text-danger">
+                        {link.error}{" "}
+                        {link.file && (
+                          <Button type="button" variant="link" onClick={() => uploadLink(link.localId, link.file!)}>
+                            Try again
+                          </Button>
+                        )}
+                      </p>
+                    )}
+                    {link.id && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field
+                          id={`link-password-${link.localId}`}
+                          label="Password"
+                          hint={link.passwordProtected && !link.password && !link.clearPassword ? "Leave blank to keep the current password. It is not included in the email." : "Optional. Tell the recipient separately. It is not included in the email."}
+                        >
+                          <Input
+                            id={`link-password-${link.localId}`}
+                            type="password"
+                            autoComplete="new-password"
+                            value={link.password}
+                            maxLength={128}
+                            onChange={(e) => {
+                              const password = e.target.value
+                              setLinks((current) => current.map((item) => (item.localId === link.localId ? { ...item, password, clearPassword: false } : item)))
+                              touch()
+                            }}
+                          />
+                        </Field>
+                        <Field id={`link-expiry-${link.localId}`} label="Expires" hint="Optional. The link stops working at this time.">
+                          <Input
+                            id={`link-expiry-${link.localId}`}
+                            type="datetime-local"
+                            value={link.expires}
+                            onChange={(e) => {
+                              const expires = e.target.value
+                              setLinks((current) => current.map((item) => (item.localId === link.localId ? { ...item, expires } : item)))
+                              touch()
+                            }}
+                          />
+                        </Field>
+                      </div>
+                    )}
+                    {link.passwordProtected && link.id && (
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="self-start"
+                        onClick={() => {
+                          setLinks((current) => current.map((item) => (item.localId === link.localId ? { ...item, password: "", clearPassword: !item.clearPassword } : item)))
+                          touch()
+                        }}
+                      >
+                        {link.clearPassword ? "Keep the current password" : "Remove password"}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="focus-ring-within flex flex-col rounded-lg border border-input bg-sunken">
+              {editor && <FormatToolbar editor={editor} signatures={signatures.data?.signatures} />}
+              <EditorContent editor={editor} />
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border p-6">
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => {
               addFiles(e.target.files)
               e.target.value = ""
             }} />
+            <p className="basis-full text-sm text-fg-tertiary">Files larger than {formatBytes(limits.linkThresholdBytes)} are sent as download links, with an optional password and expiry. Unsent links are kept for 30 days.</p>
             <div className="mr-auto flex items-center gap-3">
               {guard !== "password" && (
                 <Button type="button" variant="ghost" onClick={() => fileInput.current?.click()}>
@@ -536,7 +769,8 @@ export function Composer({
                   Attach
                 </Button>
               )}
-              {totalBytes > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{formatBytes(totalBytes)} of 20 MB</span>}
+              {inlineBytes > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{formatBytes(inlineBytes)} of {formatBytes(limits.attachmentBytes)} attached</span>}
+              {links.length > 0 && <span className="text-sm whitespace-nowrap text-fg-tertiary">{links.length === 1 ? "1 download link" : `${links.length} download links`}</span>}
               {signatures.isError && <Button type="button" variant="link" onClick={() => signatures.refetch()}>Retry loading signature</Button>}
               <span role="status" className="text-sm whitespace-nowrap text-fg-tertiary">
                 {guard !== "standard" ? "Not saved as a draft" : saveDraft.isPending ? "Saving…" : saveDraft.isError ? "Couldn't save the draft" : savedAt ? `Saved ${formatListDate(savedAt.toISOString())}` : ""}

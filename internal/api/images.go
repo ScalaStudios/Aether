@@ -303,6 +303,10 @@ func (s *Server) writeMessage(w http.ResponseWriter, r *http.Request, p *princip
 		s.log.Warn("assessing sender failed", "mailbox", m.ID, "err", err)
 	}
 	msg.Unsubscribe = unsubscribeOffer(msg.ParsedUnsubscribe(), s.cfg.WebhookAllowPrivate)
+	links, err := s.messageFileLinks(r.Context(), m.ID, msg.FileLinkIDs)
+	if err != nil {
+		s.log.Warn("loading download links failed", "mailbox", m.ID, "err", err)
+	}
 	images, err := s.applyRemoteImages(r.Context(), p.User.ID, m.OrgID, folderParam(r), m.ID, msg)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -314,7 +318,8 @@ func (s *Server) writeMessage(w http.ResponseWriter, r *http.Request, p *princip
 		Related      []mailpkg.Related `json:"related"`
 		Sender       *senderInsight    `json:"sender"`
 		RemoteImages remoteImageInfo   `json:"remoteImages"`
-	}{msg, inv, nonNil(related), sender, images})
+		FileLinks    []fileLinkSummary `json:"fileLinks,omitempty"`
+	}{msg, inv, nonNil(related), sender, images, links})
 }
 
 func (s *Server) setRemoteImages(w http.ResponseWriter, r *http.Request, p *principal) {

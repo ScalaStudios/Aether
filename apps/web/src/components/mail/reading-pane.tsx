@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, Ban, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Globe, Mail, MailOpen, OctagonAlert, Reply, ReplyAll, ShieldCheck, Trash2 } from "lucide-react"
+import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, Ban, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Globe, Link2, Mail, MailOpen, OctagonAlert, Reply, ReplyAll, ShieldCheck, Trash2 } from "lucide-react"
 import { cn } from "cn"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -33,7 +33,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { api, apiUrl, errorMessage } from "@/lib/api"
-import { formatAddress, formatBytes, formatDateTime } from "@/lib/format"
+import { formatAddress, formatBytes, formatDateTime, formatListDate } from "@/lib/format"
 import { folderIcons, folderLabel, messageDocument, openUnsubscribeLink, type ComposeMode } from "@/lib/mail"
 import { foldersQuery, labelsQuery } from "@/lib/queries"
 import type { Address, Folder, Label, Mailbox, Message, SenderEntry, UnsubscribeResult } from "@/lib/types"
@@ -89,6 +89,18 @@ function MessageBody({ message: m, mailboxId, folder }: { message: Message; mail
   const attachments = m.attachments.filter((a) => !/pkcs7-signature|pgp-signature/i.test(a.contentType))
   return (
     <>
+            {folder === "Drafts" && m.fileLinks && m.fileLinks.length > 0 && (
+        <ul aria-label="Download links" className="flex flex-col gap-2">
+          {m.fileLinks.map((link) => (
+            <li key={link.id} className="flex min-h-10 max-w-full items-center gap-2 rounded-lg border border-strong px-3 py-2 text-sm sm:max-w-[420px]">
+              <Link2 aria-hidden className="size-4 shrink-0 text-fg-tertiary" />
+              <span className="truncate">{link.filename}</span>
+              <span className="shrink-0 text-xs text-fg-tertiary">{formatBytes(link.sizeBytes)}</span>
+              <span className="shrink-0 text-xs text-fg-tertiary">{link.expiresAt ? `Expires ${formatListDate(link.expiresAt)}` : "Download link"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
             {!m.protection?.encrypted && attachments.length > 0 && (
         <ul aria-label="Attachments" className="flex flex-wrap gap-2">
           {attachments.map((a) => (

@@ -14,7 +14,7 @@ alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 relayhost = __RELAYHOST__
 recipient_delimiter = +
-message_size_limit = 52428800
+message_size_limit = __MESSAGE_SIZE_LIMIT__
 mailbox_size_limit = 0
 
 virtual_mailbox_domains = pgsql:/etc/postfix/pgsql/domains.cf

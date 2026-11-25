@@ -36,6 +36,7 @@ spec:
           env:
             - { name: TZ, value: UTC }
             - { name: AETHER_MAIL_HOSTNAME, value: {{ .Values.mailHostname | quote }} }
+            - { name: AETHER_MESSAGE_SIZE_LIMIT, value: {{ .Values.messageSizeLimit | quote }} }
             - { name: AETHER_RELAYHOST, value: {{ .Values.relay.host | quote }} }
             - { name: AETHER_RELAY_USER, value: {{ .Values.relay.user | quote }} }
             {{- include "aether.secretEnv" (dict "env" "AETHER_RELAY_PASSWORD" "key" "relayPassword" "root" .) | nindent 12 }}

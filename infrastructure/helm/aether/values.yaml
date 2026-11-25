@@ -1,5 +1,8 @@
 publicUrl: https://mail.example.com
 mailHostname: mail.example.com
+messageSizeLimit: 52428800
+maxLinkBytes: 2147483648
+maxStorageBytes: 107374182400
 
 image:
   registry: ghcr.io/scalastudios

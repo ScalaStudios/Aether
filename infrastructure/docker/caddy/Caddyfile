@@ -5,7 +5,8 @@
 }
 
 {$AETHER_SITE_ADDRESS} {
-	encode zstd gzip {
+	@compressible not path /api/v1/files/*/content
+	encode @compressible zstd gzip {
 		match {
 			header Content-Type text/html*
 			header Content-Type text/css*
@@ -24,22 +25,38 @@
 			header Content-Type application/wasm*
 		}
 	}
-	request_body {
-		max_size 32MB
-	}
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy same-origin
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
+	@large path /api/v1/mailboxes/*/file-links /api/v1/files/*/content
+	handle @large {
+		request_body {
+			max_size {$AETHER_MAX_LINK_BYTES:2147483648}
+		}
+		reverse_proxy api:8080 {
+			transport http {
+				read_timeout 30m
+				write_timeout 30m
+				response_header_timeout 30m
+			}
+		}
+	}
 	@api path /api/* /dav /dav/* /jmap /jmap/* /.well-known/jmap /.well-known/caldav /.well-known/carddav /.well-known/autoconfig/* /mail/config-v1.1.xml /autodiscover/* /Autodiscover/*
 	handle @api {
+		request_body {
+			max_size 256MB
+		}
 		reverse_proxy api:8080 {
 			flush_interval -1
 		}
 	}
 	handle {
+		request_body {
+			max_size 32MB
+		}
 		reverse_proxy web:3000
 	}
 }

@@ -288,6 +288,14 @@ Exceptions skip the check for listed envelope senders, either an address or `@do
 
 The API stores the policy in PostgreSQL and publishes it to Valkey under the hash `AETHER_ATTACHMENT_POLICY`, one field per domain. Rspamd reads it for each message: by recipient domain for incoming mail, and by sender domain for authenticated submissions. The API republishes every policy at startup, so restart it if Valkey lost its data. Mail for a domain with no published policy is not filtered. Mail forwarded by Sieve rules is not checked again. Each change is recorded in the audit log as `attachment_policy.update`.
 
+## Message size and download links
+
+`AETHER_MESSAGE_SIZE_LIMIT` is the largest message Postfix will accept, in bytes. The default is 52428800 (50 MB), and it must be an integer from 1 to 2147483647. The same value is the ceiling for every organization's message size. `AETHER_MAX_LINK_BYTES` (default 2147483648, 2 GB, at most 8 GB) is the largest file that can be sent as a download link, and `AETHER_MAX_STORAGE_BYTES` (default 107374182400, 100 GB) is the most storage all of an organization's links may use. Organization administrators set their own limits, within those ceilings, under **Administration → Limits**.
+
+A download link is a page at `{AETHER_PUBLIC_URL}/files/{token}`. The file itself is `POST`ed to the API as the raw body of `/api/v1/mailboxes/{id}/file-links`, so the reverse proxy in front of the API must accept a body of `AETHER_MAX_LINK_BYTES` on that path and on `/api/v1/files/*/content`, and should allow the transfer 30 minutes. Other API requests, including a message with inline attachments, need a body of up to 256 MB. The bundled Caddyfile does this. A proxy that keeps the old 32 MB limit will refuse both a large link and a message whose base64 attachments exceed 32 MB.
+
+The files live in the PostgreSQL database as large objects. `pg_dump` includes them, and deleting a link removes the object, so no extra volume is required.
+
 ## Upgrades
 
 Each release is a tag, such as `v0.1.0`, with notes in [CHANGELOG.md](../CHANGELOG.md). Back up first, then check out the new tag and rebuild:
@@ -332,7 +340,7 @@ Back up these volumes and files:
 
 | Item | Contents |
 | --- | --- |
-| `pgdata` | All configuration and users. Use `docker compose exec postgres pg_dump -U aether aether`. |
+| `pgdata` | All configuration, users, and download-link files, which are stored as PostgreSQL large objects. Use `docker compose exec postgres pg_dump -U aether aether`. |
 | `vmail` | Mail, in Maildir format. Copying the files is safe while running. |
 | `.env` | The secrets, including the key needed to read encrypted mail |
 | `tls` | The mail certificate |

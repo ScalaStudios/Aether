@@ -28,34 +28,30 @@ type scheduledMessage struct {
 	Undo    bool              `json:"undo"`
 }
 
-func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, in *outgoingRequest, out *mailpkg.Outgoing, undo bool) {
-	sendAt := in.SendAt.UTC()
+func (s *Server) readyToSchedule(w http.ResponseWriter, r *http.Request, m *ownedMailbox, sendAt time.Time, undo bool) (time.Time, bool) {
+	sendAt = sendAt.UTC()
 	if undo {
 		if !sendAt.After(time.Now()) || sendAt.After(time.Now().Add(time.Minute)) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_send_at", "Choose a send time in the future and within a year.")
-			return
+			return time.Time{}, false
 		}
 	} else if sendAt.Before(time.Now().Add(5*time.Second)) || sendAt.After(time.Now().Add(maxScheduleAhead)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_send_at", "Choose a send time in the future and within a year.")
-		return
+		return time.Time{}, false
 	}
 	var pending int
 	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM scheduled_messages WHERE mailbox_id = $1 AND protected_reply_id IS NULL`, m.ID).Scan(&pending); err != nil {
 		s.internalError(w, r, err)
-		return
+		return time.Time{}, false
 	}
 	if pending >= maxScheduledPerMailbox {
 		writeError(w, http.StatusUnprocessableEntity, "too_many_scheduled", "This mailbox already has 100 scheduled messages.")
-		return
+		return time.Time{}, false
 	}
-	if !undo {
-		out.Date = sendAt
-	}
-	raw, _, err := out.Build(s.cfg.MailHostname)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
+	return sendAt, true
+}
+
+func (s *Server) insertScheduled(w http.ResponseWriter, r *http.Request, p *principal, m *ownedMailbox, out *mailpkg.Outgoing, raw []byte, sendAt time.Time, draftUID uint32, createdLinks []string, undo bool) {
 	bcc := []string{}
 	for _, a := range out.Bcc {
 		bcc = append(bcc, a.Address)
@@ -69,17 +65,18 @@ func (s *Server) scheduleMessage(w http.ResponseWriter, r *http.Request, p *prin
 		mode = "send_on_behalf"
 	}
 	var item scheduledMessage
-	err = s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(r.Context(), `
 		INSERT INTO scheduled_messages (mailbox_id, send_at, recipients, bcc, to_addresses, subject, in_reply_to, raw, sender_user_id, sender_mode, from_address, undo)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, send_at, subject, to_addresses, error, undo`,
 		m.ID, sendAt, out.Recipients(), bcc, to, out.Subject, out.InReplyTo, raw, p.User.ID, mode, out.From.Address, undo).
 		Scan(&item.ID, &item.SendAt, &item.Subject, &item.To, &item.Error, &item.Undo)
 	if err != nil {
+		s.deleteFileLinks(r.Context(), m.ID, createdLinks)
 		s.internalError(w, r, err)
 		return
 	}
-	if in.DraftUID != 0 && m.Access != "read" {
-		if err := s.mail.DeleteDraft(m.Address, in.DraftUID); err != nil {
+	if draftUID != 0 && m.Access != "read" {
+		if err := s.mail.DeleteDraft(m.Address, draftUID); err != nil {
 			s.log.Error("removing scheduled draft failed", "mailbox", m.ID, "err", err)
 		}
 	}

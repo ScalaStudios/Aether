@@ -5,6 +5,14 @@ set -eu
 : "${AETHER_MAIL_DB_PASSWORD:?required}"
 DB_HOST="${AETHER_DB_HOST:-postgres}"
 DB_NAME="${AETHER_DB_NAME:-aether}"
+MESSAGE_SIZE_LIMIT="${AETHER_MESSAGE_SIZE_LIMIT:-52428800}"
+case "$MESSAGE_SIZE_LIMIT" in
+  ''|*[!0-9]*) echo "AETHER_MESSAGE_SIZE_LIMIT must be an integer from 1 to 2147483647" >&2; exit 1 ;;
+esac
+if [ "$MESSAGE_SIZE_LIMIT" -lt 1 ] || [ "$MESSAGE_SIZE_LIMIT" -gt 2147483647 ]; then
+  echo "AETHER_MESSAGE_SIZE_LIMIT must be an integer from 1 to 2147483647" >&2
+  exit 1
+fi
 
 sed -i \
   -e "s|__HOSTNAME__|${AETHER_MAIL_HOSTNAME}|" \
@@ -14,6 +22,7 @@ sed -i \
   -e "s|__MILTER__|${AETHER_MILTER_SERVICE:-api:10045}|" \
   -e "s|__MILTER_AFTER__|${AETHER_MILTER_AFTER_SERVICE:-api:10046}|" \
   -e "s|__AUDIT_MILTER__|${AETHER_AUDIT_MILTER_SERVICE:-api:10047}|" \
+  -e "s|__MESSAGE_SIZE_LIMIT__|${MESSAGE_SIZE_LIMIT}|" \
   /etc/postfix/main.cf
 printf '/^X-Aether-Require-TLS:[[:space:]]*yes/ FILTER smtp-tls:%s\n' "${AETHER_RELAYHOST:-}" > /etc/postfix/milter_header_checks
 

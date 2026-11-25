@@ -113,16 +113,16 @@ func TestVerifySignature(t *testing.T) {
 
 func TestValidateAttachments(t *testing.T) {
 	list := []mailpkg.OutgoingAttachment{{Filename: `..\..\etc/passwd`, ContentType: "text/plain; charset=x", Data: []byte("x")}, {Filename: "a.bin", ContentType: "nonsense"}}
-	if msg := validateAttachments(list); msg != "" {
+	if msg := validateAttachments(list, maxAttachmentBytes); msg != "" {
 		t.Fatal(msg)
 	}
 	if list[0].Filename != "passwd" || list[0].ContentType != "text/plain" || list[1].ContentType != "application/octet-stream" {
 		t.Fatalf("not normalized: %+v", list)
 	}
-	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "a\r\nBcc: x", ContentType: "text/plain"}}) == "" {
+	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "a\r\nBcc: x", ContentType: "text/plain"}}, maxAttachmentBytes) == "" {
 		t.Fatal("header injection in filename accepted")
 	}
-	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "big", Data: make([]byte, maxAttachmentBytes+1)}}) == "" {
+	if validateAttachments([]mailpkg.OutgoingAttachment{{Filename: "big", Data: make([]byte, maxAttachmentBytes+1)}}, maxAttachmentBytes) == "" {
 		t.Fatal("oversized attachments accepted")
 	}
 }

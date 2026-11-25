@@ -35,12 +35,15 @@ type Outgoing struct {
 	InReplyTo   string
 	References  []string
 	Attachments []OutgoingAttachment
+	FileLinkIDs []string
 	IncludeBcc  bool
 	Date        time.Time
 	Calendar    *CalendarPart
 	Sealed      *Sealed
 	Autocrypt   string
 }
+
+const FileLinkHeader = "X-Aether-File-Links"
 
 type CalendarPart struct {
 	Method string
@@ -101,6 +104,9 @@ func (o *Outgoing) Build(hostname string) (raw []byte, messageID string, err err
 	h.Set("User-Agent", "Aether")
 	if o.Autocrypt != "" {
 		h.Set("Autocrypt", o.Autocrypt)
+	}
+	if len(o.FileLinkIDs) > 0 {
+		h.Set(FileLinkHeader, strings.Join(o.FileLinkIDs, " "))
 	}
 	var buf bytes.Buffer
 	if o.Sealed != nil {

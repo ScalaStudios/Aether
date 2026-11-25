@@ -153,6 +153,8 @@ The data model is defined in `migrations/0001_init.sql`:
 - `encryption_keys`, one wrapped private key and its public certificate or key per user, address and protocol; the private key is ciphertext produced in the browser
 - `peer_keys`, public keys a user saved from a message, an Autocrypt header or a Web Key Directory lookup
 - `protected_messages`, the ciphertext of a password-protected message, the salt, and the hashes of the access token and the reply proof
+- `organization_transfer_limits`, the message, attachment and download-link limits for one organization
+- `file_links`, one row per download link, pointing at a PostgreSQL large object
 
 Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renaming an address never moves data.
 
@@ -171,6 +173,10 @@ Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renam
 Aether Mail keeps a server-sent event stream open at `GET /api/v1/events`. One API process holds the Valkey leader lock and runs IMAP IDLE for the folders people have asked to be told about, plus the folder they have open, at most eight folders per mailbox. It publishes each change on `aether:notify`, and every replica writes it to the streams connected to that process. New unread mail can also go out as Web Push. Calendar reminders are `VALARM`s on the event, delivered on the same loop. [Notifications](notifications.md) covers the settings, the keys, and what iOS Mail still needs.
 
 When the account's undo delay is 5, 10, 20 or 30 seconds and the request does not set `sendAt`, the API does not submit the message in that request. It stores the message with the scheduled sends, marked as an undo hold, and returns it. Steps 3 to 7 run when the delay ends, even if the browser has closed, and the same permission check runs again. Cancelling the hold before then appends the message to Drafts, including Bcc, and removes it from the schedule. A request that sets `sendAt` is an ordinary scheduled send and does not add the delay. The scheduler wakes for a message due within 30 seconds instead of waiting for the next 15 second pass, so a short hold is not rounded up to that interval.
+
+Files larger than the organization's link threshold are not part of that MIME message. The sender uploads each one first with `POST /api/v1/mailboxes/{id}/file-links`, and the API stores it as a PostgreSQL large object. The sent message contains a link to `{AETHER_PUBLIC_URL}/files/{token}`. The token is the capability: anyone who has it can download the file until it expires. A password, stored as an Argon2id hash, is checked on download and is never written into the message. Downloads are sent with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, and a content security policy of `default-src 'none'`. Wrong passwords are limited per token. The file is marked committed in the same transaction that builds the message, before SMTP, so a crash after acceptance does not let the cleanup worker delete a file that was already sent. Links that were never sent are deleted after 30 days, and expired links are deleted on the same pass. Deleting a row unlinks the large object.
+
+The organization chooses its message size, the total size of inline attachments, the threshold above which a file becomes a link, the largest file a link may hold, and the storage all of its links may use. Each value is clamped to the platform ceilings `AETHER_MESSAGE_SIZE_LIMIT`, `AETHER_MAX_LINK_BYTES` and `AETHER_MAX_STORAGE_BYTES`. `AETHER_MESSAGE_SIZE_LIMIT` is also Postfix's `message_size_limit`, so an organization cannot ask Postfix to accept a message the platform administrator has refused.
 
 ## Performance targets
 

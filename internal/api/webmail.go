@@ -4,10 +4,8 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"mime"
 	"net/http"
 	"net/mail"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -425,9 +423,10 @@ type outgoingRequest struct {
 		UID    uint32   `json:"uid"`
 		Parts  []string `json:"parts"`
 	} `json:"forwardFrom"`
-	DraftUID uint32     `json:"draftUid"`
-	SendAt   *time.Time `json:"sendAt"`
-	Sealed   *struct {
+	DraftUID  uint32        `json:"draftUid"`
+	FileLinks []fileLinkRef `json:"fileLinks"`
+	SendAt    *time.Time    `json:"sendAt"`
+	Sealed    *struct {
 		ContentType string `json:"contentType"`
 		Body        []byte `json:"body"`
 	} `json:"sealed"`
@@ -509,7 +508,7 @@ func (s *Server) buildOutgoing(w http.ResponseWriter, r *http.Request, m *ownedM
 			out.Attachments = append(out.Attachments, mailpkg.OutgoingAttachment{Filename: a.Filename, ContentType: a.ContentType, Data: a.Body})
 		}
 	}
-	if msg := validateAttachments(out.Attachments); msg != "" {
+	if msg := normalizeAttachments(out.Attachments); msg != "" {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_attachments", msg)
 		return nil, false
 	}
@@ -526,7 +525,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 		return
 	}
 	var in outgoingRequest
-	if !decode(w, r, 30<<20, &in) {
+	if !decode(w, r, s.outgoingBodyLimit(), &in) {
 		return
 	}
 	from, sentAddress, ok := s.resolveSender(w, r, p, m, in.FromAddress)
@@ -547,27 +546,44 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request, p *principa
 	if !m.SendAs {
 		out.Sender = &mailpkg.Address{Name: p.User.DisplayName, Address: p.User.Email}
 	}
+	var sendAt *time.Time
+	undo := false
 	if in.SendAt != nil {
-		s.scheduleMessage(w, r, p, m, &in, out, false)
+		at, ok := s.readyToSchedule(w, r, m, *in.SendAt, false)
+		if !ok {
+			return
+		}
+		sendAt = &at
+		out.Date = at
+	} else {
+		delay, err := s.undoDelay(r.Context(), p.User.ID)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if delay > 0 {
+			at, ok := s.readyToSchedule(w, r, m, time.Now().Add(delay), true)
+			if !ok {
+				return
+			}
+			sendAt = &at
+			undo = true
+		}
+	}
+	staged, ok := s.stageFileLinks(w, r, p, m, in.FileLinks, out, sendAt, true)
+	if !ok {
 		return
 	}
-	delay, err := s.undoDelay(r.Context(), p.User.ID)
-	if err != nil {
-		s.internalError(w, r, err)
+	raw, messageID, ok := s.sealMessage(w, r, staged, out)
+	if !ok {
 		return
 	}
-	if delay > 0 {
-		at := time.Now().Add(delay).UTC()
-		in.SendAt = &at
-		s.scheduleMessage(w, r, p, m, &in, out, true)
-		return
-	}
-	raw, messageID, err := out.Build(s.cfg.MailHostname)
-	if err != nil {
-		s.internalError(w, r, err)
+	if sendAt != nil {
+		s.insertScheduled(w, r, p, m, out, raw, *sendAt, in.DraftUID, staged.created, undo)
 		return
 	}
 	if err := s.mail.Send(m.Address, out.From.Address, out.Recipients(), raw); err != nil {
+		s.deleteFileLinks(r.Context(), m.ID, staged.created)
 		mailSends.WithLabelValues("rejected").Inc()
 		s.log.Warn("submission rejected", "mailbox", m.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "send_failed", "The mail server did not accept the message: "+err.Error())
@@ -603,7 +619,7 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	var in outgoingRequest
-	if !decode(w, r, 30<<20, &in) {
+	if !decode(w, r, s.outgoingBodyLimit(), &in) {
 		return
 	}
 	from, _, ok := s.resolveSender(w, r, p, m, in.FromAddress)
@@ -614,14 +630,18 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, p *principal)
 	if !ok {
 		return
 	}
+	staged, ok := s.stageFileLinks(w, r, p, m, in.FileLinks, out, nil, false)
+	if !ok {
+		return
+	}
 	out.IncludeBcc = true
-	raw, _, err := out.Build(s.cfg.MailHostname)
-	if err != nil {
-		s.internalError(w, r, err)
+	raw, _, ok := s.sealMessage(w, r, staged, out)
+	if !ok {
 		return
 	}
 	uid, folder, err := s.mail.SaveDraft(m.Address, raw, in.DraftUID)
 	if err != nil {
+		s.deleteFileLinks(r.Context(), m.ID, staged.created)
 		s.mailError(w, r, err)
 		return
 	}
@@ -630,7 +650,7 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, p *principal)
 		s.mailError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"uid": uid, "folder": folder, "attachments": saved.Attachments})
+	writeJSON(w, http.StatusOK, map[string]any{"uid": uid, "folder": folder, "attachments": saved.Attachments, "fileLinks": nonNil(staged.summaries)})
 }
 
 func (s *Server) deleteDraft(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -648,35 +668,6 @@ func (s *Server) deleteDraft(w http.ResponseWriter, r *http.Request, p *principa
 	}
 	s.recordAccess(r, p, m, "message.delete", "Drafts", []accessItem{{UID: uid}}, map[string]any{"draft": true})
 	w.WriteHeader(http.StatusNoContent)
-}
-
-const (
-	maxAttachments     = 20
-	maxAttachmentBytes = 20 << 20
-)
-
-func validateAttachments(list []mailpkg.OutgoingAttachment) string {
-	if len(list) > maxAttachments {
-		return "Attach 20 files or fewer per message."
-	}
-	total := 0
-	for i := range list {
-		a := &list[i]
-		total += len(a.Data)
-		a.Filename = strings.TrimSpace(path.Base(strings.ReplaceAll(a.Filename, "\\", "/")))
-		if a.Filename == "" || a.Filename == "." || a.Filename == "/" || strings.ContainsAny(a.Filename, "\r\n\x00") || len(a.Filename) > 255 {
-			return "One of the attachments has an invalid file name."
-		}
-		if mt, _, err := mime.ParseMediaType(a.ContentType); err != nil || !strings.Contains(mt, "/") {
-			a.ContentType = "application/octet-stream"
-		} else {
-			a.ContentType = mt
-		}
-	}
-	if total > maxAttachmentBytes {
-		return "Attachments can total at most 20 MB per message."
-	}
-	return ""
 }
 
 func validMessageID(v string) bool {

@@ -348,6 +348,58 @@ paths:
               schema: { $ref: "#/components/schemas/QuotaWarnings" }
         "403": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/transfer-limits:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [organizations]
+      summary: The organization's message and download-link limits (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferLimits" }
+        "403": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [organizations]
+      summary: Replace the organization's message and download-link limits
+      description: "Recorded in the audit log as transfer_limits.update. Every size must stay within the platform ceilings, the attachment total cannot exceed the message size, and the link threshold cannot exceed the attachment total or the largest link."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransferLimitsInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferLimits" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/file-links:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [organizations]
+      summary: Download links stored for this organization, newest first
+      description: Up to 200 links, including ones that have expired and ones that have not been sent. Owners and administrators only.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/FileLinkRecord" } }
+        "403": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/file-links/{linkId}:
+    parameters:
+      - { $ref: "#/components/parameters/orgId" }
+      - { name: linkId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [organizations]
+      summary: Delete a download link and its file
+      description: Recorded in the audit log as file_link.delete. The address stops working.
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/signature-templates:
     parameters: [{ $ref: "#/components/parameters/orgId" }]
     get:
@@ -3140,11 +3192,112 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProtectedMessage" }
         "404": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/transfer-limits:
+    get:
+      tags: [mail]
+      summary: Limits that apply when sending from this mailbox
+      description: Anyone who can read the mailbox may read the limits. usedBytes is the storage download links currently occupy.
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferLimits" }
+        "403": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/file-links:
+    post:
+      tags: [mail]
+      summary: Upload a file that will be sent as a download link
+      description: "The body is the file. Pass its name in the filename query parameter. The caller must be allowed to send from the mailbox. Recorded in the audit log as file_link.create. An empty file is 422 invalid_attachments. A file over the link limit or the remaining storage is 413."
+      parameters:
+        - { $ref: "#/components/parameters/mailboxId" }
+        - { name: filename, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: { schema: { type: string, format: binary } }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileLinkSummary" }
+        "413": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /mailboxes/{mailboxId}/file-links/{linkId}:
+    parameters:
+      - { $ref: "#/components/parameters/mailboxId" }
+      - { name: linkId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [mail]
+      summary: Delete a download link uploaded for this mailbox
+      description: The caller must be allowed to send from the mailbox. Recorded in the audit log as file_link.delete.
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /files/{token}:
+    get:
+      tags: [mail]
+      security: []
+      summary: Describe a download link
+      description: No session is required. The token is the capability. An unknown token is 404. An expired link is 410 file_link_expired.
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicFileLink" }
+        "404": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+  /files/{token}/content:
+    get:
+      tags: [mail]
+      security: []
+      summary: Download a file that has no password
+      description: "A password-protected file answers 401 password_required. Use POST with the password instead. The body is the file, with Content-Disposition attachment."
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" } }
+      responses:
+        "200":
+          description: The file
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [mail]
+      security: []
+      summary: Download a file, checking its password when it has one
+      description: A missing password on a protected file is 401 password_required and does not count as a guess. A wrong password is 401 invalid_password. Guesses are limited per token.
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string }
+      responses:
+        "200":
+          description: The file
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/send:
     post:
       tags: [mail]
       summary: Submit a message through the SMTP submission service and save it to Sent, schedule it when sendAt is set, or hold it for undo
-      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error. sealed replaces the text, HTML and attachments with ciphertext built in the browser. The organization encryption policy is checked again when a scheduled message is sent. When sendAt is omitted and the account's undo delay is 5, 10, 20 or 30 seconds, the message is held for that long and the response is a ScheduledMessage with undo set. The delay is not added to a request that sets sendAt. Cancelling the hold puts the draft back. The message is sent when the delay ends, including if the browser is closed.
+      description: The caller must own the mailbox or have Send as or Send on behalf on it; read access is enough when a send right is granted. Anyone else is refused with 403 cannot_send. Without Send as, the message names the caller in its Sender header. A scheduled message records whether it was sent as or on behalf of the mailbox. When it is due, the caller's account must still be active and still hold that same right; otherwise it is not sent and gets an error. sealed replaces the text, HTML and attachments with ciphertext built in the browser. The organization encryption policy is checked again when a scheduled message is sent. When sendAt is omitted and the account's undo delay is 5, 10, 20 or 30 seconds, the message is held for that long and the response is a ScheduledMessage with undo set. The delay is not added to a request that sets sendAt. Cancelling the hold puts the draft back. The message is sent when the delay ends, including if the browser is closed. Inline attachments share the organization's attachment budget and a limit of 20 files. Files named in fileLinks, and files the server moves out of that budget, are sent as download links. The finished message must fit the organization's message size, which cannot exceed the platform Postfix limit. A file larger than the JSON body limit has to be uploaded with POST /mailboxes/{mailboxId}/file-links first.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -3241,7 +3394,7 @@ paths:
     put:
       tags: [mail]
       summary: Save a draft to the Drafts folder, replacing draftUid when given
-      description: Recipients are optional. Bcc is stored in the draft. Use forwardFrom with the returned folder and uid to keep the draft's attachments on later saves and on send.
+      description: Recipients are optional. Bcc is stored in the draft. Use forwardFrom with the returned folder and uid to keep the draft's attachments on later saves and on send. fileLinks keeps download links on the draft. A password is applied when the draft is sent, not while it is saved.
       parameters: [{ $ref: "#/components/parameters/mailboxId" }]
       requestBody:
         required: true
@@ -3255,11 +3408,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [uid, folder, attachments]
+                required: [uid, folder, attachments, fileLinks]
                 properties:
                   uid: { type: integer }
                   folder: { type: string }
                   attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+                  fileLinks: { type: array, items: { $ref: "#/components/schemas/FileLinkSummary" } }
   /mailboxes/{mailboxId}/drafts/{uid}:
     delete:
       tags: [mail]
@@ -4616,6 +4770,10 @@ components:
             unsubscribe:
               $ref: "#/components/schemas/Unsubscribe"
               description: Present when the message has a usable List-Unsubscribe header. Exactly one of oneClick, link and mailto is true, and that is the action Unsubscribe performs.
+            fileLinks:
+              type: array
+              description: Download links attached to a draft. Present only when the message is read from the mailbox that owns them. Sent messages carry the links in the body instead.
+              items: { $ref: "#/components/schemas/FileLinkSummary" }
             invitation: { $ref: "#/components/schemas/Invitation" }
             protection: { $ref: "#/components/schemas/MessageProtection" }
             related:
@@ -5031,7 +5189,7 @@ components:
         attachments:
           type: array
           maxItems: 20
-          description: Up to 20 files and 20 MB in total, including forwarded attachments.
+          description: Inline files. At most 20 of them, and their total size cannot exceed the organization's attachment limit. A file over the link threshold, or that does not fit in the remaining budget, is stored as a download link when it is within the link size limit.
           items:
             type: object
             required: [filename, data]
@@ -5039,6 +5197,11 @@ components:
               filename: { type: string }
               contentType: { type: string }
               data: { type: string, format: byte, description: Base64-encoded file contents }
+        fileLinks:
+          type: array
+          maxItems: 20
+          description: Download links to include. Upload each file first. The password and expiry are optional and are applied on send. Leave the password out to keep the one already stored, or set clearPassword to remove it. Set clearExpiry to remove the expiry.
+          items: { $ref: "#/components/schemas/FileLinkRef" }
         forwardFrom:
           type: object
           description: Attach attachments of this message in the same mailbox, read on the server. Limit to specific parts with parts.
@@ -5183,6 +5346,71 @@ components:
         salt: { type: string, format: byte }
         message: { type: string, format: byte }
         hours: { type: integer, enum: [24, 72, 168] }
+    FileLinkRef:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        clearPassword: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+        clearExpiry: { type: boolean }
+    FileLinkSummary:
+      type: object
+      required: [id, filename, contentType, sizeBytes, expiresAt, passwordProtected]
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        contentType: { type: string }
+        sizeBytes: { type: integer }
+        expiresAt: { type: [string, "null"], format: date-time }
+        passwordProtected: { type: boolean }
+    FileLinkRecord:
+      allOf:
+        - { $ref: "#/components/schemas/FileLinkSummary" }
+        - type: object
+          required: [downloadCount, createdAt, mailboxAddress, url, committed, expired]
+          properties:
+            downloadCount: { type: integer }
+            createdAt: { type: string, format: date-time }
+            mailboxAddress: { type: string }
+            url: { type: string }
+            committed: { type: boolean }
+            expired: { type: boolean }
+    PublicFileLink:
+      type: object
+      required: [filename, contentType, sizeBytes, expiresAt, passwordRequired]
+      properties:
+        filename: { type: string }
+        contentType: { type: string }
+        sizeBytes: { type: integer }
+        expiresAt: { type: [string, "null"], format: date-time }
+        passwordRequired: { type: boolean }
+    TransferLimitsInput:
+      type: object
+      required: [messageBytes, attachmentBytes, linkThresholdBytes, linkFileBytes, storageBytes]
+      properties:
+        messageBytes: { type: integer, minimum: 1 }
+        attachmentBytes: { type: integer, minimum: 1 }
+        linkThresholdBytes: { type: integer, minimum: 1 }
+        linkFileBytes: { type: integer, minimum: 1 }
+        storageBytes: { type: integer, minimum: 0 }
+    TransferLimits:
+      allOf:
+        - { $ref: "#/components/schemas/TransferLimitsInput" }
+        - type: object
+          required: [usedBytes, maxInlineFiles, maxFileLinks, platform]
+          properties:
+            usedBytes: { type: integer }
+            maxInlineFiles: { type: integer }
+            maxFileLinks: { type: integer }
+            platform:
+              type: object
+              required: [messageBytes, linkFileBytes, storageBytes]
+              properties:
+                messageBytes: { type: integer }
+                linkFileBytes: { type: integer }
+                storageBytes: { type: integer }
     IdentityProvider:
       type: object
       required: [id, slug, name, kind, issuer, clientId, hasClientSecret, hasWebhookSecret, webhookUrl, scopes, autoProvision, adminGroup, groupMappings, enabled, redirectUri]

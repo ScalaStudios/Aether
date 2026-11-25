@@ -175,9 +175,10 @@ func serve(log *slog.Logger) error {
 	go srv.RunResourceWorker(ctx)
 	go srv.RunQuotaWatcher(ctx)
 	go srv.RunNotifications(ctx)
+	go srv.RunFileLinkCleanup(ctx)
 	httpServer := &http.Server{
 		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Minute, WriteTimeout: 30 * time.Minute, IdleTimeout: 120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
 	errCh := make(chan error, 7)

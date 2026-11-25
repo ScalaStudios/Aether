@@ -1,7 +1,7 @@
 import { Archive, File, Folder as FolderIcon, Inbox, OctagonAlert, Send, Trash2, type LucideIcon } from "lucide-react"
 
 import { formatAddress, formatDateTime, plural } from "@/lib/format"
-import type { Address, Attachment, Folder, Label, LabelColor, Mailbox, MailboxRetention, Message, SpecialUse } from "@/lib/types"
+import type { Address, Attachment, FileLinkSummary, Folder, Label, LabelColor, Mailbox, MailboxRetention, Message, SpecialUse } from "@/lib/types"
 
 export const folderIcons: Record<SpecialUse, LucideIcon> = {
   inbox: Inbox,
@@ -227,6 +227,7 @@ export interface Draft {
   references?: string[]
   forwardFrom?: { folder: string; uid: number; attachments: Attachment[] }
   draftUid?: number
+  fileLinks?: FileLinkSummary[]
 }
 
 function escapeHtml(text: string) {
@@ -276,6 +277,7 @@ export function buildDraft(mode: ComposeMode, source: Message | undefined, self:
       references: source.references.length ? source.references : undefined,
       draftUid: source.uid,
       forwardFrom: { folder, uid: source.uid, attachments: source.attachments },
+      fileLinks: source.fileLinks,
     }
   }
 

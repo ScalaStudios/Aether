@@ -62,6 +62,9 @@ type Config struct {
 	APNSCertFile          string
 	APNSKeyFile           string
 	APNSSandbox           bool
+	MessageSizeLimit      int64
+	MaxLinkBytes          int64
+	MaxStorageBytes       int64
 }
 
 func Load() (*Config, error) {
@@ -111,6 +114,16 @@ func Load() (*Config, error) {
 		APNSSandbox:           os.Getenv("AETHER_APNS_SANDBOX") == "true",
 	}
 	var errs []error
+	var err error
+	if c.MessageSizeLimit, err = envInt64("AETHER_MESSAGE_SIZE_LIMIT", 50<<20, 1, 2147483647); err != nil {
+		errs = append(errs, err)
+	}
+	if c.MaxLinkBytes, err = envInt64("AETHER_MAX_LINK_BYTES", 2<<30, 1, 8<<30); err != nil {
+		errs = append(errs, err)
+	}
+	if c.MaxStorageBytes, err = envInt64("AETHER_MAX_STORAGE_BYTES", 100<<30, 0, 100<<40); err != nil {
+		errs = append(errs, err)
+	}
 	if c.DatabaseURL == "" {
 		errs = append(errs, errors.New("AETHER_DATABASE_URL is required"))
 	}
@@ -183,4 +196,16 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envInt64(key string, fallback, min, max int64) (int64, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < min || n > max {
+		return 0, fmt.Errorf("%s must be an integer from %d to %d", key, min, max)
+	}
+	return n, nil
 }

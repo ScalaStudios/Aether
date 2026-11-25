@@ -572,6 +572,7 @@ type Message struct {
 	Text                string             `json:"text"`
 	HTML                string             `json:"html"`
 	Attachments         []Attachment       `json:"attachments"`
+	FileLinkIDs         []string           `json:"-"`
 	Calendar            string             `json:"-"`
 	Protection          *MessageProtection `json:"protection,omitempty"`
 	Unsubscribe         *Unsubscribe       `json:"unsubscribe,omitempty"`
@@ -601,7 +602,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			return ErrNotFound
 		}
 		uidSet := imap.UIDSetNum(imap.UID(uid))
-		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader, "Autocrypt", "List-Unsubscribe", "List-Unsubscribe-Post"}, Peek: true}
+		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader, "Autocrypt", "List-Unsubscribe", "List-Unsubscribe-Post", FileLinkHeader}, Peek: true}
 		msgs, err := ic.Fetch(uidSet, &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true}, BodySection: []*imap.FetchItemBodySection{refs},
@@ -631,6 +632,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 				out.Protection = WithAutocrypt(out.Protection, e.Header.Get("Autocrypt"))
 				out.listUnsubscribe = headerJoined(e.Header, "List-Unsubscribe")
 				out.listUnsubscribePost = headerJoined(e.Header, "List-Unsubscribe-Post")
+				out.FileLinkIDs = parseFileLinkIDs(e.Header.Get(FileLinkHeader))
 			}
 		}
 		out.Protection = mergeProtection(DescribeProtection(m.BodyStructure), out.Protection)
@@ -872,6 +874,36 @@ func parseMessageIDs(v string) []string {
 		}
 	}
 	return out
+}
+
+func parseFileLinkIDs(v string) []string {
+	var out []string
+	for _, f := range strings.Fields(v) {
+		if validFileLinkID(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func validFileLinkID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func firstNonEmpty(values ...string) string {

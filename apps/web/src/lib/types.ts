@@ -538,6 +538,7 @@ export interface Message extends MessageSummary {
   text: string
   html: string
   attachments: Attachment[]
+  fileLinks?: FileLinkSummary[]
   invitation?: Invitation
   protection?: MessageProtection
   unsubscribe?: Unsubscribe
@@ -627,6 +628,7 @@ export interface OutgoingMessage {
   inReplyTo?: string
   references?: string[]
   attachments?: { filename: string; contentType: string; data: string }[]
+  fileLinks?: FileLinkRef[]
   forwardFrom?: { folder: string; uid: number; parts?: string[] }
   draftUid?: number
   sendAt?: string
@@ -672,10 +674,57 @@ export interface ProtectedMessage {
   expiresAt: string
 }
 
+export interface FileLinkRef {
+  id: string
+  password?: string
+  clearPassword?: boolean
+  expiresAt?: string
+  clearExpiry?: boolean
+}
+
+export interface FileLinkSummary {
+  id: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  expiresAt: string | null
+  passwordProtected: boolean
+}
+
+export interface FileLinkRecord extends FileLinkSummary {
+  downloadCount: number
+  createdAt: string
+  mailboxAddress: string
+  url: string
+  committed: boolean
+  expired: boolean
+}
+
+export interface TransferLimits {
+  messageBytes: number
+  attachmentBytes: number
+  linkThresholdBytes: number
+  linkFileBytes: number
+  storageBytes: number
+  usedBytes: number
+  maxInlineFiles: number
+  maxFileLinks: number
+  platform: { messageBytes: number; linkFileBytes: number; storageBytes: number }
+}
+
+export interface PublicFileLink {
+  filename: string
+  contentType: string
+  sizeBytes: number
+  expiresAt: string | null
+  passwordRequired: boolean
+}
+
 export interface SavedDraft {
   uid: number
   folder: string
   attachments: Attachment[]
+  fileLinks: FileLinkSummary[]
 }
 
 export interface GroupMapping {

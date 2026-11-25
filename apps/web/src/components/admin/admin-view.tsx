@@ -20,6 +20,7 @@ import { EncryptionTab } from "@/components/admin/encryption-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
 import { IntegrationsTab } from "@/components/admin/integrations-tab"
 import { MailQueueTab } from "@/components/admin/mail-queue-tab"
+import { LimitsTab } from "@/components/admin/limits-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
 import { MailFlowTab } from "@/components/admin/mail-flow-tab"
 import { MembersTab } from "@/components/admin/members-tab"
@@ -80,6 +81,7 @@ const orgTabs = [
   { value: "sender-warnings", label: "Sender warnings", Component: SenderWarningsTab },
   { value: "attachments", label: "Attachments", Component: AttachmentsTab },
   { value: "encryption", label: "Encryption", Component: EncryptionTab },
+  { value: "limits", label: "Limits", Component: LimitsTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]
