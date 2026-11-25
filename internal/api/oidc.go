@@ -236,7 +236,9 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if code != "" {
 		authAttempts.WithLabelValues("oidc", "failure").Inc()
-		s.audit(r.Context(), r, nil, nil, "auth.oidc.rejected", "identity", p.Slug+":"+claims.Subject, map[string]any{"reason": code})
+		verified := claims.EmailVerified != nil && *claims.EmailVerified
+		orgID := s.mailboxOrgForOIDC(r.Context(), p.ID, claims.Subject, claims.Email, verified)
+		s.audit(r.Context(), r, nil, orgID, "auth.oidc.rejected", "identity", p.Slug+":"+claims.Subject, map[string]any{"reason": code, "provider": p.Slug})
 		s.loginRedirect(w, r, code)
 		return
 	}
@@ -247,7 +249,9 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	go s.syncProviderAvatar(userID, p.Issuer, claims.Picture, token)
 	authAttempts.WithLabelValues("oidc", "success").Inc()
-	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": "oidc", "provider": p.Slug})
+	email := strings.ToLower(strings.TrimSpace(claims.Email))
+	orgID := s.mailboxOrgForAccount(r.Context(), userID, email)
+	s.audit(r.Context(), r, &principal{User: User{ID: userID, Email: email}}, orgID, "auth.login", "user", userID, map[string]any{"method": "oidc", "provider": p.Slug})
 	s.checkSignInNotification(r.Context(), r, userID, "oidc", p.Slug, sessionHash)
 	http.Redirect(w, r, safeReturnTo(returnTo), http.StatusFound)
 }

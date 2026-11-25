@@ -230,6 +230,7 @@ The Go API is the only component that writes application data. It keeps organiza
 | `AETHER_SEND_REPORTS` | `true` | Send DMARC aggregate reports and TLS reports to domains that ask for them. Set it to `false` to keep receiving reports without sending any |
 | `AETHER_REPORT_FROM` | `dmarc-reports@` the mail host's domain | The address those reports are sent from. It has to be on a verified domain that has a DKIM key |
 | `AETHER_REPORT_ORG_NAME` | the sending domain | The organization name written into the reports |
+| `AETHER_AUDIT_RETENTION_DAYS` | `0` | Days to keep audit events when an organization sets no retention of its own. `0` keeps them forever. See [Audit log](documentation/audit-log.md) for streaming to syslog or OpenTelemetry |
 | `AETHER_CUSTOM_CSS` | `true` | Organizations' custom CSS from **Administration → Branding**. Set it to `false` if a stylesheet breaks the sign-in page |
 | `AETHER_QUOTA_CHECK_INTERVAL` | `5m` | How often Aether measures mailbox sizes and sends storage warnings |
 | `AETHER_BACKUP_REPOSITORY`, `AETHER_BACKUP_PASSWORD` | none | A restic repository on S3-compatible storage for off-site backups, and its encryption password |
@@ -274,6 +275,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Encryption](documentation/encryption.md): S/MIME, OpenPGP and password-protected messages, and where the keys stay.
 - [API keys, webhooks, and suppressions](documentation/integrations.md): automate Aether, react to audit and mail delivery events, and keep a suppression list.
 - [Translations](documentation/translations.md): built-in languages, per-person and organization defaults, server-generated emails, and contributing translations through Weblate or Crowdin.
+- [Audit log](documentation/audit-log.md): search, export, retention, and sending events to syslog or OpenTelemetry.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.
 - [Third-party components](documentation/third-party.md): every bundled component and its license.
 - [API specification](api/openapi.yaml): the OpenAPI 3.1 document.

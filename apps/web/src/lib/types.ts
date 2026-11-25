@@ -431,11 +431,20 @@ export interface OrgRole {
 export interface AuditEvent {
   id: number
   createdAt: string
+  orgId: string | null
+  actorUserId: string | null
   actorEmail?: string | null
   action: string
   targetType: string
   targetId: string
   ip?: string
+  metadata: Record<string, unknown>
+}
+
+export interface AuditRetention {
+  retentionDays: number | null
+  defaultRetentionDays: number
+  effectiveRetentionDays: number
 }
 
 export type MessageTraceStatus = "rejected" | "bounced" | "discarded" | "deleted" | "deferred" | "held" | "queued" | "unknown" | "junk" | "delivered"

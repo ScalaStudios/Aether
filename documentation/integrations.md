@@ -18,7 +18,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `mailboxes:read`, `mailboxes:write` | Listing, creating, changing, converting, and removing mailboxes, and managing their delegates or members, mail rules, automatic replies, signatures, calendar and contacts imports, and recurring mail imports (see below) |
 | `aliases:read`, `aliases:write` | Listing, creating, changing, and removing aliases and distribution lists |
 | `members:read`, `members:write` | Listing members, changing their roles, and removing members. A key cannot make anyone an owner. |
-| `audit:read`, `audit:write` | Reading the audit log and mailbox access reports, and changing the [mailbox access auditing](mailbox-auditing.md) settings |
+| `audit:read`, `audit:write` | Searching and exporting the [audit log](audit-log.md), changing how long it is kept, reading mailbox access reports, and changing the [mailbox access auditing](mailbox-auditing.md) settings |
 | `message-trace:read` | Searching and exporting the [message trace](message-trace.md) |
 | `webhooks:read`, `webhooks:write` | Managing webhooks and reading deliveries |
 | `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
@@ -100,7 +100,9 @@ In the admin console, **Administration → Mailboxes** and **Administration → 
 
 ## Webhooks
 
-A webhook receives audit and mail delivery events for its organization that match its event list. Use `*` to receive all events. The audit log on the console shows the event names.
+A webhook receives audit and mail delivery events for its organization that match its event list. Use `*` to receive all events. The audit log on the console shows the event names. Sign-ins arrive at the organization that holds the account's mailbox, as [Audit log](audit-log.md#which-organization-an-event-belongs-to) explains.
+
+Platform administrators can create platform webhooks under **Administration → Platform webhooks** or with `POST /api/v1/admin/webhooks` for the events that belong to no organization. They work like organization webhooks, under `/api/v1/admin/webhooks/{id}`, and their payloads have `organizationId` set to `null`.
 
 Aether sends each event as a JSON `POST`:
 

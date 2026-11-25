@@ -1966,7 +1966,7 @@ paths:
     post:
       tags: [integrations]
       summary: Create a webhook. The signing secret is returned once.
-      description: "Matching audit and mail delivery events in the organization are posted to the URL as JSON. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
+      description: "Matching audit and mail delivery events inmailbox.create, domain.verify, the organizationauth.login for accounts whose mailbox is in the organization) are posted to the URL as JSON. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -2072,12 +2072,23 @@ paths:
   /organizations/{orgId}/audit:
     get:
       tags: [organizations]
+      summary: Search the organization's audit log
+      description: "Organization administrators, or API keys with audit:read. Filters combine with AND. Sign-in events (auth.login, auth.login.failed, auth.oidc.rejected, auth.logout) belong to the organization that holds the account's mailbox."
       parameters:
         - { $ref: "#/components/parameters/orgId" }
-        - { name: before, in: query, schema: { type: integer } }
+        - { $ref: "#/components/parameters/auditBefore" }
+        - { $ref: "#/components/parameters/auditLimit" }
+        - { $ref: "#/components/parameters/auditActor" }
+        - { $ref: "#/components/parameters/auditAction" }
+        - { $ref: "#/components/parameters/auditTarget" }
+        - { $ref: "#/components/parameters/auditTargetType" }
+        - { $ref: "#/components/parameters/auditTargetId" }
+        - { $ref: "#/components/parameters/auditSince" }
+        - { $ref: "#/components/parameters/auditUntil" }
+        - { $ref: "#/components/parameters/auditQuery" }
       responses:
         "200":
-          description: Newest first, 50 per page
+          description: Newest first. To get the next page, pass the id of the last event as before.
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
@@ -2387,6 +2398,60 @@ paths:
                   storageUpdatedAt: { type: string, format: date-time }
         "429": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/audit/export:
+    get:
+      tags: [organizations]
+      summary: Download the organization's audit log as CSV or JSON
+      description: "Takes the same filters as the search. Returns at most 50,000 events, newest first, as an attachment; export older events by passing the id of the last exported event as before. limit lowers the cap. Each export is recorded as audit.export with its format and filters. CSV cells that start with =, +, - or @ are prefixed with ' so spreadsheets do not run them as formulas; metadata is a JSON string."
+      parameters:
+        - { $ref: "#/components/parameters/orgId" }
+        - { $ref: "#/components/parameters/auditFormat" }
+        - { $ref: "#/components/parameters/auditBefore" }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50000, default: 50000 } }
+        - { $ref: "#/components/parameters/auditActor" }
+        - { $ref: "#/components/parameters/auditAction" }
+        - { $ref: "#/components/parameters/auditTarget" }
+        - { $ref: "#/components/parameters/auditTargetType" }
+        - { $ref: "#/components/parameters/auditTargetId" }
+        - { $ref: "#/components/parameters/auditSince" }
+        - { $ref: "#/components/parameters/auditUntil" }
+        - { $ref: "#/components/parameters/auditQuery" }
+      responses:
+        "200": { $ref: "#/components/responses/AuditExport" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/audit/retention:
+    get:
+      tags: [organizations]
+      summary: How long the organization keeps audit events
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditRetention" }
+    put:
+      tags: [organizations]
+      summary: Set how long the organization keeps audit events
+      description: "Organization administrators, or API keys with audit:write. Events older than the effective retention are deleted within an hour. Recorded as audit.retention.update with the old and new values."
+      parameters: [{ $ref: "#/components/parameters/orgId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [retentionDays]
+              properties:
+                retentionDays: { type: [integer, "null"], minimum: 0, maximum: 3650, description: "Days to keep events. 0 keeps them forever; null follows the platform default." }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditRetention" }
+        "422": { $ref: "#/components/responses/Error" }
   /me/mailboxes:
     get:
       tags: [mail]
@@ -4852,6 +4917,112 @@ paths:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+  /admin/audit:
+    get:
+      tags: [organizations]
+      summary: Search the audit log of every organization and the platform (platform administrators only)
+      parameters:
+        - { $ref: "#/components/parameters/auditOrg" }
+        - { $ref: "#/components/parameters/auditBefore" }
+        - { $ref: "#/components/parameters/auditLimit" }
+        - { $ref: "#/components/parameters/auditActor" }
+        - { $ref: "#/components/parameters/auditAction" }
+        - { $ref: "#/components/parameters/auditTarget" }
+        - { $ref: "#/components/parameters/auditTargetType" }
+        - { $ref: "#/components/parameters/auditTargetId" }
+        - { $ref: "#/components/parameters/auditSince" }
+        - { $ref: "#/components/parameters/auditUntil" }
+        - { $ref: "#/components/parameters/auditQuery" }
+      responses:
+        "200":
+          description: Newest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/audit/export:
+    get:
+      tags: [organizations]
+      summary: Download the platform audit log as CSV or JSON (platform administrators only)
+      description: Same filters, cap and format as the organization export. Recorded as audit.export in the exported organization, or without an organization.
+      parameters:
+        - { $ref: "#/components/parameters/auditOrg" }
+        - { $ref: "#/components/parameters/auditFormat" }
+        - { $ref: "#/components/parameters/auditBefore" }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50000, default: 50000 } }
+        - { $ref: "#/components/parameters/auditActor" }
+        - { $ref: "#/components/parameters/auditAction" }
+        - { $ref: "#/components/parameters/auditTarget" }
+        - { $ref: "#/components/parameters/auditTargetType" }
+        - { $ref: "#/components/parameters/auditTargetId" }
+        - { $ref: "#/components/parameters/auditSince" }
+        - { $ref: "#/components/parameters/auditUntil" }
+        - { $ref: "#/components/parameters/auditQuery" }
+      responses:
+        "200": { $ref: "#/components/responses/AuditExport" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/webhooks:
+    get:
+      tags: [integrations]
+      summary: List platform webhooks (platform administrators only)
+      responses:
+        "200":
+          description: Webhooks
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Webhook" } }
+    post:
+      tags: [integrations]
+      summary: Create a platform webhook. The signing secret is returned once.
+      description: "Receives audit events that belong to no organization, such as sign-ins of accounts without a mailbox, failed sign-ins for unknown addresses, SCIM provisioning and identity provider changes. organizationId is null in their payloads. Signing, retries and URL rules are the same as for organization webhooks. Up to 20."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri, description: Must be https and must resolve to a public address }
+                events: { type: array, items: { type: string }, description: "Audit action names, or * for all" }
+      responses:
+        "201":
+          description: The webhook and its secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook: { $ref: "#/components/schemas/Webhook" }
+                  secret: { type: string }
+        "422": { $ref: "#/components/responses/Error" }
+  /admin/webhooks/{webhookId}:
+    delete:
+      tags: [integrations]
+      summary: Delete a platform webhook and its delivery history
+      parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+  /admin/webhooks/{webhookId}/deliveries:
+    get:
+      tags: [integrations]
+      summary: The last 50 deliveries of a platform webhook
+      description: Same shape as GET /webhooks/{webhookId}/deliveries.
+      parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Deliveries, newest first }
+        "404": { $ref: "#/components/responses/Error" }
+  /admin/webhooks/{webhookId}/test:
+    post:
+      tags: [integrations]
+      summary: Queue a webhook.test delivery to a platform webhook
+      parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "202": { description: Queued }
+        "404": { $ref: "#/components/responses/Error" }
   /hooks/identity-providers/{slug}:
     post:
       tags: [identity-providers]
@@ -4924,12 +5095,31 @@ components:
     traceStatus: { name: status, in: query, schema: { $ref: "#/components/schemas/MessageTraceStatus" } }
     traceFrom: { name: from, in: query, description: "Received at or after this time, schema: { type: string, format: date-time }" }
     traceTo: { name: to, in: query, description: "Received before this time, schema: { type: string, format: date-time }" }
+    auditBefore: { name: before, in: query, description: Only events with a smaller id, schema: { type: integer } }
+    auditLimit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    auditActor: { name: actor, in: query, description: "A user or API key id matches exactly; anything else matches part of the actor's email address or the API key name", schema: { type: string } }
+    auditAction: { name: action, in: query, description: "Action names, repeated or comma separated, up to 25. A trailing * matches a prefix, as in auth.*", schema: { type: string } }
+    auditTarget: { name: target, in: query, description: Part of the target type or id, or of the address in the event's metadata, schema: { type: string } }
+    auditTargetType: { name: targetType, in: query, description: Exact target type, such as mailbox or user, schema: { type: string } }
+    auditTargetId: { name: targetId, in: query, description: Exact target id, schema: { type: string } }
+    auditSince: { name: since, in: query, description: "RFC 3339 time or YYYY-MM-DD date (UTC), inclusive", schema: { type: string } }
+    auditUntil: { name: until, in: query, description: "RFC 3339 time, inclusive, or YYYY-MM-DD date (UTC), which includes that whole day", schema: { type: string } }
+    auditQuery: { name: q, in: query, description: "Full-text search over the action, target, IP address, metadata values and actor email. Accepts web search syntax: quoted phrases, or, and -word", schema: { type: string } }
+    auditFormat: { name: format, in: query, schema: { type: string, enum: [json, csv], default: json } }
+    auditOrg: { name: orgId, in: query, description: "An organization id, or none for events without an organization. Leave it out for every event.", schema: { type: string } }
   responses:
     ImportSchedules:
       description: Import schedules
       content:
         application/json:
           schema: { type: array, items: { $ref: "#/components/schemas/ImportSchedule" } }
+    AuditExport:
+      description: An attachment named audit-log.csv or audit-log.json
+      content:
+        application/json:
+          schema: { type: array, items: { $ref: "#/components/schemas/AuditEvent" } }
+        text/csv:
+          schema: { type: string, description: "Columns: id, created_at, org_id, actor_user_id, actor_email, action, target_type, target_id, ip, metadata" }
     Error:
       description: Error
       content:
@@ -5023,6 +5213,7 @@ components:
         createdAt: { type: string, format: date-time }
         deletedItemRetentionDays: { type: integer, minimum: 1, maximum: 30 }
         mailboxProtocols: { $ref: "#/components/schemas/Protocols" }
+        auditRetentionDays: { type: [integer, "null"], description: See AuditRetention.retentionDays }
     Protocols:
       type: array
       uniqueItems: true
@@ -5498,15 +5689,18 @@ components:
         multiOrg: { type: boolean }
     AuditEvent:
       type: object
-      required: [id, createdAt, action, targetType, targetId]
+      required: [id, createdAt, orgId, actorUserId, actorEmail, action, targetType, targetId, ip, metadata]
       properties:
         id: { type: integer }
         createdAt: { type: string, format: date-time }
+        orgId: { type: [string, "null"], format: uuid }
+        actorUserId: { type: [string, "null"], format: uuid, description: Null for API keys, identity providers and failed sign-ins }
         actorEmail: { type: [string, "null"] }
         action: { type: string }
         targetType: { type: string }
         targetId: { type: string }
         ip: { type: string }
+        metadata: { type: object, additionalProperties: true, description: "Details of the event. Requests made with an API key carry apiKeyId and apiKeyName." }
     MessageTraceStatus:
       type: string
       description: For a message with several recipients, the least successful outcome among the recipients you can see. junk means delivered to the recipient's Junk folder.
@@ -5573,6 +5767,13 @@ components:
                   service: { type: string }
                   sender: { type: string }
                   status: { $ref: "#/components/schemas/MessageTraceStatus" }
+    AuditRetention:
+      type: object
+      required: [retentionDays, defaultRetentionDays, effectiveRetentionDays]
+      properties:
+        retentionDays: { type: [integer, "null"], description: The organization's own setting; null follows the platform default }
+        defaultRetentionDays: { type: integer, description: "AETHER_AUDIT_RETENTION_DAYS; 0 keeps events forever" }
+        effectiveRetentionDays: { type: integer, description: "The value in force; 0 keeps events forever" }
     AppPassword:
       type: object
       required: [id, name, mailboxId, mailboxAddress, createdAt, scope]

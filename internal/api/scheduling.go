@@ -303,6 +303,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		earlyC = nil
 	}
 	defer stopEarly()
+	var lastAuditPurge time.Time
 	for {
 		if _, err := s.db.Exec(ctx, `DELETE FROM protected_messages WHERE id IN (
 			SELECT id FROM protected_messages WHERE expires_at <= now() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`); err != nil && ctx.Err() == nil {
@@ -335,6 +336,10 @@ func (s *Server) RunScheduler(ctx context.Context) {
 			}
 		}
 		s.deliverSecurityEmails(ctx)
+		if lastAuditPurge.IsZero() || time.Since(lastAuditPurge) >= auditPurgeInterval {
+			s.purgeExpiredAuditEvents(ctx)
+			lastAuditPurge = time.Now()
+		}
 		select {
 		case <-ctx.Done():
 			return

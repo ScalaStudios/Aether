@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/scalastudios/aether/internal/audit"
 	"github.com/scalastudios/aether/internal/config"
 	"github.com/scalastudios/aether/internal/mail"
 	"github.com/scalastudios/aether/internal/mail/queue"
@@ -37,6 +38,7 @@ type Server struct {
 	oidc               *oidcCache
 	resolve            resolver
 	webhookClient      *http.Client
+	auditOut           *audit.Dispatcher
 	imports            sync.Map
 	importSlots        chan struct{}
 	kickWake           chan struct{}
@@ -58,9 +60,20 @@ type Server struct {
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, box *secrets.Box, kv *redis.Client, mc *mail.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
+	var sinks []audit.Sink
+	if cfg.AuditSyslogAddr != "" {
+		sinks = append(sinks, audit.NewSyslogSink(cfg.AuditSyslogNetwork, cfg.AuditSyslogAddr, cfg.AuditSyslogFacility, cfg.AuditSyslogAppName, cfg.MailHostname))
+	}
+	if cfg.AuditOTLPEndpoint != "" {
+		sinks = append(sinks, audit.NewOTLPSink(cfg.AuditOTLPEndpoint, cfg.AuditOTLPHeaders, cfg.AuditOTLPServiceName))
+	}
+	return &Server{cfg: cfg, db: db, box: box, kv: kv, mail: mc, queue: queue.NewClient(cfg.PostfixAPIURL, cfg.PostfixAPIKey), log: log, oidc: newOIDCCache(), resolve: net.DefaultResolver, webhookClient: newWebhookClient(cfg.WebhookAllowPrivate), auditOut: audit.NewDispatcher(log, sinks...), kickWake: make(chan struct{}, 1), importSlots: make(chan struct{}, 4),
 		origin: secrets.Token(6), hub: newLiveHub(), notifyWake: make(chan struct{}, 1), scheduleWake: make(chan struct{}, 1), imageClient: newImageClient(), exportWake: make(chan struct{}, 1), securityNotifyWake: make(chan struct{}, 1),
 	}
+}
+
+func (s *Server) Close(ctx context.Context) error {
+	return s.auditOut.Close(ctx)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -229,6 +242,9 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/organizations/{orgId}/reports", s.getOrgReport)
 	authed("GET /api/v1/organizations/{orgId}/reports/{report}", s.getOrgSubReport)
 	authed("POST /api/v1/organizations/{orgId}/reports/refresh", s.refreshOrgStorage)
+	authed("GET /api/v1/organizations/{orgId}/audit/export", s.exportAudit)
+	authed("GET /api/v1/organizations/{orgId}/audit/retention", s.getAuditRetention)
+	authed("PUT /api/v1/organizations/{orgId}/audit/retention", s.updateAuditRetention)
 	authed("GET /api/v1/organizations/{orgId}/api-keys", s.listAPIKeys)
 	authed("POST /api/v1/organizations/{orgId}/api-keys", s.createAPIKey)
 	authed("DELETE /api/v1/api-keys/{keyId}", s.revokeAPIKey)
@@ -488,6 +504,13 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/admin/users/{id}/two-factor", s.resetUserTwoFactor)
 	authed("GET /api/v1/admin/blocked-addresses", s.listBlockedAddresses)
 	authed("DELETE /api/v1/admin/blocked-addresses/{id}", s.unblockAddress)
+	authed("GET /api/v1/admin/audit", s.listAdminAudit)
+	authed("GET /api/v1/admin/audit/export", s.exportAdminAudit)
+	authed("GET /api/v1/admin/webhooks", s.listAdminWebhooks)
+	authed("POST /api/v1/admin/webhooks", s.createAdminWebhook)
+	authed("DELETE /api/v1/admin/webhooks/{webhookId}", s.deleteAdminWebhook)
+	authed("GET /api/v1/admin/webhooks/{webhookId}/deliveries", s.listAdminWebhookDeliveries)
+	authed("POST /api/v1/admin/webhooks/{webhookId}/test", s.testAdminWebhook)
 
 	return instrument(securityHeaders(mux))
 }
@@ -674,6 +697,7 @@ func (s *Server) clientIP(r *http.Request) string {
 
 func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID *string, action, targetType, targetID string, meta map[string]any) {
 	var actor *string
+	var actorEmail string
 	if meta == nil {
 		meta = map[string]any{}
 	}
@@ -682,6 +706,7 @@ func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID
 		meta["apiKeyId"], meta["apiKeyName"] = p.apiKey.ID, p.apiKey.Name
 	case p != nil:
 		actor = &p.User.ID
+		actorEmail = p.User.Email
 	}
 	var ip string
 	if r != nil {
@@ -695,12 +720,29 @@ func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID
 		s.log.Error("audit write failed", "action", action, "err", err)
 		return
 	}
-	if orgID != nil && !strings.HasPrefix(action, "compliance.") {
-		s.enqueueWebhooks(ctx, *orgID, action, map[string]any{
-			"id": strconv.FormatInt(eventID, 10), "type": action, "createdAt": at, "organizationId": *orgID,
+	if !strings.HasPrefix(action, "compliance.") {
+		s.enqueueWebhooks(ctx, orgID, action, map[string]any{
+			"id": strconv.FormatInt(eventID, 10), "type": action, "createdAt": at, "organizationId": orgID,
 			"actor":  map[string]any{"userId": actor, "apiKeyId": meta["apiKeyId"]},
 			"target": map[string]string{"type": targetType, "id": targetID},
 			"data":   meta,
+		})
+	}
+	if s.auditOut != nil {
+		if actorEmail == "" && actor != nil {
+			_ = s.db.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, *actor).Scan(&actorEmail)
+		}
+		s.auditOut.Emit(ctx, audit.Event{
+			ID:          eventID,
+			CreatedAt:   at,
+			OrgID:       orgID,
+			ActorUserID: actor,
+			ActorEmail:  actorEmail,
+			Action:      action,
+			TargetType:  targetType,
+			TargetID:    targetID,
+			IP:          ip,
+			Metadata:    meta,
 		})
 	}
 }

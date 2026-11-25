@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/mail"
 	"net/netip"
 	"net/url"
@@ -11,6 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	DefaultAuditRetentionDays = 0
+	MaxAuditRetentionDays     = 3650
 )
 
 type Config struct {
@@ -65,6 +71,14 @@ type Config struct {
 	MessageSizeLimit      int64
 	MaxLinkBytes          int64
 	MaxStorageBytes       int64
+	AuditRetentionDays    int
+	AuditSyslogAddr       string
+	AuditSyslogNetwork    string
+	AuditSyslogFacility   int
+	AuditSyslogAppName    string
+	AuditOTLPEndpoint     string
+	AuditOTLPHeaders      map[string]string
+	AuditOTLPServiceName  string
 }
 
 func Load() (*Config, error) {
@@ -112,6 +126,11 @@ func Load() (*Config, error) {
 		APNSCertFile:          os.Getenv("AETHER_APNS_CERT_FILE"),
 		APNSKeyFile:           os.Getenv("AETHER_APNS_KEY_FILE"),
 		APNSSandbox:           os.Getenv("AETHER_APNS_SANDBOX") == "true",
+		AuditRetentionDays:    DefaultAuditRetentionDays,
+		AuditSyslogAddr:       strings.TrimSpace(os.Getenv("AETHER_AUDIT_SYSLOG_ADDR")),
+		AuditSyslogNetwork:    strings.ToLower(strings.TrimSpace(env("AETHER_AUDIT_SYSLOG_NETWORK", "udp"))),
+		AuditSyslogAppName:    strings.TrimSpace(env("AETHER_AUDIT_SYSLOG_APP_NAME", "aether")),
+		AuditOTLPServiceName:  strings.TrimSpace(env("OTEL_SERVICE_NAME", "aether-api")),
 	}
 	var errs []error
 	var err error
@@ -184,6 +203,51 @@ func Load() (*Config, error) {
 		errs = append(errs, fmt.Errorf("AETHER_SECRET_KEY must be 32 bytes, base64 encoded (generate with: openssl rand -base64 32)"))
 	}
 	c.SecretKey = key
+	if raw := strings.TrimSpace(os.Getenv("AETHER_AUDIT_RETENTION_DAYS")); raw != "" {
+		days, err := strconv.Atoi(raw)
+		if err != nil || days < 0 || days > MaxAuditRetentionDays {
+			errs = append(errs, fmt.Errorf("AETHER_AUDIT_RETENTION_DAYS must be an integer between 0 and %d", MaxAuditRetentionDays))
+		} else {
+			c.AuditRetentionDays = days
+		}
+	}
+	if c.AuditSyslogNetwork != "udp" && c.AuditSyslogNetwork != "tcp" {
+		errs = append(errs, errors.New("AETHER_AUDIT_SYSLOG_NETWORK must be udp or tcp"))
+	}
+	if c.AuditSyslogAddr != "" {
+		host, portStr, err := net.SplitHostPort(c.AuditSyslogAddr)
+		port, portErr := strconv.Atoi(portStr)
+		if err != nil || host == "" || portErr != nil || port < 1 || port > 65535 {
+			errs = append(errs, errors.New("AETHER_AUDIT_SYSLOG_ADDR must be host:port"))
+		}
+	}
+	facility, err := parseSyslogFacility(env("AETHER_AUDIT_SYSLOG_FACILITY", "auth"))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	c.AuditSyslogFacility = facility
+	rawOTLP := strings.TrimSpace(os.Getenv("AETHER_AUDIT_OTLP_ENDPOINT"))
+	if rawOTLP == "" {
+		rawOTLP = strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"))
+	}
+	if rawOTLP != "" {
+		ou, err := normalizeOTLPLogsEndpoint(rawOTLP)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			c.AuditOTLPEndpoint = ou
+		}
+	}
+	rawHeaders := strings.TrimSpace(os.Getenv("AETHER_AUDIT_OTLP_HEADERS"))
+	if rawHeaders == "" {
+		rawHeaders = strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS"))
+	}
+	if rawHeaders == "" {
+		rawHeaders = strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"))
+	}
+	if rawHeaders != "" {
+		c.AuditOTLPHeaders = parseOTLPHeaders(rawHeaders)
+	}
 	return c, errors.Join(errs...)
 }
 
@@ -208,4 +272,53 @@ func envInt64(key string, fallback, min, max int64) (int64, error) {
 		return 0, fmt.Errorf("%s must be an integer from %d to %d", key, min, max)
 	}
 	return n, nil
+}
+
+var syslogFacilities = map[string]int{
+	"kern": 0, "user": 1, "mail": 2, "daemon": 3, "auth": 4, "security": 4,
+	"syslog": 5, "lpr": 6, "news": 7, "uucp": 8, "cron": 9, "authpriv": 10, "ftp": 11,
+	"local0": 16, "local1": 17, "local2": 18, "local3": 19,
+	"local4": 20, "local5": 21, "local6": 22, "local7": 23,
+}
+
+func parseSyslogFacility(raw string) (int, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if f, ok := syslogFacilities[v]; ok {
+		return f, nil
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 23 {
+		return n, nil
+	}
+	return 0, errors.New("AETHER_AUDIT_SYSLOG_FACILITY must be a syslog facility name or integer 0..23")
+}
+
+func normalizeOTLPLogsEndpoint(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errors.New("AETHER_AUDIT_OTLP_ENDPOINT must be an absolute http(s) URL")
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/v1/logs"
+	}
+	return u.String(), nil
+}
+
+func parseOTLPHeaders(raw string) map[string]string {
+	out := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" {
+			continue
+		}
+		if decoded, err := url.QueryUnescape(v); err == nil {
+			v = decoded
+		}
+		out[k] = v
+	}
+	return out
 }

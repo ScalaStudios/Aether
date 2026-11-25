@@ -125,7 +125,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		authAttempts.WithLabelValues("password", "failure").Inc()
 		auth.BurnPasswordCheck(in.Password)
 		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
-		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", email, nil)
+		orgID := s.mailboxOrgForAccount(r.Context(), userID, email)
+		targetID := email
+		if userID != "" {
+			targetID = userID
+		}
+		s.audit(r.Context(), r, nil, orgID, "auth.login.failed", "user", targetID, map[string]any{"email": email, "method": "password"})
 		if userID != "" && status == "active" {
 			s.recordFailedSignIn(r.Context(), r, userID)
 		}
@@ -136,7 +141,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !ok {
 		authAttempts.WithLabelValues("password", "failure").Inc()
 		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
-		s.audit(r.Context(), r, nil, nil, "auth.login.failed", "user", userID, nil)
+		orgID := s.mailboxOrgForAccount(r.Context(), userID, email)
+		s.audit(r.Context(), r, nil, orgID, "auth.login.failed", "user", userID, map[string]any{"email": email, "method": "password"})
 		if status == "active" {
 			s.recordFailedSignIn(r.Context(), r, userID)
 		}
@@ -144,6 +150,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status != "active" {
+		authAttempts.WithLabelValues("password", "failure").Inc()
+		orgID := s.mailboxOrgForAccount(r.Context(), userID, email)
+		s.audit(r.Context(), r, nil, orgID, "auth.login.failed", "user", userID, map[string]any{"email": email, "method": "password", "reason": "account_disabled"})
 		writeError(w, http.StatusForbidden, "account_disabled", "This account is suspended. Contact your administrator.")
 		return
 	}
@@ -166,7 +175,7 @@ func (s *Server) finishPasswordLogin(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	authAttempts.WithLabelValues("password", "success").Inc()
-	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, nil, "auth.login", "user", userID, map[string]any{"method": method})
+	s.audit(r.Context(), r, &principal{User: User{ID: userID}}, s.mailboxOrgForAccount(r.Context(), userID, ""), "auth.login", "user", userID, map[string]any{"method": method})
 	s.checkSignInNotification(r.Context(), r, userID, method, "", sessionHash)
 	resp, err := s.sessionFor(r.Context(), userID)
 	if err != nil {
@@ -294,7 +303,8 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, p *principal) {
 		return
 	}
 	clearCookie(w, sessionCookie, s.cfg.SecureCookies())
-	s.audit(r.Context(), r, p, nil, "auth.logout", "user", p.User.ID, nil)
+	orgID := s.mailboxOrgForAccount(r.Context(), p.User.ID, p.User.Email)
+	s.audit(r.Context(), r, p, orgID, "auth.logout", "user", p.User.ID, nil)
 	resp := map[string]string{}
 	if p.providerID != nil {
 		if endSession := s.endSessionURL(r.Context(), *p.providerID, p.idToken); endSession != "" {

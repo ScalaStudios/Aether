@@ -3,6 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Building2, Plus } from "lucide-react"
+import { useSearchParams } from "next/navigation"
 import { useMemo, useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -19,7 +20,7 @@ import { ForwardingTab } from "@/components/admin/forwarding-tab"
 import { EncryptionTab } from "@/components/admin/encryption-tab"
 import { GeneralTab } from "@/components/admin/general-tab"
 import { IdentityProvidersTab } from "@/components/admin/identity-providers-tab"
-import { IntegrationsTab } from "@/components/admin/integrations-tab"
+import { IntegrationsTab, Webhooks } from "@/components/admin/integrations-tab"
 import { MailQueueTab } from "@/components/admin/mail-queue-tab"
 import { LimitsTab } from "@/components/admin/limits-tab"
 import { MailboxesTab } from "@/components/admin/mailboxes-tab"
@@ -57,6 +58,7 @@ import { hasPerm, isDomainScoped, orgMembership, roleBadgeTone, roleLabel } from
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/lib/i18n"
 import { organizationsQuery } from "@/lib/queries"
 import type { Organization, Session } from "@/lib/types"
+import { setQueryParams } from "@/lib/utils"
 
 const AUTO = "auto"
 
@@ -113,13 +115,25 @@ const orgTabs: OrgTabDef[] = [
   { value: "integrations", label: () => "Integrations", visible: (s, id) => hasPerm(s, id, "api_keys:read", "webhooks:read"), Component: IntegrationsTab },
 ]
 
+const reveal = (tab: HTMLElement | null) => tab?.scrollIntoView({ block: "nearest", inline: "nearest" })
+
+const platformTabs = [
+  { value: "identity", label: "Identity providers" },
+  { value: "mail-queue", label: "Mail queue" },
+  { value: "routing", label: "Outbound routing" },
+  { value: "blocked", label: "Blocked addresses" },
+  { value: "platform-audit", label: "Platform audit log" },
+  { value: "platform-webhooks", label: "Platform webhooks" },
+]
+
 export function AdminView() {
   const { t } = useI18n()
   const qc = useQueryClient()
   const session = useSession().data
   const orgs = useQuery(organizationsQuery)
-  const [orgId, setOrgId] = useState<string | null>(null)
-  const [tab, setTab] = useState("domains")
+  const params = useSearchParams()
+  const orgId = params.get("org")
+  const tab = params.get("tab") ?? "domains"
   const [creating, setCreating] = useState(false)
   const orgSchema = useMemo(
     () =>
@@ -146,7 +160,7 @@ export function AdminView() {
       toast.success(t("admin.createdOrgToast", { name: org.name }))
       qc.invalidateQueries({ queryKey: ["organizations"] })
       qc.invalidateQueries({ queryKey: ["session"] })
-      setOrgId(org.id)
+      setQueryParams({ org: org.id })
       setCreating(false)
       form.reset()
     },
@@ -160,9 +174,10 @@ export function AdminView() {
   const org = administered.find((o) => o.id === orgId) ?? administered[0]
   const membership = org ? orgMembership(session, org.id) : undefined
   const tabs = org ? orgTabs.filter((t) => t.visible(session, org.id)) : []
-  const active = platformAdmin && ["identity", "mail-queue", "routing", "blocked"].includes(tab) ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
+  const active = platformAdmin && platformTabs.some((t) => t.value === tab) ? tab : tabs.some((t) => t.value === tab) ? tab : tabs[0]?.value ?? "identity"
   const scoped = org ? isDomainScoped(session, org.id) : false
   const showRoleBadge = !platformAdmin && membership && membership.role !== "owner" && membership.role !== "admin"
+  const open = (id: string | undefined, value: string) => setQueryParams({ org: id ?? null, tab: value }, false)
 
   return (
     <PageContainer>
@@ -188,7 +203,7 @@ export function AdminView() {
         actions={
           <>
             {administered.length > 0 && org && (
-              <Select value={org.id} onValueChange={setOrgId}>
+              <Select value={org.id} onValueChange={(id) => open(id, active)}>
                 <SelectTrigger aria-label={t("admin.organization")} className="min-w-56">
                   <Building2 aria-hidden className="text-fg-tertiary" />
                   <SelectValue />
@@ -228,17 +243,19 @@ export function AdminView() {
             />
           )}
         {(tabs.length > 0 || platformAdmin) && (
-          <Tabs value={active} onValueChange={setTab}>
+          <Tabs value={active} onValueChange={(value) => open(org?.id, value)}>
             <TabsList>
               {tabs.map((t) => (
-                <TabsTrigger key={t.value} value={t.value}>
+                <TabsTrigger key={t.value} value={t.value} ref={t.value === active ? reveal : undefined}>
                   {org ? t.label(session, org.id) : t.value}
                 </TabsTrigger>
               ))}
-              {platformAdmin && <TabsTrigger value="identity">Identity providers</TabsTrigger>}
-              {platformAdmin && <TabsTrigger value="mail-queue">Mail queue</TabsTrigger>}
-              {platformAdmin && <TabsTrigger value="routing">Outbound routing</TabsTrigger>}
-              {platformAdmin && <TabsTrigger value="blocked">Blocked addresses</TabsTrigger>}
+              {platformAdmin &&
+                platformTabs.map((t) => (
+                  <TabsTrigger key={t.value} value={t.value} ref={t.value === active ? reveal : undefined}>
+                    {t.label}
+                  </TabsTrigger>
+                ))}
             </TabsList>
             {org &&
               tabs.map(({ value, Component }) => (
@@ -262,6 +279,16 @@ export function AdminView() {
             {platformAdmin && (
               <TabsContent value="blocked">
                 <BlockedAddressesTab />
+              </TabsContent>
+            )}
+            {platformAdmin && (
+              <TabsContent value="platform-audit">
+                <AuditTab key={org?.id} />
+              </TabsContent>
+            )}
+            {platformAdmin && (
+              <TabsContent value="platform-webhooks">
+                <Webhooks />
               </TabsContent>
             )}
           </Tabs>

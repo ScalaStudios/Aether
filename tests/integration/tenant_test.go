@@ -69,6 +69,9 @@ func TestTenantIsolation(t *testing.T) {
 		{"DELETE", "/organizations/" + b.orgID + "/members/" + bBob + "/sessions"},
 		{"DELETE", "/organizations/" + b.orgID + "/members/" + bBob + "/sessions/" + bBob},
 		{"GET", "/organizations/" + a.orgID + "/members/" + bBob + "/sessions"},
+		{"GET", "/organizations/" + b.orgID + "/audit/export"},
+		{"GET", "/organizations/" + b.orgID + "/audit/retention"},
+		{"PUT", "/organizations/" + b.orgID + "/audit/retention"},
 		{"GET", "/domains/" + b.domainID},
 		{"GET", "/domains/" + b.domainID + "/dns"},
 		{"POST", "/domains/" + b.domainID + "/verify"},
@@ -199,6 +202,11 @@ func TestTenantIsolation(t *testing.T) {
 	orgAdmin.must("POST", aImports+"/stop", map[string]any{"ids": []string{jobs[0].ID}}, nil, 404)
 	b.admin.must("POST", bImports+"/stop", map[string]any{"ids": []string{jobs[0].ID}}, nil, 204)
 	b.bob.must("GET", bImports, nil, nil, 403)
+	for _, path := range []string{"/admin/audit", "/admin/audit/export", "/admin/webhooks"} {
+		if got := orgAdmin.do("GET", path, nil, nil); got != 403 {
+			t.Errorf("org admin GET %s returned %d, want 403", path, got)
+		}
+	}
 
 	member := b.bob
 	if got := member.do("GET", "/organizations/"+b.orgID+"/mailboxes", nil, nil); got != 403 {

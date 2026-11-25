@@ -285,10 +285,13 @@ function APIKeys({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   )
 }
 
-function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
+export function Webhooks({ orgId, canWrite = true }: { orgId?: string; canWrite?: boolean }) {
   const { t } = useI18n()
   const qc = useQueryClient()
-  const hooks = useQuery({ queryKey: ["webhooks", orgId], queryFn: () => api<Webhook[]>(`/organizations/${orgId}/webhooks`) })
+  const collection = orgId ? `/organizations/${orgId}/webhooks` : "/admin/webhooks"
+  const item = orgId ? "/webhooks" : "/admin/webhooks"
+  const key = ["webhooks", orgId ?? "platform"]
+  const hooks = useQuery({ queryKey: key, queryFn: () => api<Webhook[]>(collection) })
   const [creating, setCreating] = useState(false)
   const [secret, setSecret] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Webhook | null>(null)
@@ -309,26 +312,26 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
 
   const create = useMutation({
     mutationFn: (v: HookValues) =>
-      api<{ webhook: Webhook; secret: string }>(`/organizations/${orgId}/webhooks`, {
+      api<{ webhook: Webhook; secret: string }>(collection, {
         method: "POST",
         body: { url: v.url, events: v.all ? ["*"] : splitEvents(v.events) },
       }),
     onSuccess: (data) => {
       setSecret(data.secret)
       form.reset()
-      qc.invalidateQueries({ queryKey: ["webhooks", orgId] })
+      qc.invalidateQueries({ queryKey: key })
     },
   })
   const remove = useMutation({
-    mutationFn: (id: string) => api(`/webhooks/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => api(`${item}/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       toast.success(t("admin.integrations.webhooks.deletedToast"))
       setDeleting(null)
-      qc.invalidateQueries({ queryKey: ["webhooks", orgId] })
+      qc.invalidateQueries({ queryKey: key })
     },
   })
   const test = useMutation({
-    mutationFn: (hook: Webhook) => api(`/webhooks/${hook.id}/test`, { method: "POST" }),
+    mutationFn: (hook: Webhook) => api(`${item}/${hook.id}/test`, { method: "POST" }),
     onSuccess: (_d, hook) => {
       toast.success(t("admin.integrations.webhooks.testQueuedToast"))
       qc.invalidateQueries({ queryKey: ["webhook-deliveries", hook.id] })
@@ -347,18 +350,22 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
   return (
     <section className="flex flex-col gap-6">
       <SectionHeader
-        title={t("admin.integrations.webhooks.title")}
-        description="Aether posts matching audit and mail delivery events to these URLs as JSON. Verify the Aether-Signature header with your secret."
+        title={orgId ? t("admin.integrations.webhooks.title") : "Platform webhooks"}
+        description={
+          orgId
+            ? "Aether posts matching audit and mail delivery events to these URLs as JSON. Verify the Aether-Signature header with your secret."
+            : "Aether posts audit events that belong to no organization, such as identity provider changes and sign-ins of accounts without a mailbox, to these URLs as JSON. Verify the Aether-Signature header with your secret."
+        }
         actions={
           canWrite && (
-            <Button variant="secondary" onClick={() => setCreating(true)}>
+            <Button variant={orgId ? "secondary" : "default"} onClick={() => setCreating(true)}>
               <Plus aria-hidden />
               {t("admin.integrations.webhooks.create")}
             </Button>
           )
         }
       />
-      <QueryView query={hooks} empty={<EmptyState icon={WebhookIcon} title="No webhooks" description="Create a webhook to receive events such as mailbox.create or message.bounced." />}>
+      <QueryView query={hooks} empty={<EmptyState icon={WebhookIcon} title="No webhooks" description={`Create a webhook to receive events such as ${orgId ? "mailbox.create or message.bounced" : "auth.login.failed or scim.user.create"}.`} />}>
         {(items) => (
           <Table>
             <TableHeader>
@@ -374,7 +381,7 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
             <TableBody>
               {items.map((h) => (
                 <TableRow key={h.id}>
-                  <TableCell className="font-mono text-sm break-all whitespace-normal">{h.url}</TableCell>
+                  <TableCell className="min-w-56 font-mono text-sm break-all whitespace-normal">{h.url}</TableCell>
                   <TableCell className="whitespace-normal">
                     {h.events.includes("*") ? (
                       t("admin.integrations.webhooks.allEvents")
@@ -438,7 +445,7 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
             </Field>
             <SwitchField control={form.control} name="all" id="webhook-all" label={t("admin.integrations.webhooks.allEvents")} />
             {!all && (
-              <Field id="webhook-events" label="Events" hint="Comma-separated event names, for example mailbox.create, message.bounced, message.delivered." error={form.formState.errors.events?.message}>
+              <Field id="webhook-events" label="Events" hint={`Comma-separated event names, for example ${orgId ? "mailbox.create, message.bounced, message.delivered" : "auth.login.failed, scim.user.create"}.`} error={form.formState.errors.events?.message}>
                 <Input id="webhook-events" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!form.formState.errors.events} {...form.register("events")} />
               </Field>
             )}
@@ -456,22 +463,22 @@ function Webhooks({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
         onConfirm={() => deleting && remove.mutate(deleting.id)}
       />
 
-      {viewing && <DeliveriesDialog key={viewing.id} webhook={viewing} onClose={() => setViewing(null)} />}
+      {viewing && <DeliveriesDialog key={viewing.id} webhook={viewing} path={`${item}/${viewing.id}/deliveries`} onClose={() => setViewing(null)} />}
     </section>
   )
 }
 
-function DeliveriesDialog({ webhook, onClose }: { webhook: Webhook; onClose: () => void }) {
+function DeliveriesDialog({ webhook, path, onClose }: { webhook: Webhook; path: string; onClose: () => void }) {
   const { t } = useI18n()
   const deliveries = useQuery({
     queryKey: ["webhook-deliveries", webhook.id],
-    queryFn: () => api<WebhookDelivery[]>(`/webhooks/${webhook.id}/deliveries`),
+    queryFn: () => api<WebhookDelivery[]>(path),
     refetchInterval: (q) => (q.state.data?.some((d) => d.status === "pending") ? 5000 : false),
   })
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[800px]">
+      <DialogContent className="grid-cols-1 sm:max-w-[800px]">
         <DialogHeader>
           <DialogTitle>{t("admin.integrations.webhooks.deliveriesTitle")}</DialogTitle>
           <DialogDescription className="break-all">{t("admin.integrations.webhooks.deliveriesDescription", { url: webhook.url })}</DialogDescription>

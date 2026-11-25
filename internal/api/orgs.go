@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,9 +24,10 @@ type organization struct {
 	DeletedItemRetentionDays int      `json:"deletedItemRetentionDays"`
 	MailboxProtocols         []string `json:"mailboxProtocols"`
 	DefaultLocale            string   `json:"defaultLocale"`
+	AuditRetentionDays       *int     `json:"auditRetentionDays"`
 }
 
-const organizationColumns = `id, name, slug, created_at, spam_learning, deleted_item_retention_days, mailbox_protocols, default_locale`
+const organizationColumns = `id, name, slug, created_at, spam_learning, deleted_item_retention_days, mailbox_protocols, default_locale, audit_retention_days`
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request, p *principal) {
 	rows, err := s.db.Query(r.Context(), `
@@ -70,7 +70,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, p *p
 	}
 	var org organization
 	err := s.db.QueryRow(r.Context(), `INSERT INTO organizations (name, slug, default_locale) VALUES ($1, $2, $3) RETURNING `+organizationColumns, in.Name, in.Slug, defaultLocale).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale)
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale, &org.AuditRetentionDays)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		writeError(w, http.StatusConflict, "slug_taken", "Another organization already uses this slug.")
@@ -106,7 +106,7 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request, p *prin
 		return
 	}
 	var org organization
-	err := s.db.QueryRow(r.Context(), `SELECT `+organizationColumns+` FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale)
+	err := s.db.QueryRow(r.Context(), `SELECT `+organizationColumns+` FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale, &org.AuditRetentionDays)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -158,7 +158,7 @@ func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *p
 		UPDATE organizations SET spam_learning = coalesce($2, spam_learning), deleted_item_retention_days = coalesce($3, deleted_item_retention_days),
 			mailbox_protocols = coalesce($4, mailbox_protocols), default_locale = coalesce($5, default_locale)
 		WHERE id = $1 RETURNING `+organizationColumns, orgID, in.SpamLearning, in.DeletedItemRetentionDays, in.MailboxProtocols, locale).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale)
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning, &org.DeletedItemRetentionDays, &org.MailboxProtocols, &org.DefaultLocale, &org.AuditRetentionDays)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -224,40 +224,6 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, p *principa
 		members[i].DomainIDs = nonNil(members[i].DomainIDs)
 	}
 	writeJSON(w, http.StatusOK, nonNil(members))
-}
-
-func (s *Server) listAudit(w http.ResponseWriter, r *http.Request, p *principal) {
-	orgID, ok := s.orgPerm(w, r, p, permAuditRead)
-	if !ok {
-		return
-	}
-	before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
-	if err != nil || before <= 0 {
-		before = 1<<63 - 1
-	}
-	type event struct {
-		ID         int64     `json:"id"`
-		CreatedAt  time.Time `json:"createdAt"`
-		ActorEmail *string   `json:"actorEmail"`
-		Action     string    `json:"action"`
-		TargetType string    `json:"targetType"`
-		TargetID   string    `json:"targetId"`
-		IP         string    `json:"ip"`
-	}
-	rows, err := s.db.Query(r.Context(), `
-		SELECT e.id, e.created_at, u.email, e.action, e.target_type, e.target_id, e.ip
-		FROM audit_events e LEFT JOIN users u ON u.id = e.actor_user_id
-		WHERE e.org_id = $1 AND e.id < $2 ORDER BY e.id DESC LIMIT 50`, orgID, before)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	events, err := pgx.CollectRows(rows, pgx.RowToStructByPos[event])
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, nonNil(events))
 }
 
 func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal) {

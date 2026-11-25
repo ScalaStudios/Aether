@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { Suspense } from "react"
 
 import { AdminView } from "@/components/admin/admin-view"
 
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 }
 
 export default function AdminPage() {
-  return <AdminView />
+  return (
+    <Suspense>
+      <AdminView />
+    </Suspense>
+  )
 }

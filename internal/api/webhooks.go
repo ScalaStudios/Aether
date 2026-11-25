@@ -92,7 +92,7 @@ func signWebhook(secret, body []byte, at time.Time) string {
 	return "t=" + ts + ",v1=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func (s *Server) enqueueWebhooks(ctx context.Context, orgID, event string, payload map[string]any) {
+func (s *Server) enqueueWebhooks(ctx context.Context, orgID *string, event string, payload map[string]any) {
 	if err := enqueueWebhooks(ctx, s.db, orgID, event, payload); err != nil {
 		s.log.Error("queueing webhooks failed", "event", event, "err", err)
 	}
@@ -100,14 +100,14 @@ func (s *Server) enqueueWebhooks(ctx context.Context, orgID, event string, paylo
 
 func enqueueWebhooks(ctx context.Context, db interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, orgID, event string, payload map[string]any) error {
+}, orgID *string, event string, payload map[string]any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 	_, err = db.Exec(ctx, `
 		INSERT INTO webhook_deliveries (webhook_id, event, payload)
-		SELECT id, $2, $3 FROM webhooks WHERE org_id = $1 AND active AND ($2 = ANY (events) OR '*' = ANY (events))`, orgID, event, body)
+		SELECT id, $2, $3 FROM webhooks WHERE org_id IS NOT DISTINCT FROM $1::uuid AND active AND ($2 = ANY (events) OR '*' = ANY (events))`, orgID, event, body)
 	return err
 }
 
@@ -185,6 +185,11 @@ type webhook struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type webhookInput struct {
+	URL    string   `json:"url"`
+	Events []string `json:"events"`
+}
+
 func (s *Server) webhookOrg(w http.ResponseWriter, r *http.Request, p *principal, perm string) (string, bool) {
 	return s.orgPerm(w, r, p, perm)
 }
@@ -193,7 +198,7 @@ func (s *Server) ownedWebhook(w http.ResponseWriter, r *http.Request, p *princip
 	if id, ok = pathID(w, r, "webhookId"); !ok {
 		return "", "", false
 	}
-	if err := s.db.QueryRow(r.Context(), `SELECT org_id FROM webhooks WHERE id = $1`, id).Scan(&orgID); err != nil || p.orgRole(orgID) == "" {
+	if err := s.db.QueryRow(r.Context(), `SELECT org_id FROM webhooks WHERE id = $1 AND org_id IS NOT NULL`, id).Scan(&orgID); err != nil || p.orgRole(orgID) == "" {
 		notFound(w)
 		return "", "", false
 	}
@@ -202,6 +207,22 @@ func (s *Server) ownedWebhook(w http.ResponseWriter, r *http.Request, p *princip
 		return "", "", false
 	}
 	return id, orgID, true
+}
+
+func (s *Server) platformWebhook(w http.ResponseWriter, r *http.Request, p *principal) (string, bool) {
+	if !s.requirePlatformAdmin(w, p) {
+		return "", false
+	}
+	id, ok := pathID(w, r, "webhookId")
+	if !ok {
+		return "", false
+	}
+	var exists bool
+	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM webhooks WHERE id = $1 AND org_id IS NULL)`, id).Scan(&exists); err != nil || !exists {
+		notFound(w)
+		return "", false
+	}
+	return id, true
 }
 
 func (s *Server) listWebhooks(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -222,7 +243,27 @@ func (s *Server) listWebhooks(w http.ResponseWriter, r *http.Request, p *princip
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, hooks)
+	writeJSON(w, http.StatusOK, nonNil(hooks))
+}
+
+func (s *Server) listAdminWebhooks(w http.ResponseWriter, r *http.Request, p *principal) {
+	if !s.requirePlatformAdmin(w, p) {
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `SELECT id, url, events, active, created_at FROM webhooks WHERE org_id IS NULL ORDER BY created_at`)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	hooks, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (webhook, error) {
+		var h webhook
+		return h, row.Scan(&h.ID, &h.URL, &h.Events, &h.Active, &h.CreatedAt)
+	})
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(hooks))
 }
 
 func (s *Server) validWebhookURL(raw string) bool {
@@ -233,32 +274,36 @@ func (s *Server) validWebhookURL(raw string) bool {
 	return u.Scheme == "https" || (u.Scheme == "http" && s.cfg.WebhookAllowPrivate)
 }
 
+func (s *Server) validateWebhookInput(w http.ResponseWriter, r *http.Request, in *webhookInput) bool {
+	if !decode(w, r, 8<<10, in) {
+		return false
+	}
+	in.URL = strings.TrimSpace(in.URL)
+	if !s.validWebhookURL(in.URL) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_url", "Enter an https:// URL without a username or password.")
+		return false
+	}
+	if len(in.Events) == 0 || len(in.Events) > 50 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_events", "Choose between 1 and 50 events, or * for all events.")
+		return false
+	}
+	for _, e := range in.Events {
+		if e != "*" && !eventNamePattern.MatchString(e) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_events", e+" is not a valid event name.")
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
 	orgID, ok := s.webhookOrg(w, r, p, permWebhooksWrite)
 	if !ok {
 		return
 	}
-	var in struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
-	}
-	if !decode(w, r, 8<<10, &in) {
+	var in webhookInput
+	if !s.validateWebhookInput(w, r, &in) {
 		return
-	}
-	in.URL = strings.TrimSpace(in.URL)
-	if !s.validWebhookURL(in.URL) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_url", "Enter an https:// URL without a username or password.")
-		return
-	}
-	if len(in.Events) == 0 || len(in.Events) > 50 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_events", "Choose between 1 and 50 events, or * for all events.")
-		return
-	}
-	for _, e := range in.Events {
-		if e != "*" && !eventNamePattern.MatchString(e) {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_events", e+" is not a valid event name.")
-			return
-		}
 	}
 	var count int
 	s.db.QueryRow(r.Context(), `SELECT count(*) FROM webhooks WHERE org_id = $1`, orgID).Scan(&count)
@@ -266,6 +311,27 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, p *princi
 		writeError(w, http.StatusUnprocessableEntity, "too_many_webhooks", "An organization can have up to 20 webhooks.")
 		return
 	}
+	s.insertWebhook(w, r, p, &orgID, in)
+}
+
+func (s *Server) createAdminWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
+	if !s.requirePlatformAdmin(w, p) {
+		return
+	}
+	var in webhookInput
+	if !s.validateWebhookInput(w, r, &in) {
+		return
+	}
+	var count int
+	s.db.QueryRow(r.Context(), `SELECT count(*) FROM webhooks WHERE org_id IS NULL`).Scan(&count)
+	if count >= 20 {
+		writeError(w, http.StatusUnprocessableEntity, "too_many_webhooks", "The platform can have up to 20 webhooks.")
+		return
+	}
+	s.insertWebhook(w, r, p, nil, in)
+}
+
+func (s *Server) insertWebhook(w http.ResponseWriter, r *http.Request, p *principal, orgID *string, in webhookInput) {
 	secret := "whsec_" + secrets.Token(30)
 	var createdBy *string
 	if p.apiKey == nil {
@@ -280,7 +346,7 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request, p *princi
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), r, p, &orgID, "webhook.create", "webhook", h.ID, map[string]any{"url": h.URL, "events": h.Events})
+	s.audit(r.Context(), r, p, orgID, "webhook.create", "webhook", h.ID, map[string]any{"url": h.URL, "events": h.Events})
 	writeJSON(w, http.StatusCreated, map[string]any{"webhook": h, "secret": secret})
 }
 
@@ -297,11 +363,36 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request, p *princi
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) deleteAdminWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
+	id, ok := s.platformWebhook(w, r, p)
+	if !ok {
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `DELETE FROM webhooks WHERE id = $1 AND org_id IS NULL`, id); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r.Context(), r, p, nil, "webhook.delete", "webhook", id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request, p *principal) {
 	id, _, ok := s.ownedWebhook(w, r, p, permWebhooksRead)
 	if !ok {
 		return
 	}
+	s.writeWebhookDeliveries(w, r, id)
+}
+
+func (s *Server) listAdminWebhookDeliveries(w http.ResponseWriter, r *http.Request, p *principal) {
+	id, ok := s.platformWebhook(w, r, p)
+	if !ok {
+		return
+	}
+	s.writeWebhookDeliveries(w, r, id)
+}
+
+func (s *Server) writeWebhookDeliveries(w http.ResponseWriter, r *http.Request, id string) {
 	type delivery struct {
 		ID           string     `json:"id"`
 		Event        string     `json:"event"`
@@ -325,7 +416,7 @@ func (s *Server) listDeliveries(w http.ResponseWriter, r *http.Request, p *princ
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, nonNil(out))
 }
 
 func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -333,6 +424,18 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request, p *principa
 	if !ok {
 		return
 	}
+	s.queueTestWebhook(w, r, id, &orgID)
+}
+
+func (s *Server) testAdminWebhook(w http.ResponseWriter, r *http.Request, p *principal) {
+	id, ok := s.platformWebhook(w, r, p)
+	if !ok {
+		return
+	}
+	s.queueTestWebhook(w, r, id, nil)
+}
+
+func (s *Server) queueTestWebhook(w http.ResponseWriter, r *http.Request, id string, orgID *string) {
 	body, _ := json.Marshal(map[string]any{"type": "webhook.test", "createdAt": time.Now().UTC(), "organizationId": orgID, "data": map[string]any{}})
 	var deliveryID string
 	if err := s.db.QueryRow(r.Context(), `INSERT INTO webhook_deliveries (webhook_id, event, payload) VALUES ($1, 'webhook.test', $2) RETURNING id`, id, body).Scan(&deliveryID); err != nil {

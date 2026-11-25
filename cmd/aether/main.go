@@ -251,7 +251,9 @@ func serve(log *slog.Logger) error {
 	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	return httpServer.Shutdown(shutdownCtx)
+	err = httpServer.Shutdown(shutdownCtx)
+	_ = srv.Close(shutdownCtx)
+	return err
 }
 
 func setupTracing(ctx context.Context) (func(), error) {
