@@ -28,7 +28,10 @@ type eventAttendee struct {
 	Name    string `json:"name,omitempty"`
 	Address string `json:"address"`
 	Status  string `json:"status"`
+	Kind    string `json:"kind,omitempty"`
 }
+
+var attendeeKinds = map[string]string{"ROOM": "room", "RESOURCE": "equipment"}
 
 func calAddress(v string) string {
 	v = strings.TrimSpace(v)
@@ -53,7 +56,7 @@ func eventAttendees(comp *ical.Component) []eventAttendee {
 		if status == "" {
 			status = "needs-action"
 		}
-		out = append(out, eventAttendee{Name: p.Params.Get(ical.ParamCommonName), Address: calAddress(p.Value), Status: status})
+		out = append(out, eventAttendee{Name: p.Params.Get(ical.ParamCommonName), Address: calAddress(p.Value), Status: status, Kind: attendeeKinds[strings.ToUpper(p.Params.Get(ical.ParamCalendarUserType))]})
 	}
 	return out
 }
@@ -145,19 +148,23 @@ func describeEvent(comp *ical.Component) string {
 	if ev.Description != "" {
 		lines = append(lines, "", ev.Description)
 	}
+	if comment, _ := comp.Props.Text(ical.PropComment); comment != "" {
+		lines = append(lines, "", comment)
+	}
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
-func (s *Server) sendITIP(from *ownedMailbox, sender *mailpkg.Address, to []mailpkg.Address, subject, method string, comps ...*ical.Component) error {
-	if len(to) == 0 {
-		return nil
+func (s *Server) sendITIP(ctx context.Context, from *ownedMailbox, sender *mailpkg.Address, to []mailpkg.Address, subject, method string, comps ...*ical.Component) ([]bookingOutcome, error) {
+	to, outcomes, err := s.deliverToResources(ctx, method, to, comps)
+	if err != nil || len(to) == 0 {
+		return outcomes, err
 	}
 	cal := newCalendar()
 	cal.Props.SetText(ical.PropMethod, method)
 	cal.Children = append(cal.Children, comps...)
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
-		return err
+		return outcomes, err
 	}
 	out := &mailpkg.Outgoing{
 		From:     mailpkg.Address{Name: from.DisplayName, Address: from.Address},
@@ -169,9 +176,9 @@ func (s *Server) sendITIP(from *ownedMailbox, sender *mailpkg.Address, to []mail
 	}
 	raw, _, err := out.Build(s.cfg.MailHostname)
 	if err != nil {
-		return err
+		return outcomes, err
 	}
-	return s.mail.Send(out.From, out.Recipients(), raw)
+	return outcomes, s.mail.Send(out.From, out.Recipients(), raw)
 }
 
 func cancelledCopy(comp *ical.Component, attendees []mailpkg.Address, sequence int) *ical.Component {
@@ -424,7 +431,7 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 		if !m.SendAs {
 			onBehalf = &mailpkg.Address{Name: p.User.DisplayName, Address: p.User.Email}
 		}
-		if err := s.sendITIP(m, onBehalf, []mailpkg.Address{organizer}, replyVerbs[partStat]+": "+title, "REPLY", replyCopy(comp, me, partStat)); err != nil {
+		if _, err := s.sendITIP(ctx, m, onBehalf, []mailpkg.Address{organizer}, replyVerbs[partStat]+": "+title, "REPLY", replyCopy(comp, me, partStat)); err != nil {
 			s.log.Warn("invitation reply rejected", "mailbox", m.ID, "err", err)
 			writeError(w, http.StatusBadGateway, "send_failed", "Your calendar was updated, but the reply to the organizer could not be sent: "+err.Error())
 			return
@@ -464,15 +471,7 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 			}
 			break
 		}
-		rid := comp.Props.Get(ical.PropRecurrenceID).Value
-		kept := stored.Cal.Children[:0]
-		for _, c := range stored.Cal.Children {
-			if p := c.Props.Get(ical.PropRecurrenceID); c.Name != ical.CompEvent || p == nil || p.Value != rid {
-				kept = append(kept, c)
-			}
-		}
-		comp.Props.SetText(ical.PropStatus, "CANCELLED")
-		stored.Cal.Children = append(kept, comp)
+		cancelInstance(stored.Cal, comp)
 		if err := s.storeEvent(ctx, stored.CollectionID, stored.Name, stored.Cal, stored.ETag); err != nil {
 			s.davError(w, r, err)
 			return
@@ -504,7 +503,8 @@ func (s *Server) notifyDeletedEvent(ctx context.Context, user User, data string)
 		if status := attendeeStatus(comp, me); status == "" || status == "declined" {
 			return nil
 		}
-		return s.sendITIP(m, nil, []mailpkg.Address{organizer}, "Declined: "+title, "REPLY", replyCopy(comp, mailpkg.Address{Name: m.DisplayName, Address: me}, "DECLINED"))
+		_, err := s.sendITIP(ctx, m, nil, []mailpkg.Address{organizer}, "Declined: "+title, "REPLY", replyCopy(comp, mailpkg.Address{Name: m.DisplayName, Address: me}, "DECLINED"))
+		return err
 	}
 	var attendees []mailpkg.Address
 	for _, a := range eventAttendees(comp) {
@@ -512,5 +512,6 @@ func (s *Server) notifyDeletedEvent(ctx context.Context, user User, data string)
 			attendees = append(attendees, mailpkg.Address{Name: a.Name, Address: a.Address})
 		}
 	}
-	return s.sendITIP(m, nil, attendees, "Cancelled: "+title, "CANCEL", cancelledCopy(comp, attendees, eventSequence(comp)+1))
+	_, err = s.sendITIP(ctx, m, nil, attendees, "Cancelled: "+title, "CANCEL", cancelledCopy(comp, attendees, eventSequence(comp)+1))
+	return err
 }

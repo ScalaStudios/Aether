@@ -17,7 +17,7 @@ export function SegmentedControl<T extends string | number>({
 }) {
   const pressed = (v: T) => (Array.isArray(value) ? value.includes(v) : value === v)
   return (
-    <div role="group" aria-label={label} className="flex gap-1 rounded-lg border border-strong p-1">
+    <div role="group" aria-label={label} className="flex flex-wrap gap-1 rounded-lg border border-strong p-1">
       {options.map((o) => (
         <Button
           key={o.value}

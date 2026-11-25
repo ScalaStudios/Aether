@@ -422,11 +422,11 @@ func (s *Server) holdMessage(ctx context.Context, msg *mailflow.Message, out mai
 		return err
 	}
 	s.log.Info("mail flow held a message for approval", "id", id, "rule", rule.Rule.Name, "sender", msg.Sender)
-	go s.notifyApprovers(id, rule.Rule.Name, msg.Sender, recipients, subject, preview, out.Approvers)
+	go s.notifyFlowApprovers(id, rule.Rule.Name, msg.Sender, recipients, subject, preview, out.Approvers)
 	return nil
 }
 
-func (s *Server) notifyApprovers(id, rule, sender string, recipients []string, subject, preview string, approvers []string) {
+func (s *Server) notifyFlowApprovers(id, rule, sender string, recipients []string, subject, preview string, approvers []string) {
 	text := fmt.Sprintf("%s sent a message to %s that the mail flow rule \"%s\" holds for approval.\n\nSubject: %s\n\n%s\n\nApprove or reject it in Aether under Settings, Messages held by mail flow rules:\n%s/settings\n\nMessages that are not approved within 7 days are discarded.\n",
 		sender, strings.Join(recipients, ", "), rule, subject, preview, strings.TrimRight(s.cfg.PublicURL.String(), "/"))
 	note := mailpkg.Outgoing{

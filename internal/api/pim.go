@@ -273,16 +273,17 @@ type directoryEntry struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
 	Source  string `json:"source"`
+	Kind    string `json:"kind,omitempty"`
 }
 
 func (s *Server) directory(ctx context.Context, userID, q string, limit int) ([]directoryEntry, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT coalesce(nullif(m.display_name, ''), nullif(u.display_name, ''), ''), m.address, 'directory'
-		FROM mailboxes m LEFT JOIN users u ON u.id = m.owner_user_id
+		SELECT coalesce(nullif(m.display_name, ''), nullif(u.display_name, ''), ''), m.address, 'directory', coalesce(r.resource_type, '')
+		FROM mailboxes m LEFT JOIN users u ON u.id = m.owner_user_id LEFT JOIN resources r ON r.mailbox_id = m.id
 		WHERE m.active AND m.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
 		  AND (m.address LIKE $2 OR lower(m.display_name) LIKE $2 OR lower(coalesce(u.display_name, '')) LIKE $2)
 		UNION ALL
-		SELECT a.name, a.address, 'directory' FROM aliases a
+		SELECT a.name, a.address, 'directory', '' FROM aliases a
 		WHERE a.kind = 'list' AND a.active AND a.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1)
 		  AND (a.address LIKE $2 OR lower(a.name) LIKE $2)
 		ORDER BY 2 LIMIT $3`, userID, q, limit)
@@ -309,7 +310,7 @@ func (s *Server) suggestRecipients(w http.ResponseWriter, r *http.Request, p *pr
 	}
 	like := "%" + q + "%"
 	rows, err := s.db.Query(r.Context(), `
-		SELECT o.summary, e, 'contact' FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id, unnest(o.emails) e
+		SELECT o.summary, e, 'contact', '' FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id, unnest(o.emails) e
 		WHERE c.user_id = $1 AND c.kind = 'addressbook' AND (e LIKE $2 OR lower(o.summary) LIKE $2) LIMIT 10`, p.User.ID, like)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -411,7 +412,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 		s.internalError(w, r, err)
 		return
 	}
-	out, err := s.eventsIn(ctx, calendars, from, to)
+	out, err := eventsIn(ctx, s.db, calendars, from, to)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -419,13 +420,13 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, p *principal
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) eventsIn(ctx context.Context, calendars []collectionRow, from, to time.Time) ([]calendarEvent, error) {
+func eventsIn(ctx context.Context, db queryer, calendars []collectionRow, from, to time.Time) ([]calendarEvent, error) {
 	byID := map[string]collectionRow{}
 	ids := make([]string, len(calendars))
 	for i, c := range calendars {
 		byID[c.ID], ids[i] = c, c.ID
 	}
-	rows, err := s.db.Query(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT o.collection_id, o.name, o.data FROM dav_objects o
 		WHERE o.collection_id = ANY($1) AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
 	if err != nil {
@@ -434,7 +435,6 @@ func (s *Server) eventsIn(ctx context.Context, calendars []collectionRow, from, 
 	defer rows.Close()
 	out := []calendarEvent{}
 	for rows.Next() {
-		first := len(out)
 		var collectionID, name, data string
 		if err := rows.Scan(&collectionID, &name, &data); err != nil {
 			return nil, err
@@ -443,61 +443,67 @@ func (s *Server) eventsIn(ctx context.Context, calendars []collectionRow, from, 
 		if err != nil {
 			continue
 		}
-		var master *ical.Component
-		overrides := map[int64]*ical.Component{}
-		for _, comp := range cal.Events() {
-			if comp.Props.Get(ical.PropRecurrenceID) == nil {
-				master = comp.Component
-			} else if rid, err := comp.Props.DateTime(ical.PropRecurrenceID, time.UTC); err == nil {
-				overrides[rid.Unix()] = comp.Component
-			}
-		}
-		var series calendarEvent
-		if master != nil {
-			base, ev, err := eventFromComponent(name, master)
-			if err != nil {
-				continue
-			}
-			series = base
-			set, err := ev.RecurrenceSet(time.UTC)
-			if err != nil || set == nil {
-				if base.Start.Before(to) && base.End.After(from) {
-					out = append(out, base)
-				}
-			} else {
-				length := base.End.Sub(base.Start)
-				for _, occurrence := range set.Between(from.Add(-length), to, true) {
-					if overrides[occurrence.Unix()] != nil {
-						continue
-					}
-					o := base
-					o.Start, o.End = occurrence, occurrence.Add(length)
-					out = append(out, o)
-					if len(out) > 5000 {
-						break
-					}
-				}
-			}
-		}
-		for _, comp := range overrides {
-			if status, _ := comp.Props.Text(ical.PropStatus); strings.EqualFold(status, "CANCELLED") {
-				continue
-			}
-			o, _, err := eventFromComponent(name, comp)
-			if err != nil || !o.Start.Before(to) || !o.End.After(from) {
-				continue
-			}
-			if master != nil {
-				o.SeriesStart, o.Repeat = series.SeriesStart, series.Repeat
-			}
-			out = append(out, o)
-		}
-		for i := first; i < len(out); i++ {
-			out[i].CalendarID, out[i].ReadOnly = byID[collectionID].Slug, byID[collectionID].Access == "read"
+		for _, e := range expandObject(name, cal, from, to) {
+			e.CalendarID, e.ReadOnly = byID[collectionID].Slug, byID[collectionID].Access == "read"
+			out = append(out, e)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
 	return out, rows.Err()
+}
+
+func expandObject(name string, cal *ical.Calendar, from, to time.Time) []calendarEvent {
+	out := []calendarEvent{}
+	var master *ical.Component
+	overrides := map[int64]*ical.Component{}
+	for _, comp := range cal.Events() {
+		if comp.Props.Get(ical.PropRecurrenceID) == nil {
+			master = comp.Component
+		} else if rid, err := comp.Props.DateTime(ical.PropRecurrenceID, time.UTC); err == nil {
+			overrides[rid.Unix()] = comp.Component
+		}
+	}
+	var series calendarEvent
+	if master != nil {
+		base, ev, err := eventFromComponent(name, master)
+		if err != nil {
+			return out
+		}
+		series = base
+		set, err := ev.RecurrenceSet(time.UTC)
+		if err != nil || set == nil {
+			if base.Start.Before(to) && base.End.After(from) {
+				out = append(out, base)
+			}
+		} else {
+			length := base.End.Sub(base.Start)
+			for _, occurrence := range set.Between(from.Add(-length), to, true) {
+				if overrides[occurrence.Unix()] != nil {
+					continue
+				}
+				o := base
+				o.Start, o.End = occurrence, occurrence.Add(length)
+				out = append(out, o)
+				if len(out) > 5000 {
+					break
+				}
+			}
+		}
+	}
+	for _, comp := range overrides {
+		if status, _ := comp.Props.Text(ical.PropStatus); strings.EqualFold(status, "CANCELLED") {
+			continue
+		}
+		o, _, err := eventFromComponent(name, comp)
+		if err != nil || !o.Start.Before(to) || !o.End.After(from) {
+			continue
+		}
+		if master != nil {
+			o.SeriesStart, o.Repeat = series.SeriesStart, series.Repeat
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 type eventInput struct {
@@ -628,6 +634,15 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		if len(attendees) > 0 {
 			event.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
 		}
+		addresses := make([]string, len(attendees))
+		for i, a := range attendees {
+			addresses[i] = a.Address
+		}
+		kinds, err := s.resourceKinds(ctx, addresses)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
 		for _, a := range attendees {
 			status := previous[a.Address]
 			if status == "" {
@@ -635,6 +650,10 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			}
 			delete(previous, a.Address)
 			prop := attendeeProp(a, status, status == "NEEDS-ACTION")
+			if kind := kinds[a.Address]; kind != "" {
+				prop.Params.Set(ical.ParamCalendarUserType, resourceUserTypes[kind])
+				prop.Params.Set(ical.ParamRole, "NON-PARTICIPANT")
+			}
 			event.Props.Add(&prop)
 		}
 		for address := range previous {
@@ -666,10 +685,11 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	if len(removed) > 0 {
 		cancel := cancelledCopy(event.Component, removed, sequence)
 		cancel.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
-		err = s.sendITIP(organizer, nil, removed, "Cancelled: "+in.Title, "CANCEL", cancel)
+		_, err = s.sendITIP(ctx, organizer, nil, removed, "Cancelled: "+in.Title, "CANCEL", cancel)
 	}
+	var bookings []bookingOutcome
 	if err == nil {
-		err = s.sendITIP(organizer, nil, attendees, verb+": "+in.Title, "REQUEST", event.Component)
+		bookings, err = s.sendITIP(ctx, organizer, nil, attendees, verb+": "+in.Title, "REQUEST", event.Component)
 	}
 	if err != nil {
 		s.log.Warn("invitation rejected", "user", p.User.ID, "err", err)
@@ -678,7 +698,10 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	}
 	out, _, _ := eventFromComponent(name, event.Component)
 	out.CalendarID = calendar.Slug
-	writeJSON(w, status, out)
+	writeJSON(w, status, struct {
+		calendarEvent
+		Bookings []bookingOutcome `json:"bookings,omitempty"`
+	}{out, bookings})
 }
 
 func (s *Server) deleteEvent(w http.ResponseWriter, r *http.Request, p *principal) {

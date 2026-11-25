@@ -258,6 +258,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Recovering deleted mail](documentation/deleted-items.md): restoring permanently deleted messages, the retention period, and what Dovecot keeps.
 - [Compliance](documentation/compliance.md): legal holds, retained mailboxes, searches across mailboxes, exports and journaling.
 - [Mailbox access auditing](documentation/mailbox-auditing.md): who other than the owner opened, read, moved, deleted or sent from a mailbox.
+- [Rooms and equipment](documentation/rooms-and-equipment.md): bookable rooms and equipment, booking rules, approvals, the room finder, and free/busy over CalDAV.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

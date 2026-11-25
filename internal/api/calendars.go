@@ -258,43 +258,67 @@ func (s *Server) freeBusy(w http.ResponseWriter, r *http.Request, p *principal) 
 		writeError(w, http.StatusUnprocessableEntity, "invalid_request", "Give start and end at most 31 days apart, and 1 to 50 attendee addresses.")
 		return
 	}
+	out, err := s.busyFor(r.Context(), p.User.ID, emails, from, to)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) busyFor(ctx context.Context, userID string, emails []string, from, to time.Time) ([]freeBusy, error) {
 	for i := range emails {
 		emails[i] = strings.ToLower(strings.TrimSpace(emails[i]))
 	}
-	rows, err := s.db.Query(r.Context(), `
+	rows, err := s.db.Query(ctx, `
 		SELECT a.email, c.id, c.slug FROM unnest($1::text[]) AS a(email)
 		JOIN users u ON u.id = coalesce((SELECT id FROM users WHERE email = a.email), (SELECT owner_user_id FROM mailboxes WHERE address = a.email LIMIT 1))
 		JOIN dav_collections c ON c.user_id = u.id AND c.kind = 'calendar'
 		WHERE u.status = 'active' AND EXISTS (
-			SELECT 1 FROM organization_members x JOIN organization_members y ON x.org_id = y.org_id WHERE x.user_id = u.id AND y.user_id = $2)`, emails, p.User.ID)
+			SELECT 1 FROM organization_members x JOIN organization_members y ON x.org_id = y.org_id WHERE x.user_id = u.id AND y.user_id = $2)`, emails, userID)
 	if err != nil {
-		s.internalError(w, r, err)
-		return
+		return nil, err
 	}
 	calendars := map[string][]collectionRow{}
 	for rows.Next() {
 		var email string
 		var c collectionRow
 		if err := rows.Scan(&email, &c.ID, &c.Slug); err != nil {
-			s.internalError(w, r, err)
-			return
+			return nil, err
 		}
 		calendars[email] = append(calendars[email], c)
 	}
 	if err := rows.Err(); err != nil {
-		s.internalError(w, r, err)
-		return
+		return nil, err
+	}
+	resources, err := s.loadResources(ctx, ` AND m.address = ANY($1) AND m.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $2)`, emails, userID)
+	if err != nil {
+		return nil, err
+	}
+	byAddress := map[string]*resource{}
+	for i := range resources {
+		byAddress[resources[i].Address] = &resources[i]
 	}
 	out := make([]freeBusy, len(emails))
 	for i, email := range emails {
 		out[i] = freeBusy{Email: email, Busy: []busyPeriod{}}
+		if r := byAddress[email]; r != nil {
+			booked, err := bookedSpans(ctx, s.db, r, from, to, "")
+			if err != nil {
+				return nil, err
+			}
+			out[i].Known = true
+			for _, b := range booked {
+				out[i].Busy = append(out[i].Busy, busyPeriod(b))
+			}
+			continue
+		}
 		if len(calendars[email]) == 0 {
 			continue
 		}
-		events, err := s.eventsIn(r.Context(), calendars[email], from, to)
+		events, err := eventsIn(ctx, s.db, calendars[email], from, to)
 		if err != nil {
-			s.internalError(w, r, err)
-			return
+			return nil, err
 		}
 		out[i].Known = true
 		for _, e := range events {
@@ -303,5 +327,5 @@ func (s *Server) freeBusy(w http.ResponseWriter, r *http.Request, p *principal) 
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }

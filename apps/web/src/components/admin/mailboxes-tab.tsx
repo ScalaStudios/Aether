@@ -279,7 +279,11 @@ function RetentionSetting({ orgId }: { orgId: string }) {
 
 export function MailboxesTab({ orgId }: { orgId: string }) {
   const qc = useQueryClient()
-  const mailboxes = useQuery({ queryKey: ["mailboxes", orgId], queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`) })
+  const mailboxes = useQuery({
+    queryKey: ["mailboxes", orgId],
+    queryFn: () => api<Mailbox[]>(`/organizations/${orgId}/mailboxes`),
+    select: (all) => all.filter((m) => m.kind !== "resource"),
+  })
   const [creating, setCreating] = useState(false)
   const [deleting, setDeleting] = useState<Mailbox | null>(null)
   const [delegating, setDelegating] = useState<Mailbox | null>(null)

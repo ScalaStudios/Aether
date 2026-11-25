@@ -95,14 +95,15 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		return
 	}
 	var in struct {
-		DomainID    string `json:"domainId"`
-		LocalPart   string `json:"localPart"`
-		DisplayName string `json:"displayName"`
-		QuotaBytes  int64  `json:"quotaBytes"`
-		Password    string `json:"password"`
-		Kind        string `json:"kind"`
+		DomainID    string         `json:"domainId"`
+		LocalPart   string         `json:"localPart"`
+		DisplayName string         `json:"displayName"`
+		QuotaBytes  int64          `json:"quotaBytes"`
+		Password    string         `json:"password"`
+		Kind        string         `json:"kind"`
+		Resource    *resourceInput `json:"resource"`
 	}
-	if !decode(w, r, 8<<10, &in) {
+	if !decode(w, r, 32<<10, &in) {
 		return
 	}
 	in.LocalPart = strings.ToLower(strings.TrimSpace(in.LocalPart))
@@ -111,11 +112,20 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		in.Kind = "user"
 	}
 	switch {
-	case in.Kind != "user" && in.Kind != "shared":
-		writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "Kind must be user or shared.")
+	case in.Kind != "user" && in.Kind != "shared" && in.Kind != "resource":
+		writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "Kind must be user, shared, or resource.")
 		return
 	case in.Kind == "shared" && in.Password != "":
 		writeError(w, http.StatusUnprocessableEntity, "shared_no_password", "A shared mailbox has no sign-in. Leave the password empty and add members instead.")
+		return
+	case in.Kind == "resource" && (in.Password != "" || in.Resource == nil):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_resource", "A room or equipment has no sign-in. Leave the password empty and give its booking settings.")
+		return
+	case in.Kind != "resource" && in.Resource != nil:
+		writeError(w, http.StatusUnprocessableEntity, "invalid_resource", "Booking settings are only for rooms and equipment.")
+		return
+	case in.Kind == "resource" && (in.DisplayName == "" || len(in.DisplayName) > 200):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_name", "Give the room or equipment a name of up to 200 characters.")
 		return
 	case !localPartPattern.MatchString(in.LocalPart):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_local_part", "Use letters, digits, dots, hyphens, underscores, or plus signs for the address.")
@@ -136,6 +146,9 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		s.internalError(w, r, err)
 		return
 	}
+	if in.Kind == "resource" && !s.validResource(r.Context(), w, r, orgID, in.Resource) {
+		return
+	}
 	address := in.LocalPart + "@" + domainName
 	var m mailbox
 	var code string
@@ -151,7 +164,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		var userID string
 		var hasPassword, isAdmin bool
 		err := tx.QueryRow(r.Context(), `SELECT id, password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &hasPassword, &isAdmin)
-		if in.Kind == "shared" {
+		if in.Kind != "user" {
 			if err == nil {
 				code = "address_is_account"
 				return nil
@@ -183,6 +196,9 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		err = tx.QueryRow(r.Context(), `INSERT INTO mailboxes (org_id, domain_id, local_part, address, display_name, owner_user_id, quota_bytes, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+mailboxColumns,
 			orgID, in.DomainID, in.LocalPart, address, in.DisplayName, owner, in.QuotaBytes, in.Kind).
 			Scan(&m.ID, &m.OrgID, &m.DomainID, &m.Address, &m.LocalPart, &m.DisplayName, &m.OwnerUserID, &m.QuotaBytes, &m.Active, &m.CreatedAt, &m.Kind, &m.RetainedAt)
+		if err == nil && in.Kind == "resource" {
+			err = saveResource(r.Context(), tx, m.ID, in.Resource)
+		}
 		if err != nil || owner == nil {
 			return err
 		}
@@ -332,6 +348,9 @@ func (s *Server) convertMailbox(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	case in.Kind == m.Kind:
 		writeError(w, http.StatusUnprocessableEntity, "same_kind", "This is already a "+m.Kind+" mailbox.")
+		return
+	case m.Kind == "resource":
+		writeError(w, http.StatusUnprocessableEntity, "resource", "Rooms and equipment can’t be converted. Create a mailbox with another address instead.")
 		return
 	}
 	meta := map[string]any{"address": m.Address, "from": m.Kind, "to": in.Kind, "accountDeprovisioned": false, "accountRestored": false}

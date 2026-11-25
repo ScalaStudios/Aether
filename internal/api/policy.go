@@ -75,7 +75,8 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 	var members, allowed []string
 	var moderated, dynamicMember bool
 	err := s.db.QueryRow(ctx, `SELECT org_id, accept_from, destinations, allowed_senders, moderated, EXISTS (SELECT 1 FROM list_dynamic_members lm WHERE lm.alias_id = aliases.id AND lm.address = $2)
-		FROM aliases WHERE address = $1 AND active`, local+"@"+domain, sender).
+		FROM aliases WHERE address = $1 AND active
+		UNION ALL SELECT org_id, 'resource', '{}', '{}', false, false FROM mailboxes WHERE address = $1 AND kind = 'resource' AND active`, local+"@"+domain, sender).
 		Scan(&orgID, &acceptFrom, &members, &allowed, &moderated, &dynamicMember)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "DUNNO", nil
@@ -98,6 +99,8 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 	trusted := sender != "" && (authenticated || !hosted)
 	permit := acceptFrom == "anyone"
 	switch acceptFrom {
+	case "resource":
+		permit = trusted
 	case "organization":
 		permit = authenticated && sameOrg
 	case "members":

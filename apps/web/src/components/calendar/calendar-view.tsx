@@ -1,11 +1,12 @@
 "use client"
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CalendarCog, ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
+import { CalendarCheck, CalendarCog, ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "cn"
 
+import { BookingRequestsDialog } from "@/components/calendar/booking-requests"
 import { CalendarsDialog } from "@/components/calendar/calendars-dialog"
 import { EventDialog, type EventSelection } from "@/components/calendar/event-dialog"
 import { IconButton } from "@/components/icon-button"
@@ -18,7 +19,7 @@ import { api, apiUrl, errorMessage } from "@/lib/api"
 import { plural } from "@/lib/format"
 import { calendarsQuery } from "@/lib/queries"
 import { addDays, eventRange, eventsOn, layoutDay, sameDay, startOfDay, startOfWeek, toRFC3339, useNow } from "@/lib/calendar"
-import type { CalendarEvent } from "@/lib/types"
+import type { BookingRequest, CalendarEvent } from "@/lib/types"
 
 const HOUR = 48
 const weekColumns = "grid grid-cols-[56px_repeat(7,minmax(0,1fr))]"
@@ -134,6 +135,8 @@ function Calendar({ now }: { now: Date }) {
     placeholderData: keepPreviousData,
   })
   const calendars = useQuery(calendarsQuery)
+  const requests = useQuery({ queryKey: ["booking-requests"], queryFn: () => api<BookingRequest[]>("/calendar/booking-requests"), refetchInterval: 60_000 })
+  const [reviewing, setReviewing] = useState(() => new URLSearchParams(window.location.search).has("requests"))
   const [managing, setManaging] = useState(false)
   const [hidden, setHidden] = useState<string[]>(() => JSON.parse(localStorage.getItem("aether.hiddenCalendars") ?? "[]"))
   const colors = new Map(calendars.data?.map((c) => [c.id, c.color]))
@@ -199,6 +202,15 @@ function Calendar({ now }: { now: Date }) {
           value={view}
           onChange={setView}
         />
+        {!!requests.data?.length && (
+          <Button variant="secondary" aria-label={`Booking requests, ${requests.data.length} waiting`} onClick={() => setReviewing(true)}>
+            <CalendarCheck aria-hidden />
+            Requests
+            <span aria-hidden className="rounded-full bg-ember px-2 text-xs font-semibold text-ink tabular-nums">
+              {requests.data.length}
+            </span>
+          </Button>
+        )}
         <CalendarMenu onManage={() => setManaging(true)} />
         <Button onClick={newEvent}>
           <Plus aria-hidden />
@@ -217,6 +229,14 @@ function Calendar({ now }: { now: Date }) {
       )}
       {selection && <EventDialog key={selection.key} target={selection} calendars={calendars.data ?? []} open={dialogOpen} onOpenChange={setDialogOpen} />}
       <CalendarsDialog open={managing} onOpenChange={setManaging} hidden={hidden} onToggle={toggleCalendar} />
+      <BookingRequestsDialog
+        open={reviewing}
+        requests={requests}
+        onOpenChange={(open) => {
+          setReviewing(open)
+          if (!open && window.location.search) window.history.replaceState(null, "", window.location.pathname)
+        }}
+      />
     </div>
   )
 }

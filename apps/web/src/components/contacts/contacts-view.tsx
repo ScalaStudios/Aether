@@ -18,6 +18,7 @@ import { PageHeader } from "@/components/page-header"
 import { RecipientInput } from "@/components/recipient-input"
 import { SearchInput } from "@/components/search-input"
 import { EmptyState, QueryView } from "@/components/states"
+import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -25,6 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { ApiError, api } from "@/lib/api"
 import { plural } from "@/lib/format"
+import { resourceTypes } from "@/lib/resources"
 import type { Contact, ContactInput, ImportCounts, Recipient } from "@/lib/types"
 
 const schema = z.object({
@@ -322,7 +324,12 @@ function Directory() {
             <TableBody>
               {items.map((entry) => (
                 <TableRow key={entry.address}>
-                  <TableCell className="font-medium">{entry.name || <span className="font-normal text-fg-tertiary">No name</span>}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className="inline-flex items-center gap-2">
+                      {entry.name || <span className="font-normal text-fg-tertiary">No name</span>}
+                      {entry.kind && <StatusBadge tone="neutral">{resourceTypes[entry.kind].label}</StatusBadge>}
+                    </span>
+                  </TableCell>
                   <TableCell className="font-mono text-sm">{entry.address}</TableCell>
                   <TableCell>
                     <div className="flex justify-end">

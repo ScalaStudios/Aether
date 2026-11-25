@@ -8,6 +8,7 @@ import { z } from "zod"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api"
 import { formatAddress } from "@/lib/format"
+import { resourceTypes } from "@/lib/resources"
 import type { Address, Recipient } from "@/lib/types"
 
 const emailSchema = z.email()
@@ -170,7 +171,7 @@ export function RecipientInput({
                 {r.name && <span className="truncate">{r.name}</span>}
                 <span className="truncate font-mono text-sm text-fg-tertiary">{r.address}</span>
               </span>
-              <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-semibold text-fg-secondary">{r.source === "contact" ? "Contact" : "Directory"}</span>
+              <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-semibold text-fg-secondary">{r.kind ? resourceTypes[r.kind].label : r.source === "contact" ? "Contact" : "Directory"}</span>
             </li>
           ))}
         </ul>

@@ -146,6 +146,7 @@ func serve(log *slog.Logger) error {
 	go srv.RunAccessWorkers(ctx)
 	go srv.RunQueueMetrics(ctx)
 	go srv.RunRetention(ctx)
+	go srv.RunResourceWorker(ctx)
 	httpServer := &http.Server{
 		Addr: cfg.Listen, Handler: tracedHandler(srv.Handler()),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 120 * time.Second,

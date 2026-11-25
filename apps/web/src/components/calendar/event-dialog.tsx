@@ -1,7 +1,7 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Trash2 } from "lucide-react"
 import { useState } from "react"
 import { type Control, Controller, useForm, useWatch } from "react-hook-form"
@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import { z } from "zod"
 import { cn } from "cn"
 
+import { RoomField, type RoomRange } from "@/components/calendar/room-finder"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
@@ -23,7 +24,8 @@ import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { attendeeStatusLabels } from "@/lib/format"
 import { addDays, dateValue, eventRange, fromValues, timeValue, toRFC3339 } from "@/lib/calendar"
-import type { Attendee, CalendarEvent, CalendarEventInput, CalendarInfo } from "@/lib/types"
+import { bookingStatus } from "@/lib/resources"
+import type { Attendee, BookingOutcome, CalendarEvent, CalendarEventInput, CalendarInfo, ResourceChoice } from "@/lib/types"
 
 export interface EventSelection {
   key: number
@@ -51,7 +53,7 @@ const schema = z
     repeat: z.enum(["none", "daily", "weekly", "monthly", "yearly", "custom"]),
     location: z.string().trim().max(500, "Use 500 characters or fewer."),
     description: z.string().max(10000, "Use 10,000 characters or fewer."),
-    attendees: z.array(z.object({ name: z.string().optional(), address: z.string() })).max(100, "Invite 100 people or fewer."),
+    attendees: z.array(z.object({ name: z.string().optional(), address: z.string(), kind: z.enum(["room", "equipment"]).optional() })).max(100, "Invite 100 people or fewer."),
     calendarId: z.string(),
   })
   .refine((v) => v.allDay || (v.startTime && v.endTime), { message: "Choose a start and end time.", path: ["endDate"] })
@@ -71,9 +73,20 @@ function toValues({ event, start, end, allDay }: EventSelection): Values {
     repeat: event?.repeat || "none",
     location: event?.location ?? "",
     description: event?.description ?? "",
-    attendees: event?.attendees.map(({ name, address }) => ({ name, address })) ?? [],
+    attendees: event?.attendees.map(({ name, address, kind }) => ({ name, address, kind })) ?? [],
     calendarId: event?.calendarId ?? "personal",
   }
+}
+
+function useDebouncedRange(control: Control<Values>, target: EventSelection): RoomRange | null {
+  const v = useWatch({ control })
+  const values = { allDay: !!v.allDay, startDate: v.startDate ?? "", startTime: v.startTime ?? "", endDate: v.endDate ?? "", endTime: v.endTime ?? "" }
+  const valid = !!values.startDate && !!values.endDate && (values.allDay || (!!values.startTime && !!values.endTime))
+  const { start, end } = valid ? range(values) : target
+  const key = useDebouncedValue(end > start ? `${toRFC3339(start)}|${toRFC3339(end)}` : "", 400)
+  if (!key) return null
+  const [from, to] = key.split("|")
+  return { start: from, end: to }
 }
 
 function seriesShift(target: EventSelection, start: Date, end: Date, allDay: boolean) {
@@ -111,6 +124,17 @@ export function EventDialog({
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(target) })
   const allDay = useWatch({ control: form.control, name: "allDay" })
   const errors = form.formState.errors
+  const roomRange = useDebouncedRange(form.control, target)
+  const choices = useQuery({
+    queryKey: ["resources", roomRange?.start, roomRange?.end, event?.id],
+    queryFn: () => api<ResourceChoice[]>("/calendar/resources", { query: { start: roomRange?.start, end: roomRange?.end, exclude: event?.id } }),
+    placeholderData: keepPreviousData,
+    enabled: !invited && !readOnly,
+  })
+  const roomAddresses = new Set(choices.data?.map((c) => c.address))
+  const isRoom = (a: { address: string; kind?: string }) => !!a.kind || roomAddresses.has(a.address.toLowerCase())
+  const unchanged = !!event && roomRange?.start === toRFC3339(target.start) && roomRange?.end === toRFC3339(target.end)
+  const savedStatus = (address: string) => (unchanged ? event.attendees.find((a) => a.address === address.toLowerCase())?.status : undefined)
 
   const save = useMutation({
     mutationFn: async (v: Values) => {
@@ -118,14 +142,24 @@ export function EventDialog({
       const picked = range(v)
       const { start, end } = repeat ? seriesShift(target, picked.start, picked.end, v.allDay) : picked
       const body: CalendarEventInput = { title: v.title, start: toRFC3339(start), end: toRFC3339(end), allDay: v.allDay, location: v.location, description: v.description, repeat, attendees: v.attendees.map((a) => a.address), calendarId: v.calendarId }
+      type Saved = CalendarEvent & { bookings?: BookingOutcome[] }
       return event
-        ? api<CalendarEvent>(`/calendar/events/${encodeURIComponent(event.id)}`, { method: "PUT", body })
-        : api<CalendarEvent>("/calendar/events", { method: "POST", body })
+        ? api<Saved>(`/calendar/events/${encodeURIComponent(event.id)}`, { method: "PUT", body })
+        : api<Saved>("/calendar/events", { method: "POST", body })
     },
-    onSuccess: (_, v) => {
-      toast.success(event ? "Event saved" : "Event added", { description: !invited && v.attendees.length > 0 ? "Invitations were sent to the attendees." : undefined })
+    onSuccess: (saved, v) => {
+      const bookings = saved.bookings ?? []
+      const names = (status: BookingOutcome["status"]) => bookings.filter((b) => b.status === status).map((b) => b.name)
+      const description = [
+        !invited && v.attendees.some((a) => !isRoom(a)) && "Invitations were sent to the attendees.",
+        names("accepted").length > 0 && `Booked ${names("accepted").join(", ")}.`,
+        names("tentative").length > 0 && `${names("tentative").join(", ")} ${names("tentative").length === 1 ? "is" : "are"} waiting for approval.`,
+      ].filter(Boolean)
+      toast.success(event ? "Event saved" : "Event added", { description: description.length ? description.join(" ") : undefined })
+      for (const b of bookings.filter((b) => b.status === "declined")) toast.error(`${b.name} wasn’t booked`, { description: b.reason, duration: 10_000 })
       onOpenChange(false)
       qc.invalidateQueries({ queryKey: ["calendar-events"] })
+      qc.invalidateQueries({ queryKey: ["resources"] })
     },
   })
   const remove = useMutation({
@@ -244,13 +278,21 @@ export function EventDialog({
             <Controller
               control={form.control}
               name="attendees"
-              render={({ field }) => (
-                <Field id="event-attendees" label="Attendees" error={errors.attendees?.message}>
-                  <RecipientInput id="event-attendees" value={field.value} onChange={field.onChange} invalid={!!errors.attendees} placeholder="Add people by email" suggest />
-                  <Availability control={form.control} target={target} />
-                  {event && event.attendees.length > 0 && <AttendeeList attendees={event.attendees} />}
-                </Field>
-              )}
+              render={({ field }) => {
+                const people = field.value.filter((a) => !isRoom(a))
+                const rooms = field.value.filter(isRoom)
+                const saved = event?.attendees.filter((a) => !isRoom(a)) ?? []
+                return (
+                  <>
+                    <Field id="event-attendees" label="Attendees" error={errors.attendees?.message}>
+                      <RecipientInput id="event-attendees" value={people} onChange={(next) => field.onChange([...next, ...rooms])} invalid={!!errors.attendees} placeholder="Add people by email" suggest />
+                      <Availability control={form.control} target={target} isRoom={isRoom} />
+                      {saved.length > 0 && <AttendeeList attendees={saved} />}
+                    </Field>
+                    <RoomField rooms={rooms} choices={choices} range={roomRange} savedStatus={savedStatus} onChange={(next) => field.onChange([...people, ...next])} />
+                  </>
+                )
+              }}
             />
           )}
           <Field id="event-location" label="Location" error={errors.location?.message}>
@@ -292,20 +334,20 @@ function AttendeeList({ organizer, attendees }: { organizer?: string; attendees:
       {attendees.map((a) => (
         <li key={a.address} className="flex justify-between gap-4">
           <span className="truncate">{a.name || a.address}</span>
-          <span className="shrink-0 text-fg-tertiary">{attendeeStatusLabels[a.status]}</span>
+          <span className="shrink-0 text-fg-tertiary">{a.kind ? bookingStatus[a.status].label : attendeeStatusLabels[a.status]}</span>
         </li>
       ))}
     </ul>
   )
 }
 
-function Availability({ control, target }: { control: Control<Values>; target: EventSelection }) {
+function Availability({ control, target, isRoom }: { control: Control<Values>; target: EventSelection; isRoom: (a: { address: string; kind?: string }) => boolean }) {
   const v = useWatch({ control })
   const values = { allDay: !!v.allDay, startDate: v.startDate ?? "", startTime: v.startTime ?? "", endDate: v.endDate ?? "", endTime: v.endTime ?? "" }
   const valid = !values.allDay && !!values.startDate && !!values.startTime && !!values.endDate && !!values.endTime
   const { start, end } = valid ? range(values) : { start: target.start, end: target.end }
   const unchanged = !!target.event && start.getTime() === target.start.getTime() && end.getTime() === target.end.getTime()
-  const attendees = (v.attendees ?? []).map((a) => a?.address ?? "").filter(Boolean)
+  const attendees = (v.attendees ?? []).filter((a) => a?.address && !isRoom({ address: a.address, kind: a.kind })).map((a) => a?.address ?? "")
   const debounced = useDebouncedValue(valid && !unchanged && attendees.length > 0 && end > start ? JSON.stringify({ start: toRFC3339(start), end: toRFC3339(end), attendees }) : "", 400)
   const key: { start: string; end: string; attendees: string[] } | null = debounced ? JSON.parse(debounced) : null
   const freeBusy = useQuery({

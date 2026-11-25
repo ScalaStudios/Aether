@@ -81,7 +81,7 @@ export interface DMARCSummary {
   sources: DMARCSource[]
 }
 
-export type MailboxKind = "user" | "shared"
+export type MailboxKind = "user" | "shared" | "resource"
 
 export interface Mailbox {
   id: string
@@ -601,6 +601,7 @@ export interface Recipient {
   name: string
   address: string
   source: "contact" | "directory"
+  kind?: ResourceType
 }
 
 export type Repeat = "" | "daily" | "weekly" | "monthly" | "yearly" | "custom"
@@ -648,6 +649,7 @@ export interface Attendee {
   name?: string
   address: string
   status: AttendeeStatus
+  kind?: ResourceType
 }
 
 export interface Invitation {
@@ -663,6 +665,69 @@ export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesSt
   repeat: Exclude<Repeat, "custom">
   attendees: string[]
   calendarId: string
+}
+
+export type ResourceType = "room" | "equipment"
+
+export interface Resource {
+  id: string
+  orgId: string
+  address: string
+  name: string
+  type: ResourceType
+  capacity: number | null
+  location: string
+  description: string
+  policy: "auto" | "approval"
+  bookableBy: "organization" | "selected"
+  windowDays: number
+  maxMinutes: number | null
+  workingHours: boolean
+  workDays: number[]
+  workStart: number
+  workEnd: number
+  timeZone: string
+}
+
+export interface AdminResource extends Resource {
+  domainId: string
+  localPart: string
+  active: boolean
+  approvers: string[]
+  bookers: string[]
+}
+
+export type ResourceSettings = Omit<Resource, "id" | "orgId" | "address" | "name"> & {
+  displayName?: string
+  approvers: string[]
+  bookers: string[]
+}
+
+export interface ResourceChoice extends Resource {
+  bookable: boolean
+  availability?: "free" | "busy" | "restricted"
+  reason?: string
+}
+
+export interface BookingOutcome {
+  address: string
+  name: string
+  status: "accepted" | "tentative" | "declined"
+  reason?: string
+}
+
+export interface BookingRequest {
+  id: string
+  resource: { id: string; name: string; address: string; type: ResourceType }
+  title: string
+  start: string
+  end: string
+  allDay: boolean
+  repeat: Repeat
+  location: string
+  organizer: Address
+  conflict?: string
+  requestedAt: string
 }
 
 export interface ScheduledMessage {

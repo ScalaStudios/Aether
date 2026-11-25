@@ -64,6 +64,10 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 	if !ok {
 		return
 	}
+	if m.Kind == "resource" {
+		writeError(w, http.StatusUnprocessableEntity, "resource", "Rooms and equipment have approvers instead of delegates. Set them in the booking settings.")
+		return
+	}
 	var in struct {
 		Email        string `json:"email"`
 		Access       string `json:"access"`

@@ -89,16 +89,32 @@ func (s *Server) serveDAV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	section, _, _ := strings.Cut(sub, "/")
+	if r.Method == http.MethodOptions && (section == "" || section == davCalendars) {
+		w.Header().Add("DAV", "calendar-schedule")
+	}
 	switch section {
 	case "":
+		scheduling, err := s.schedulingProps(ctx, userID, principal)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		homeSets := []webdav.BackendSuppliedHomeSet{
+			caldav.NewCalendarHomeSet(principal + davCalendars + "/"),
+			carddav.NewAddressBookHomeSet(principal + davContacts + "/"),
+		}
+		for _, p := range scheduling {
+			homeSets = append(homeSets, p)
+		}
 		webdav.ServePrincipal(w, r, &webdav.ServePrincipalOptions{
 			CurrentUserPrincipalPath: principal,
-			HomeSets: []webdav.BackendSuppliedHomeSet{
-				caldav.NewCalendarHomeSet(principal + davCalendars + "/"),
-				carddav.NewAddressBookHomeSet(principal + davContacts + "/"),
-			},
-			Capabilities: []webdav.Capability{caldav.CapabilityCalendar, carddav.CapabilityAddressBook},
+			HomeSets:                 homeSets,
+			Capabilities:             []webdav.Capability{caldav.CapabilityCalendar, carddav.CapabilityAddressBook},
 		})
+	case davScheduleOutbox:
+		s.serveScheduleOutbox(w, r, userID)
+	case davScheduleInbox:
+		serveScheduleBox(w, r, davScheduleInbox)
 	case davCalendars:
 		if r.Method == "MKCALENDAR" {
 			var err error
@@ -243,7 +259,19 @@ func etagOf(data string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
+type txBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+type queryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 func (s *Server) putDAVObject(ctx context.Context, collectionID, name, data string, f objectFields, ifMatch, ifNoneMatch webdav.ConditionalMatch) (*objectRow, error) {
+	return putDAVObjectIn(ctx, s.db, collectionID, name, data, f, ifMatch, ifNoneMatch)
+}
+
+func putDAVObjectIn(ctx context.Context, db txBeginner, collectionID, name, data string, f objectFields, ifMatch, ifNoneMatch webdav.ConditionalMatch) (*objectRow, error) {
 	if len(data) > maxDAVObjectBytes {
 		return nil, webdav.NewHTTPError(http.StatusRequestEntityTooLarge, errors.New("object too large"))
 	}
@@ -251,7 +279,7 @@ func (s *Server) putDAVObject(ctx context.Context, collectionID, name, data stri
 		return nil, webdav.NewHTTPError(http.StatusBadRequest, errors.New("object has no UID"))
 	}
 	row := &objectRow{Name: name, Data: data, ETag: etagOf(data), UpdatedAt: time.Now()}
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
 		var current string
 		err := tx.QueryRow(ctx, `SELECT etag FROM dav_objects WHERE collection_id = $1 AND name = $2 FOR UPDATE`, collectionID, name).Scan(&current)
 		exists := err == nil

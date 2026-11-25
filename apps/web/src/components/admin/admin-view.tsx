@@ -23,6 +23,7 @@ import { QuarantineTab } from "@/components/admin/quarantine-tab"
 import { SendersTab } from "@/components/admin/senders-tab"
 import { MessageTraceTab } from "@/components/admin/message-trace/trace-tab"
 import { RetentionTab } from "@/components/admin/retention-tab"
+import { ResourcesTab } from "@/components/admin/resources-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { Field } from "@/components/field"
@@ -51,6 +52,7 @@ const orgTabs = [
   { value: "mailboxes", label: "Mailboxes", Component: MailboxesTab },
   { value: "aliases", label: "Aliases", Component: AliasesTab },
   { value: "senders", label: "Senders", Component: SendersTab },
+  { value: "resources", label: "Rooms and equipment", Component: ResourcesTab },
   { value: "members", label: "Members", Component: MembersTab },
   { value: "forwarding", label: "Forwarding", Component: ForwardingTab },
   { value: "branding", label: "Branding", Component: BrandingTab },
