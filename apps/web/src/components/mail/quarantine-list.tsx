@@ -28,6 +28,7 @@ function AllowedSendersDialog({ mailboxId, open, onOpenChange, readOnly }: { mai
     onSuccess: (_d, sender) => {
       toast.success(`Mail from ${sender} can be held again`)
       qc.invalidateQueries({ queryKey: ["allowed-senders", mailboxId] })
+      qc.invalidateQueries({ queryKey: ["sender-lists", "mailbox", mailboxId] })
     },
   })
 

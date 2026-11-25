@@ -152,7 +152,7 @@ The data model starts in `migrations/0001_init.sql` and evolves through numbered
 - `mailbox_daily_stats`, per-mailbox UTC daily sent/received message and byte counters
 - `app_passwords`
 - `mail_kicks`, IMAP session kicks waiting for Dovecot to confirm them, one row per address with a generation that each new revocation increments
-- `quarantine_messages`, one stored copy of each held message with its category, score and Rspamd symbols; `quarantine_items`, one row per mailbox it was held for, with its status and who requested or released it; `quarantine_policies` per organization; `quarantine_allowed_senders` per mailbox
+- `quarantine_messages`, one stored copy of each held message with its category, score and Rspamd symbols; `quarantine_items`, one row per mailbox it was held for, with its status and who requested or released it; `quarantine_policies` per organization; senders a person allows from the quarantine are trusted entries in `sender_list_entries`
 - `retention_policies`, retention policies for an organization or one mailbox, and `retention_runs`, when each mailbox is next due and the lease of the replica applying them
 - `dav_collections`, `dav_objects`, `calendar_shares`, and `calendar_subscriptions` for calendars, tasks, address books, shares, and external ICS feeds
 - `booking_pages`, `booking_types`, `booking_windows`, and `bookings` for public scheduling pages

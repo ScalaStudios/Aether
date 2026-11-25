@@ -239,8 +239,12 @@ func (s *Server) allowQuarantineSender(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	sender := strings.ToLower(item.From.Address)
-	if _, err := s.db.Exec(r.Context(), `INSERT INTO quarantine_allowed_senders (mailbox_id, sender, created_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, m.ID, sender, p.User.ID); err != nil {
-		s.internalError(w, r, err)
+	if _, ok := s.changeMailboxSenderList(w, r, m, func(tx pgx.Tx) error {
+		_, err := tx.Exec(r.Context(), `
+			INSERT INTO sender_list_entries (org_id, mailbox_id, action, kind, value, created_by) VALUES ($1, $2, 'allow', 'address', $3, $4)
+			ON CONFLICT (org_id, domain_id, mailbox_id, value) DO UPDATE SET action = 'allow', created_by = excluded.created_by, created_at = now()`, m.OrgID, m.ID, sender, creator(p))
+		return err
+	}); !ok {
 		return
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "quarantine.allow_sender", "mailbox", m.ID, map[string]any{"mailbox": m.Address, "sender": sender})
@@ -284,7 +288,7 @@ func (s *Server) listAllowedSenders(w http.ResponseWriter, r *http.Request, p *p
 	if !ok {
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT sender, created_at FROM quarantine_allowed_senders WHERE mailbox_id = $1 ORDER BY sender`, m.ID)
+	rows, err := s.db.Query(r.Context(), `SELECT value, created_at FROM sender_list_entries WHERE mailbox_id = $1 AND action = 'allow' AND kind = 'address' ORDER BY value`, m.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -307,13 +311,10 @@ func (s *Server) removeAllowedSender(w http.ResponseWriter, r *http.Request, p *
 		return
 	}
 	sender := strings.ToLower(r.URL.Query().Get("sender"))
-	tag, err := s.db.Exec(r.Context(), `DELETE FROM quarantine_allowed_senders WHERE mailbox_id = $1 AND sender = $2`, m.ID, sender)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		notFound(w)
+	if _, ok := s.changeMailboxSenderList(w, r, m, func(tx pgx.Tx) error {
+		var id string
+		return tx.QueryRow(r.Context(), `DELETE FROM sender_list_entries WHERE mailbox_id = $1 AND action = 'allow' AND kind = 'address' AND value = $2 RETURNING id`, m.ID, sender).Scan(&id)
+	}); !ok {
 		return
 	}
 	s.audit(r.Context(), r, p, &m.OrgID, "quarantine.allowed_sender.remove", "mailbox", m.ID, map[string]any{"mailbox": m.Address, "sender": sender})

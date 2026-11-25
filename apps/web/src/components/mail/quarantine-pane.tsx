@@ -160,7 +160,10 @@ export function QuarantinePane({
         qc.invalidateQueries({ queryKey: ["folders", mailboxId] })
         qc.invalidateQueries({ queryKey: ["messages", mailboxId] })
       }
-      if (action === "allow-sender") qc.invalidateQueries({ queryKey: ["allowed-senders", mailboxId] })
+      if (action === "allow-sender") {
+        qc.invalidateQueries({ queryKey: ["allowed-senders", mailboxId] })
+        qc.invalidateQueries({ queryKey: ["sender-lists", "mailbox", mailboxId] })
+      }
       onDone(itemId)
     },
   })

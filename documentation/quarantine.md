@@ -17,7 +17,7 @@ A message matching more than one category takes the most severe one, in the orde
 
 - **Preview.** The preview never loads remote content, removes every link, and lists attachments without letting you open them. It says why the message was held, its spam score, and when it will be deleted, and **Spam filter signals** lists the Rspamd symbols that fired.
 - **Release to Inbox** puts the original message in the Inbox. Releasing phishing or malware asks for confirmation first.
-- **Release and allow sender** also adds the sender's address to the mailbox's allowed senders. Later mail from that address that would be held as spam or high-confidence spam is delivered to the Inbox instead, but only while your organization lets people release that category, and never when the message fails the sender's DMARC policy. Phishing and malware are always held. The person icon in the quarantine header lists the allowed senders and removes them.
+- **Release and allow sender** also adds the sender's address to the mailbox's trusted senders, the same list as **Settings → Blocked and trusted senders**. Later mail from that address, or from a domain on that list, that would be held as spam or high-confidence spam is delivered to the Inbox instead, but only while your organization lets people release that category, and never when the message fails the sender's DMARC policy. Phishing and malware are always held. The person icon in the quarantine header lists the allowed senders and removes them.
 - **Request release** appears instead when your organization only lets people ask. An administrator sees the request under **Requested**.
 - **Delete** removes the message from quarantine for good. The sender is not told.
 
@@ -67,7 +67,7 @@ These routes need a signed-in session. API keys cannot use them, because they re
 | `GET /api/v1/mailboxes/{mailboxId}/quarantine` | Messages held for the mailbox that the caller may see, 50 a page with `before` set to the last `nextCursor`, the total and the retention in days |
 | `GET`, `DELETE /api/v1/mailboxes/{mailboxId}/quarantine/{id}` | The safe preview with the category, score and symbols; deleting needs full access |
 | `POST /api/v1/mailboxes/{mailboxId}/quarantine/{id}/release`, `/request` and `/allow-sender` | Release, ask for release, or release and allow the sender, as the organization's policy permits |
-| `GET`, `DELETE /api/v1/mailboxes/{mailboxId}/allowed-senders` | The mailbox's allowed senders; delete one with `?sender=` |
+| `GET`, `DELETE /api/v1/mailboxes/{mailboxId}/allowed-senders` | The trusted addresses in the mailbox's sender list; delete one with `?sender=` |
 | `GET /api/v1/organizations/{orgId}/quarantine` | The organization's quarantine for owners and administrators, filtered by `status` (`held`, `requested` or `released`), `category` and `q`, with the number of open requests |
 | `GET /api/v1/organizations/{orgId}/quarantine/{id}` | The preview of any message held for the organization |
 | `POST /api/v1/organizations/{orgId}/quarantine/release` and `/delete` | Release or delete up to 100 messages given as `{"ids": [...]}` |

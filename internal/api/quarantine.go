@@ -191,8 +191,10 @@ func (s *Server) deliverToAllowed(ctx context.Context, targets []quarantineTarge
 		ids[i] = t.MailboxID
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT a.mailbox_id FROM quarantine_allowed_senders a JOIN mailboxes m ON m.id = a.mailbox_id LEFT JOIN quarantine_policies p ON p.org_id = m.org_id
-		WHERE a.mailbox_id = ANY($1) AND a.sender = $2 AND `+quarantineAccess("$3::text")+` = 'release'`, ids, sender, category)
+		SELECT DISTINCT a.mailbox_id FROM sender_list_entries a JOIN mailboxes m ON m.id = a.mailbox_id LEFT JOIN quarantine_policies p ON p.org_id = m.org_id
+		WHERE a.mailbox_id = ANY($1) AND a.action = 'allow'
+		  AND ((a.kind = 'address' AND a.value = $2) OR (a.kind = 'domain' AND a.value = split_part($2, '@', 2)))
+		  AND `+quarantineAccess("$3::text")+` = 'release'`, ids, strings.ToLower(sender), category)
 	if err != nil {
 		return nil, err
 	}
