@@ -29,6 +29,7 @@ import { ResourcesTab } from "@/components/admin/resources-tab"
 import { SecurityTab } from "@/components/admin/security-tab"
 import { OutboundRoutingTab } from "@/components/admin/outbound-routing-tab"
 import { SendingTab } from "@/components/admin/sending-tab"
+import { SenderWarningsTab } from "@/components/admin/sender-warnings-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
 import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { ImportMail } from "@/components/settings/import-mail"
@@ -72,6 +73,7 @@ const orgTabs = [
   { value: "mail-flow", label: "Mail flow", Component: MailFlowTab },
   { value: "message-trace", label: "Message trace", Component: MessageTraceTab },
   { value: "retention", label: "Retention", Component: RetentionTab },
+  { value: "sender-warnings", label: "Sender warnings", Component: SenderWarningsTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

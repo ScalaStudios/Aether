@@ -68,6 +68,6 @@ milter_protocol = 6
 milter_default_action = accept
 milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
 milter_header_checks = regexp:/etc/postfix/milter_header_checks, regexp:/etc/postfix/trace_milter_header_checks
-header_checks = regexp:/etc/postfix/trace_header_checks, regexp:/etc/postfix/coexist_loop_check
+header_checks = regexp:/etc/postfix/header_checks, regexp:/etc/postfix/trace_header_checks, regexp:/etc/postfix/coexist_loop_check
 
 smtp_dns_support_level = dnssec

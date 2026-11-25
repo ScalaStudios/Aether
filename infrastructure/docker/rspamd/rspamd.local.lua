@@ -192,3 +192,58 @@ rspamd_config:register_symbol({
     end, 'INCR', { key })
   end,
 })
+
+local lua_mime = require "lua_mime"
+local aether_auth_checks = {
+  { 'spf', { { 'R_SPF_ALLOW', 'pass' }, { 'R_SPF_FAIL', 'fail' }, { 'R_SPF_SOFTFAIL', 'softfail' }, { 'R_SPF_NEUTRAL', 'neutral' }, { 'R_SPF_DNSFAIL', 'temperror' }, { 'R_SPF_PERMFAIL', 'permerror' } } },
+  { 'dmarc', { { 'DMARC_POLICY_ALLOW', 'pass' }, { 'DMARC_POLICY_ALLOW_WITH_FAILURES', 'pass' }, { 'DMARC_POLICY_REJECT', 'fail' }, { 'DMARC_POLICY_QUARANTINE', 'fail' }, { 'DMARC_POLICY_SOFTFAIL', 'fail' }, { 'DMARC_BAD_POLICY', 'permerror' }, { 'DMARC_DNSFAIL', 'temperror' } } },
+}
+local aether_dkim_results = { allow = 'pass', reject = 'fail', tempfail = 'temperror', permerror = 'permerror', permfail = 'permerror', ['bad record'] = 'permerror' }
+
+local function aether_domain(value)
+  local domain = value and tostring(value):lower()
+  if domain and #domain <= 253 and domain:match('^[a-z0-9][a-z0-9.-]*$') then
+    return domain
+  end
+end
+
+rspamd_config:register_symbol({
+  name = 'AETHER_AUTHENTICATION',
+  type = 'postfilter',
+  callback = function(task)
+    local user = task:get_user()
+    local parts = { 'auth=' .. (user == 'aether-sieve-relay' and 'relay' or user and 'pass' or 'none') }
+    for _, check in ipairs(aether_auth_checks) do
+      local result = 'none'
+      for _, candidate in ipairs(check[2]) do
+        if task:has_symbol(candidate[1]) then
+          result = candidate[2]
+          break
+        end
+      end
+      table.insert(parts, check[1] .. '=' .. result)
+      if check[1] == 'spf' then
+        local envelope = task:get_from('smtp')
+        local domain = aether_domain(envelope and envelope[1] and envelope[1].domain ~= '' and envelope[1].domain or task:get_helo())
+        if domain then
+          table.insert(parts, 'spf.domain=' .. domain)
+        end
+      end
+    end
+    local dkim, dkim_domain = 'none', nil
+    for _, res in ipairs(task:get_dkim_results() or {}) do
+      local mapped = aether_dkim_results[res.result]
+      if mapped and (dkim == 'none' or mapped == 'pass') and dkim ~= 'pass' then
+        dkim, dkim_domain = mapped, aether_domain(res.domain)
+      end
+    end
+    table.insert(parts, 'dkim=' .. dkim)
+    if dkim_domain then
+      table.insert(parts, 'dkim.domain=' .. dkim_domain)
+    end
+    lua_mime.modify_headers(task, {
+      remove = { ['X-Aether-Authentication'] = 0 },
+      add = { ['X-Aether-Authentication'] = { order = 1, value = table.concat(parts, ' ') } },
+    })
+  end,
+})

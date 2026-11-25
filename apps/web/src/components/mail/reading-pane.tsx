@@ -11,8 +11,10 @@ import { IconButton } from "@/components/icon-button"
 import { InvitationCard } from "@/components/mail/invitation-card"
 import { LaterMenu } from "@/components/mail/later-menu"
 import { senderListQuery } from "@/components/settings/sender-lists"
+import { SenderNotice, SenderVerification } from "@/components/mail/sender-notice"
 import { Spinner } from "@/components/spinner"
 import { EmptyState, ErrorState } from "@/components/states"
+import { StatusBadge } from "@/components/status-badge"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -380,7 +382,14 @@ export function ReadingPane({
               <div className="flex items-center gap-3">
                 {m.from[0] && <Avatar address={m.from[0].address} name={m.from[0].name} className="size-10 text-sm" />}
                 <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                  <p className="font-semibold break-all">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</p>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <p className="font-semibold break-all">{m.from.map(formatAddress).join(", ") || "Unknown sender"}</p>
+                    {m.sender?.external && (
+                      <StatusBadge tone="neutral" icon={Globe}>
+                        External
+                      </StatusBadge>
+                    )}
+                  </div>
                   <time dateTime={m.date} className="text-sm text-fg-tertiary">
                     {formatDateTime(m.date)}
                   </time>
@@ -390,7 +399,9 @@ export function ReadingPane({
                 <AddressLine label="To" addresses={m.to} />
                 <AddressLine label="Cc" addresses={m.cc} />
               </dl>
+              {m.sender && m.from[0] && <SenderVerification sender={m.sender} from={m.from[0]} />}
             </header>
+            {m.sender && m.from[0] && <SenderNotice sender={m.sender} from={m.from[0]} />}
             {m.invitation && !readOnly && <InvitationCard key={`${m.uid}-${m.invitation.method}`} message={m} mailboxId={mailboxId} folder={folder} />}
             <MessageBody message={m} mailboxId={mailboxId} folder={folder} />
             <Conversation message={m} earlier={earlier} mailboxId={mailboxId} folder={folder} />

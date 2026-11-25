@@ -358,6 +358,7 @@ func appendOriginal(to *imapclient.Client, target string, m *imapclient.FetchMes
 	if date.IsZero() {
 		date = time.Now()
 	}
+	raw = WithoutHeader(raw, AuthenticationHeader)
 	cmd := to.Append(target, int64(len(raw)), &imap.AppendOptions{Flags: flags, Time: date})
 	if _, err := cmd.Write(raw); err != nil {
 		return nil, err

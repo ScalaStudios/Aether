@@ -560,6 +560,8 @@ type Message struct {
 	HTML        string       `json:"html"`
 	Attachments []Attachment `json:"attachments"`
 	Calendar    string       `json:"-"`
+
+	Authentication *Authentication `json:"-"`
 }
 
 func partString(path []int) string {
@@ -582,7 +584,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			return ErrNotFound
 		}
 		uidSet := imap.UIDSetNum(imap.UID(uid))
-		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To"}, Peek: true}
+		refs := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: []string{"References", "X-Original-To", AuthenticationHeader}, Peek: true}
 		msgs, err := ic.Fetch(uidSet, &imap.FetchOptions{
 			UID: true, Flags: true, Envelope: true, InternalDate: true, RFC822Size: true,
 			BodyStructure: &imap.FetchItemBodyStructure{Extended: true}, BodySection: []*imap.FetchItemBodySection{refs},
@@ -608,6 +610,7 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			if e, err := message.Read(bytes.NewReader(append(hdr, '\r', '\n'))); err == nil {
 				out.References = parseMessageIDs(e.Header.Get("References"))
 				out.DeliveredTo = strings.Trim(e.Header.Get("X-Original-To"), " <>")
+				out.Authentication = ParseAuthentication(e.Header.Values(AuthenticationHeader))
 			}
 		}
 		var textPart, htmlPart, calendarPart *imap.BodyStructureSinglePart

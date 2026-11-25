@@ -190,11 +190,16 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, p *principal
 	if err != nil {
 		s.log.Warn("finding related messages failed", "mailbox", m.ID, "err", err)
 	}
+	sender, err := s.assessSender(r.Context(), m, folderParam(r), msg)
+	if err != nil {
+		s.log.Warn("assessing sender failed", "mailbox", m.ID, "err", err)
+	}
 	writeJSON(w, http.StatusOK, struct {
 		*mailpkg.Message
 		Invitation *invitation       `json:"invitation,omitempty"`
 		Related    []mailpkg.Related `json:"related"`
-	}{msg, inv, nonNil(related)})
+		Sender     *senderInsight    `json:"sender"`
+	}{msg, inv, nonNil(related), sender})
 }
 
 func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, p *principal) {

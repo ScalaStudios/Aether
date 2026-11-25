@@ -262,6 +262,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Rooms and equipment](documentation/rooms-and-equipment.md): bookable rooms and equipment, booking rules, approvals, the room finder, and free/busy over CalDAV.
 - [Personal aliases](documentation/personal-aliases.md): aliases and masked addresses people create for themselves, the policy that limits them, and the SimpleLogin-compatible endpoint for password managers.
 - [Storage and quota warnings](documentation/storage.md): how full each mailbox is, folder by folder, and the warning emails before it fills up.
+- [Sender warnings](documentation/sender-warnings.md): the External tag, first contact tips, impersonation warnings and sender verification in Aether Mail, and how the verdict is protected from forged headers.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.

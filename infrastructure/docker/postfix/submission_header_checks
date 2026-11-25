@@ -1,2 +1,3 @@
 /^Received: .* with ESMTPSA /    IGNORE
 /^Subject:/    INFO
+/^X-Aether-Authentication:/    IGNORE

@@ -483,6 +483,43 @@ export interface Message extends MessageSummary {
   attachments: Attachment[]
   invitation?: Invitation
   related?: { folder: string; uid: number; date: string }[]
+  sender?: SenderInsight | null
+}
+
+export type AuthResultValue = "pass" | "fail" | "softfail" | "neutral" | "none" | "temperror" | "permerror"
+
+export interface AuthResult {
+  result: AuthResultValue
+  domain?: string
+}
+
+export interface SenderAuthentication {
+  submission: "pass" | "relay" | "none"
+  spf: AuthResult
+  dkim: AuthResult
+  dmarc: AuthResult
+}
+
+export interface SenderWarning {
+  kind: "spoofed" | "name" | "address-in-name" | "lookalike"
+  name?: string
+  address?: string
+  domain?: string
+  resembles?: string
+}
+
+export interface SenderInsight {
+  organization: string
+  external: boolean
+  firstContact: boolean
+  warnings: SenderWarning[]
+  authentication: SenderAuthentication | null
+}
+
+export interface SenderWarningSettings {
+  externalTag: boolean
+  firstContact: boolean
+  impersonation: boolean
 }
 
 export interface OutgoingMessage {
