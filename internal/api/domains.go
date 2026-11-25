@@ -2,13 +2,8 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -20,13 +15,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/scalastudios/aether/internal/secrets"
-)
-
-const (
-	dkimKeysHash      = "DKIM_KEYS"
-	dkimSelectorsHash = "DKIM_SELECTORS"
 )
 
 var domainPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
@@ -47,6 +38,7 @@ type domain struct {
 	VerificationToken string     `json:"verificationToken"`
 	DKIMSelector      string     `json:"dkimSelector"`
 	DKIMRecord        string     `json:"dkimRecord"`
+	DKIMRotationDue   bool       `json:"dkimRotationDue"`
 	Active            bool       `json:"active"`
 	AliasOf           *string    `json:"aliasOf"`
 	AliasSendAs       bool       `json:"aliasSendAs"`
@@ -55,17 +47,21 @@ type domain struct {
 	DualDeliveryIDs   []string   `json:"dualDeliveryMailboxIds"`
 }
 
-const domainColumns = `id, org_id, name, verified_at, verification_token, dkim_selector, dkim_public_key, active, alias_of, alias_send_as, created_at, coexistence_host,
+const domainColumns = `id, org_id, name, verified_at, verification_token,
+	coalesce((SELECT selector FROM dkim_keys WHERE domain_id = domains.id AND algorithm = 'rsa' AND state = 'active'), ''),
+	coalesce((SELECT public_key FROM dkim_keys WHERE domain_id = domains.id AND algorithm = 'rsa' AND state = 'active'), ''),
+	EXISTS (SELECT 1 FROM dkim_keys WHERE domain_id = domains.id AND state = 'active' AND activated_at < now() - interval '365 days'),
+	active, alias_of, alias_send_as, created_at, coexistence_host,
 	ARRAY(SELECT m.id::text FROM mailboxes m WHERE m.domain_id = domains.id AND m.coexistence_dual AND m.active ORDER BY m.id)`
 
 func scanDomain(row pgx.Row) (*domain, error) {
 	d := &domain{}
 	var pub string
-	if err := row.Scan(&d.ID, &d.OrgID, &d.Name, &d.VerifiedAt, &d.VerificationToken, &d.DKIMSelector, &pub, &d.Active, &d.AliasOf, &d.AliasSendAs, &d.CreatedAt, &d.CoexistenceHost, &d.DualDeliveryIDs); err != nil {
+	if err := row.Scan(&d.ID, &d.OrgID, &d.Name, &d.VerifiedAt, &d.VerificationToken, &d.DKIMSelector, &pub, &d.DKIMRotationDue, &d.Active, &d.AliasOf, &d.AliasSendAs, &d.CreatedAt, &d.CoexistenceHost, &d.DualDeliveryIDs); err != nil {
 		return nil, err
 	}
 	d.Verified = d.VerifiedAt != nil
-	d.DKIMRecord = "v=DKIM1; k=rsa; p=" + pub
+	d.DKIMRecord = dkimRecord("rsa", pub)
 	return d, nil
 }
 
@@ -124,15 +120,12 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		}
 	}
 	in.AliasSendAs = in.AliasSendAs && in.AliasOf != nil
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := generateDKIMKey("rsa", 2048)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	der, _ := x509.MarshalPKCS8PrivateKey(key)
-	pub, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	selector := "aether" + time.Now().UTC().Format("200601")
+	selector := newDKIMSelector("rsa")
 	var verifiedAt *time.Time
 	if p.User.IsPlatformAdmin {
 		now := time.Now()
@@ -140,11 +133,11 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	var id string
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(r.Context(), `INSERT INTO domains (org_id, name, verification_token, verified_at, dkim_selector, dkim_private_key, dkim_public_key, alias_of, alias_send_as) VALUES ($1, $2, $3, $4, $5, '', $6, $7, $8) RETURNING id`,
-			orgID, name, secrets.Token(20), verifiedAt, selector, base64.StdEncoding.EncodeToString(pub), in.AliasOf, in.AliasSendAs).Scan(&id); err != nil {
+		if err := tx.QueryRow(r.Context(), `INSERT INTO domains (org_id, name, verification_token, verified_at, alias_of, alias_send_as) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+			orgID, name, secrets.Token(20), verifiedAt, in.AliasOf, in.AliasSendAs).Scan(&id); err != nil {
 			return err
 		}
-		_, err := tx.Exec(r.Context(), `UPDATE domains SET dkim_private_key = $2 WHERE id = $1`, id, s.box.Seal(privPEM, "dkim:"+id))
+		_, err := s.insertDKIMKey(r.Context(), tx, id, selector, "active", key)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -156,7 +149,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		s.internalError(w, r, err)
 		return
 	}
-	if err := s.publishDKIM(r.Context(), name, selector, privPEM); err != nil {
+	if err := s.syncDomainDKIM(r.Context(), id, name); err != nil {
 		s.log.Error("dkim publish failed; outgoing mail for this domain will be unsigned until the API restarts", "domain", name, "err", err)
 	}
 	if err := s.publishAttachmentPolicy(r.Context(), orgID); err != nil {
@@ -203,7 +196,39 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 	if !ok {
 		return
 	}
-	_, err := s.db.Exec(r.Context(), `DELETE FROM domains WHERE id = $1`, d.ID)
+	ctx := r.Context()
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockDKIMDomain(ctx, tx, d.ID); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT selector FROM dkim_keys WHERE domain_id = $1`, d.ID)
+		if err != nil {
+			return err
+		}
+		selectors, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM domains WHERE id = $1`, d.ID); err != nil {
+			return err
+		}
+		_, err = s.kv.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HDel(ctx, dkimSelectorsHash, d.Name)
+			pipe.HDel(ctx, dkimEd25519SelectorsHash, d.Name)
+			if len(selectors) > 0 {
+				for i := range selectors {
+					selectors[i] += "." + d.Name
+				}
+				pipe.HDel(ctx, dkimKeysHash, selectors...)
+			}
+			return nil
+		})
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFound(w)
+		return
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.ConstraintName == "domains_alias_of_fkey" {
 		writeError(w, http.StatusConflict, "domain_has_alias_domains", "Alias domains still point to this domain. Delete them first; the domain is unchanged.")
@@ -217,8 +242,6 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 		s.internalError(w, r, err)
 		return
 	}
-	s.kv.HDel(r.Context(), dkimKeysHash, d.DKIMSelector+"."+d.Name)
-	s.kv.HDel(r.Context(), dkimSelectorsHash, d.Name)
 	s.kv.HDel(r.Context(), attachmentPolicyHash, d.Name)
 	s.audit(r.Context(), r, p, &d.OrgID, "domain.delete", "domain", d.ID, map[string]any{"name": d.Name})
 	w.WriteHeader(http.StatusNoContent)
@@ -259,12 +282,18 @@ type dnsRecord struct {
 	Found   []string `json:"found"`
 }
 
-func (s *Server) expectedRecords(d *domain) []dnsRecord {
-	return []dnsRecord{
+func (s *Server) expectedRecords(d *domain, keys []dkimKey) []dnsRecord {
+	records := []dnsRecord{
 		{Type: "TXT", Name: "_aether." + d.Name, Value: "aether-verification=" + d.VerificationToken, Purpose: "verification"},
 		{Type: "MX", Name: d.Name, Value: "10 " + s.cfg.MailHostname + ".", Purpose: "mx"},
 		{Type: "TXT", Name: d.Name, Value: "v=spf1 mx -all", Purpose: "spf"},
-		{Type: "TXT", Name: d.DKIMSelector + "._domainkey." + d.Name, Value: d.DKIMRecord, Purpose: "dkim"},
+	}
+	for _, k := range keys {
+		if k.RemoveAfter == nil || time.Now().Before(*k.RemoveAfter) {
+			records = append(records, dnsRecord{Type: "TXT", Name: k.DNSName, Value: k.Record, Purpose: "dkim"})
+		}
+	}
+	return append(records, []dnsRecord{
 		{Type: "TXT", Name: "_dmarc." + d.Name, Value: "v=DMARC1; p=quarantine; adkim=s; aspf=s; rua=mailto:dmarc-reports@" + d.Name, Purpose: "dmarc"},
 		{Type: "CNAME", Name: "mta-sts." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "mta-sts-host"},
 		{Type: "TXT", Name: "_mta-sts." + d.Name, Value: "v=STSv1; id=" + s.mtaSTSPolicyID(), Purpose: "mta-sts"},
@@ -273,7 +302,7 @@ func (s *Server) expectedRecords(d *domain) []dnsRecord {
 		{Type: "CNAME", Name: "autodiscover." + d.Name, Value: s.cfg.PublicURL.Hostname() + ".", Purpose: "autodiscover"},
 		{Type: "SRV", Name: "_imaps._tcp." + d.Name, Value: "0 1 993 " + s.cfg.MailHostname + ".", Purpose: "srv-imaps"},
 		{Type: "SRV", Name: "_submissions._tcp." + d.Name, Value: "0 1 465 " + s.cfg.MailHostname + ".", Purpose: "srv-submissions"},
-	}
+	}...)
 }
 
 func (s *Server) mtaSTSPolicy() string {
@@ -356,6 +385,9 @@ func (s *Server) checkRecord(ctx context.Context, rec *dnsRecord) {
 		return
 	}
 	rec.Status = "mismatch"
+	if rec.Purpose == "dkim" && len(rec.Found) != 1 {
+		return
+	}
 	for _, f := range rec.Found {
 		if recordMatches(rec, f, s.cfg.MailHostname) {
 			rec.Status = "ok"
@@ -406,8 +438,7 @@ func recordMatches(rec *dnsRecord, found, mailHost string) bool {
 	case "tls-rpt":
 		return strings.HasPrefix(normalized, "v=tlsrptv1;")
 	case "dkim":
-		_, pub, _ := strings.Cut(rec.Value, "p=")
-		return strings.Contains(strings.ReplaceAll(found, " ", ""), "p="+pub)
+		return dkimRecordMatches(rec.Value, found)
 	default:
 		return strings.TrimSpace(found) == rec.Value
 	}
@@ -418,9 +449,14 @@ func (s *Server) domainDNS(w http.ResponseWriter, r *http.Request, p *principal)
 	if !ok {
 		return
 	}
+	keys, err := s.dkimKeys(r.Context(), d)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	records := s.expectedRecords(d)
+	records := s.expectedRecords(d, keys)
 	done := make(chan struct{}, len(records))
 	for i := range records {
 		go func() {
@@ -442,7 +478,7 @@ func (s *Server) verifyDomain(w http.ResponseWriter, r *http.Request, p *princip
 	if !d.Verified {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
-		rec := s.expectedRecords(d)[0]
+		rec := s.expectedRecords(d, nil)[0]
 		s.checkRecord(ctx, &rec)
 		if rec.Status != "ok" {
 			writeError(w, http.StatusUnprocessableEntity, "verification_failed", "The TXT record "+rec.Name+" does not contain "+rec.Value+" yet. DNS changes can take time to propagate; try again later.")
@@ -460,36 +496,4 @@ func (s *Server) verifyDomain(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
-}
-
-func (s *Server) publishDKIM(ctx context.Context, name, selector string, privPEM []byte) error {
-	if err := s.kv.HSet(ctx, dkimKeysHash, selector+"."+name, string(privPEM)).Err(); err != nil {
-		return err
-	}
-	return s.kv.HSet(ctx, dkimSelectorsHash, name, selector).Err()
-}
-
-func (s *Server) SyncDKIM(ctx context.Context) error {
-	rows, err := s.db.Query(ctx, `SELECT id, name, dkim_selector, dkim_private_key FROM domains WHERE active`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var errs []error
-	for rows.Next() {
-		var id, name, selector string
-		var sealed []byte
-		if err := rows.Scan(&id, &name, &selector, &sealed); err != nil {
-			return err
-		}
-		privPEM, err := s.box.Open(sealed, "dkim:"+id)
-		if err != nil {
-			errs = append(errs, errors.New(name+": cannot decrypt DKIM key; was AETHER_SECRET_KEY changed?"))
-			continue
-		}
-		if err := s.publishDKIM(ctx, name, selector, privPEM); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(append(errs, rows.Err())...)
 }

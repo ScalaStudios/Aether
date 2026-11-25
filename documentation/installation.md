@@ -142,7 +142,18 @@ For each domain that publishes a `_smtp._tls` record, Aether sends the daily TLS
 
 `aether_reports_sent_total` counts reports that Postfix or an HTTPS collector accepted, labeled `dmarc` or `tls`. A rejected address is not retried when the collector returns a permanent error.
 
-### DANE
+### DKIM key rotation
+
+Manage keys with the domain's DKIM API under `/api/v1/domains/{domainId}/dkim`. Organization administrators can use their session or an API key with `domains:write`. Use `domains:read` to list keys and their status.
+
+1. POST to the DKIM collection with `{"algorithm":"rsa","bits":4096}` to prepare a replacement. RSA also supports 2048 bits, the default. Use `{"algorithm":"ed25519"}` to add or rotate the optional second signature. To import a key, send `selector` and `privateKey` with its single-label selector and unencrypted RSA or Ed25519 PEM.
+2. Publish the returned `record` as a TXT record at `dnsName`. For long RSA values, split the value into quoted strings of at most 255 bytes in the **same** TXT record if your DNS provider requires it. Keep the current TXT record published. Wait for the new record to propagate, including expiry of any cached negative response for the selector.
+3. POST to `/api/v1/domains/{domainId}/dkim/{keyId}/activate`. Aether checks DNS and switches signing for the selected algorithm only when it finds the matching key. Check the domain's DNS page or GET the DKIM collection for the selectors and states.
+4. Leave the old TXT record published through the retired key's `removeAfter` time, seven days after the switch. After that time, remove the old DNS record and DELETE the retired key at `/api/v1/domains/{domainId}/dkim/{keyId}` to clear its metadata and cached key material.
+
+DELETE on a pending key cancels it. DELETE on the active Ed25519 key stops the second signature and starts the same seven-day retirement period. Replace the active RSA key through rotation. Aether flags active keys at 365 days via `rotationDue` on the key and `dkimRotationDue` on the domain. Existing selectors stay active on upgrade.
+
+## DANE
 
 Outbound mail checks DANE. The bundled Unbound resolver validates DNSSEC, and Postfix uses it to look up TLSA records. When a receiving domain publishes signed TLSA records, Postfix only delivers over TLS to a server whose certificate matches them. Domains without TLSA records get opportunistic TLS as before. Unbound sits on an internal `resolver` network at `172.29.53.53`. If `172.29.53.0/24` is already in use on the host, change the subnet and the two addresses in `compose.yml`.
 

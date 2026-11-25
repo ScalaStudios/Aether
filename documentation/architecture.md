@@ -126,7 +126,7 @@ The data model is defined in `migrations/0001_init.sql`:
 
 - `organizations`, `organization_members` with roles owner, admin, and member
 - `users`, `user_identities`, linking an OIDC issuer and subject to a user
-- `domains`, with a verification token and an encrypted DKIM key
+- `domains`, with a verification token, and `dkim_keys`, with encrypted private keys and selector lifecycle state
 - `mailboxes`, each with an owner, or with `kind` `shared` and no owner, plus the pending flag, generation, lease, attempt count and next-attempt time that drive the Dovecot rights reconciliation; its foreign keys restrict the deletion of its domain and organization; `mailbox_delegates` holds delegates and members with their access level, `send_as` and `send_on_behalf`
 - `aliases`, where an empty local part is the catch-all, and `kind` is `alias` or `list`; `alias_owners` holds the owners of lists, `alias_groups` the groups whose members a list includes, and `member_domains` the domains whose mailboxes it includes
 - `directory_groups` and `directory_group_members`, groups pushed by an identity provider over SCIM and the accounts in them
@@ -148,7 +148,7 @@ Mailbox storage paths use the mailbox UUID (`/var/vmail/<id>/Maildir`), so renam
 2. The API checks that the caller owns the mailbox, or may send as it or on its behalf, and that the chosen From address is one they may use (see [Sending from aliases and lists](#sending-from-aliases-and-lists)). It builds a MIME message, sanitizing the HTML. On behalf, it adds a `Sender` header with the caller's own address. S/MIME and OpenPGP are already sealed in the browser; the API checks the organization's encryption policy and forwards that body without opening it. A password-protected message is also sealed in the browser. The API stores the ciphertext and mails a link. See [Encryption](encryption.md).
 3. The API opens SMTP with STARTTLS to Postfix on port 587. It authenticates with SASL PLAIN as `alice@example.com*aether-webmail`, the mailbox the message is sent from, and gives the chosen From address, such as `support@example.com`, as MAIL FROM.
 4. Dovecot reports the authenticated user as `alice@example.com`.
-5. Postfix applies `smtpd_sender_login_maps`, then hands the message to the API's first milter, which runs the organization's [mail flow rules](mail-flow-rules.md), and then to Rspamd. Rspamd scores it, signs it with the domain's DKIM key from Valkey, and returns it. The API's second milter runs the rules that test the spam score.
+5. Postfix applies `smtpd_sender_login_maps`, then hands the message to the API's first milter, which runs the organization's [mail flow rules](mail-flow-rules.md), and then to Rspamd. Rspamd scores it, signs it with the domain's active RSA key and optional Ed25519 key from Valkey, and returns it. The API's second milter runs the rules that test the spam score.
 6. Postfix delivers the message: through Dovecot LMTP for local recipients, or by direct MX delivery or the configured relay host for remote ones.
 7. The API appends a copy to the mailbox's Sent folder over IMAP, or to the shared mailbox a list names for its sent copies.
 

@@ -138,6 +138,7 @@ export function DomainsTab({ orgId }: { orgId: string }) {
                     <div className="flex flex-wrap gap-2">
                       <DomainVerifiedBadge domain={d} />
                       {d.coexistenceHost && <StatusBadge tone="warning">Coexistence on</StatusBadge>}
+                      {d.dkimRotationDue && <StatusBadge tone="warning">DKIM rotation due</StatusBadge>}
                     </div>
                   </TableCell>
                   <TableCell>{formatDate(d.createdAt)}</TableCell>
@@ -245,6 +246,7 @@ function DomainDialog({ domainId, orgId, onClose }: { domainId: string; orgId: s
           <DialogTitle className="flex flex-wrap items-center gap-3">
             <span className="font-mono">{d?.name ?? "Domain"}</span>
             {d && <DomainVerifiedBadge domain={d} />}
+            {d?.dkimRotationDue && <StatusBadge tone="warning">DKIM rotation due</StatusBadge>}
           </DialogTitle>
           <DialogDescription>
             {d?.verified

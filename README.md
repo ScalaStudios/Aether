@@ -36,7 +36,7 @@ Aether works in the same space as hosted services such as Google Workspace, Micr
 | Area | What Aether includes |
 | --- | --- |
 | **Mail server** | Inbound SMTP on port 25, submission on 465 and 587, and IMAP on 143 and 993. Domains, mailboxes, aliases, catch-all addresses, distribution lists and quotas, all stored in PostgreSQL. People can create their own aliases and masked addresses, from Settings or a password manager, on the domains an administrator allows. A mailbox can only send as itself, as aliases that point to it, as distribution lists that allow it and as shared mailboxes its owner may send as, checked on both the envelope and the From header. |
-| **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, likely spam filed into Junk, a quarantine for spam, phishing and malware with release by people and administrators and digest emails, DKIM signing with a 2048-bit RSA key per domain, ARC signing, sending limits per organization, domain and mailbox that restrict a compromised sender and alert administrators, and optional ClamAV virus scanning. |
+| **Filtering and signing** | Rspamd spam scoring with DNS blocklists queried through a bundled Unbound resolver, likely spam filed into Junk, a quarantine for spam, phishing and malware with release by people and administrators and digest emails, DKIM signing with a per-domain RSA key (2048 or 4096 bits) and an optional Ed25519 signature, ARC signing, sending limits per organization, domain and mailbox that restrict a compromised sender and alert administrators, and optional ClamAV virus scanning. |
 | **Deliverability** | DNS records generated for every domain with a live check, MTA-STS policies and TLS reporting, DMARC aggregate reports received and summarized per sending IP, SRS for aliases that forward outside, and DANE checks on outbound mail. |
 | **Mail app setup** | Thunderbird autoconfig, Autodiscover XML and RFC 6186 SRV records for every domain, and an Apple configuration profile with mail, calendar and contacts. |
 | **Webmail** | Aether Mail: folders, conversations, server-side search, rich-text compose with inline images, sending from aliases, lists and shared mailboxes with a From name and signatures per address, attachments, drafts, scheduled send, snooze, keyboard shortcuts, and HTML mail rendered with remote content blocked. S/MIME and OpenPGP signing and encryption, and password-protected messages for people outside the organization, with private keys and passwords kept in the browser. |
@@ -56,7 +56,7 @@ Not built yet: Exchange ActiveSync. See [Known limitations](#known-limitations).
 | --- | --- | --- |
 | SMTP (RFC 5321) | Implemented | Postfix accepts mail on port 25 for verified domains, and submission on 587 with STARTTLS and 465 with implicit TLS. Authentication is required before relaying |
 | IMAP4rev1 (RFC 3501) | Implemented | Dovecot on 143 with STARTTLS and 993 with implicit TLS, with special-use folders, quotas and `THREAD=REFERENCES` |
-| DKIM (RFC 6376) and ARC (RFC 8617) | Implemented | Rspamd signs outgoing mail with a key per domain that Aether generates, and verifies incoming signatures |
+| DKIM (RFC 6376, RFC 8463) and ARC (RFC 8617) | Implemented | Rspamd signs outgoing mail with the domain's active RSA key and, when configured, a second Ed25519 key. Keys can be rotated or imported. Incoming signatures are verified |
 | SPF (RFC 7208) and DMARC (RFC 7489) | Implemented | Checked on incoming mail by Rspamd. Aether suggests the records to publish and summarizes the aggregate reports it receives |
 | MTA-STS (RFC 8461) and TLS-RPT (RFC 8460) | Implemented | A policy served for every verified domain, starting in `testing` mode |
 | DANE (RFC 7672) | Implemented for outbound mail | Postfix checks TLSA records through a DNSSEC-validating resolver. Aether does not publish TLSA records for its own domains |
@@ -156,7 +156,7 @@ For `example.com` with the mail host `mail.example.com`, the records are:
 | TXT | `_aether.example.com` | `aether-verification=<token>` | Yes: proves you own the domain |
 | MX | `example.com` | `10 mail.example.com.` | Yes: routes incoming mail to Aether |
 | TXT | `example.com` | `v=spf1 mx -all` | Yes: SPF. Add your relay here if you use one |
-| TXT | `<selector>._domainkey.example.com` | `v=DKIM1; k=rsa; p=…` | Yes: the domain's DKIM public key |
+| TXT | `<selector>._domainkey.example.com` | `v=DKIM1; k=rsa; p=…` | Yes: the domain's RSA DKIM public key. An active Ed25519 key adds a second TXT record |
 | TXT | `_dmarc.example.com` | `v=DMARC1; p=quarantine; adkim=s; aspf=s; rua=mailto:dmarc-reports@example.com` | Yes: DMARC, with reports sent back to Aether |
 | CNAME | `mta-sts.example.com` | `mail.example.com.` | Recommended: serves the MTA-STS policy |
 | TXT | `_mta-sts.example.com` | `v=STSv1; id=<id>` | Recommended: announces the MTA-STS policy |

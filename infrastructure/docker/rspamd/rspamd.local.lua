@@ -388,3 +388,28 @@ rspamd_config:register_symbol({
     end, 'HMGET', args)
   end,
 })
+
+local lua_dkim_tools = require 'lua_dkim_tools'
+local sign_using_redis = lua_dkim_tools.sign_using_redis
+
+local function copy_table(src)
+  local out = {}
+  for k, v in pairs(src) do
+    out[k] = v
+  end
+  return out
+end
+
+lua_dkim_tools.sign_using_redis = function(N, task, settings, selectors, sign_func, err_func)
+  sign_using_redis(N, task, settings, selectors, sign_func, err_func)
+  if N ~= 'dkim_signing' then
+    return
+  end
+  local ed25519 = copy_table(settings)
+  ed25519.selector_prefix = 'DKIM_SELECTORS_ED25519'
+  local copied = {}
+  for i, selector in ipairs(selectors) do
+    copied[i] = copy_table(selector)
+  end
+  pcall(sign_using_redis, N, task, ed25519, copied, sign_func, function() end)
+end

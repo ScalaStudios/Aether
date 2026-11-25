@@ -199,6 +199,10 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/domains/{domainId}/dns", s.domainDNS)
 	authed("POST /api/v1/domains/{domainId}/verify", s.verifyDomain)
 	authed("GET /api/v1/domains/{domainId}/dmarc", s.domainDMARC)
+	authed("GET /api/v1/domains/{domainId}/dkim", s.listDKIMKeys)
+	authed("POST /api/v1/domains/{domainId}/dkim", s.createDKIMKey)
+	authed("POST /api/v1/domains/{domainId}/dkim/{keyId}/activate", s.activateDKIMKey)
+	authed("DELETE /api/v1/domains/{domainId}/dkim/{keyId}", s.deleteDKIMKey)
 
 	authed("GET /api/v1/organizations/{orgId}/mailboxes", s.listMailboxes)
 	authed("POST /api/v1/organizations/{orgId}/mailboxes", s.createMailbox)

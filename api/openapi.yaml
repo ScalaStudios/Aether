@@ -716,6 +716,76 @@ paths:
                 required: [records]
                 properties:
                   records: { type: array, items: { $ref: "#/components/schemas/DNSRecord" } }
+  /domains/{domainId}/dkim:
+    parameters: [{ $ref: "#/components/parameters/domainId" }]
+    get:
+      tags: [domains]
+      summary: List DKIM selectors, DNS records and rotation status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DKIMKey" } }
+    post:
+      tags: [domains]
+      summary: Generate or import a pending DKIM key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [algorithm]
+                  properties:
+                    algorithm: { type: string, enum: [rsa, ed25519] }
+                    bits: { type: integer, enum: [2048, 4096], description: RSA only. Defaults to 2048. }
+                - type: object
+                  required: [selector, privateKey]
+                  properties:
+                    selector: { type: string, maxLength: 63, description: A single DNS label. }
+                    privateKey: { type: string, writeOnly: true, description: Unencrypted RSA or Ed25519 PEM private key. }
+      responses:
+        "201":
+          description: Pending key. Publish its TXT record before activation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DKIMKey" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /domains/{domainId}/dkim/{keyId}/activate:
+    parameters:
+      - { $ref: "#/components/parameters/domainId" }
+      - { $ref: "#/components/parameters/dkimKeyId" }
+    post:
+      tags: [domains]
+      summary: Check DNS and activate the key for signing
+      responses:
+        "200":
+          description: Active key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DKIMKey" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /domains/{domainId}/dkim/{keyId}:
+    parameters:
+      - { $ref: "#/components/parameters/domainId" }
+      - { $ref: "#/components/parameters/dkimKeyId" }
+    delete:
+      tags: [domains]
+      summary: Cancel a pending key, retire active Ed25519 or remove an expired key
+      responses:
+        "200":
+          description: Ed25519 key retired. Keep its TXT record through removeAfter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DKIMKey" }
+        "204": { description: Key removed }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /domains/{domainId}/verify:
     post:
       tags: [domains]
@@ -3429,6 +3499,7 @@ components:
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
+    dkimKeyId: { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }
     mailboxId: { name: mailboxId, in: path, required: true, schema: { type: string, format: uuid } }
     fromAddress: { name: fromAddress, in: query, schema: { type: string, format: email }, description: An authorized From address. Defaults to the mailbox address. }
     uid: { name: uid, in: path, required: true, schema: { type: integer } }
@@ -3681,7 +3752,7 @@ components:
         html: { type: string }
     Domain:
       type: object
-      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, active, aliasOf, aliasSendAs, createdAt, coexistenceHost, dualDeliveryMailboxIds]
+      required: [id, orgId, name, verified, verificationToken, dkimSelector, dkimRecord, dkimRotationDue, active, aliasOf, aliasSendAs, createdAt, coexistenceHost, dualDeliveryMailboxIds]
       properties:
         id: { type: string, format: uuid }
         orgId: { type: string, format: uuid }
@@ -3689,7 +3760,8 @@ components:
         verified: { type: boolean }
         verifiedAt: { type: [string, "null"], format: date-time }
         verificationToken: { type: string }
-        dkimSelector: { type: string }
+        dkimSelector: { type: string, description: Active RSA selector. }
+        dkimRotationDue: { type: boolean }
         dkimRecord: { type: string, description: TXT value to publish at <selector>._domainkey.<domain> }
         coexistenceHost: { type: string, description: Direct legacy SMTP hostname. An empty string means coexistence is off. }
         dualDeliveryMailboxIds:
@@ -3699,6 +3771,22 @@ components:
         aliasOf: { type: [string, "null"], format: uuid, description: The domain this alias domain points to, or null for a regular domain }
         aliasSendAs: { type: boolean }
         createdAt: { type: string, format: date-time }
+    DKIMKey:
+      type: object
+      required: [id, selector, algorithm, bits, state, dnsName, record, createdAt, activatedAt, retiredAt, removeAfter, rotationDue]
+      properties:
+        id: { type: string, format: uuid }
+        selector: { type: string }
+        algorithm: { type: string, enum: [rsa, ed25519] }
+        bits: { type: integer }
+        state: { type: string, enum: [pending, active, retired] }
+        dnsName: { type: string }
+        record: { type: string }
+        createdAt: { type: string, format: date-time }
+        activatedAt: { type: [string, "null"], format: date-time }
+        retiredAt: { type: [string, "null"], format: date-time }
+        removeAfter: { type: [string, "null"], format: date-time }
+        rotationDue: { type: boolean }
     DNSRecord:
       type: object
       required: [type, name, value, purpose, status, found]

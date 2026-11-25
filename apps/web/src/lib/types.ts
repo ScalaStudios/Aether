@@ -97,6 +97,7 @@ export interface Domain {
   dkimRecord: string
   coexistenceHost: string
   dualDeliveryMailboxIds: string[]
+  dkimRotationDue: boolean
   active: boolean
   aliasOf: string | null
   aliasSendAs: boolean
