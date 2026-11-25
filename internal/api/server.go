@@ -169,6 +169,10 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/v1/organizations/{orgId}/api-keys", s.listAPIKeys)
 	authed("POST /api/v1/organizations/{orgId}/api-keys", s.createAPIKey)
 	authed("DELETE /api/v1/api-keys/{keyId}", s.revokeAPIKey)
+	authed("GET /api/v1/organizations/{orgId}/sending-limits", s.getSendingLimits)
+	authed("PUT /api/v1/organizations/{orgId}/sending-limits", s.saveSendingLimits)
+	authed("GET /api/v1/organizations/{orgId}/restricted-senders", s.listRestrictedSenders)
+	authed("DELETE /api/v1/mailboxes/{mailboxId}/sending-restriction", s.releaseSender)
 	authed("GET /api/v1/organizations/{orgId}/webhooks", s.listWebhooks)
 	authed("POST /api/v1/organizations/{orgId}/webhooks", s.createWebhook)
 	authed("DELETE /api/v1/webhooks/{webhookId}", s.deleteWebhook)
@@ -545,10 +549,14 @@ func (s *Server) audit(ctx context.Context, r *http.Request, p *principal, orgID
 	case p != nil:
 		actor = &p.User.ID
 	}
+	var ip string
+	if r != nil {
+		ip = s.clientIP(r)
+	}
 	var eventID int64
 	var at time.Time
 	err := s.db.QueryRow(ctx, `INSERT INTO audit_events (actor_user_id, org_id, action, target_type, target_id, ip, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-		actor, orgID, action, targetType, targetID, s.clientIP(r), meta).Scan(&eventID, &at)
+		actor, orgID, action, targetType, targetID, ip, meta).Scan(&eventID, &at)
 	if err != nil {
 		s.log.Error("audit write failed", "action", action, "err", err)
 		return

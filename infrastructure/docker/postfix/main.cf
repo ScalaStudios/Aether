@@ -57,6 +57,7 @@ smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_
 smtpd_recipient_restrictions = check_recipient_access regexp:/etc/postfix/coexist_recipient_guard, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unlisted_recipient, check_policy_service { inet:__POLICY__, default_action=DUNNO, policy_context=senders }, check_recipient_access pgsql:/etc/postfix/pgsql/restricted-lists.cf, check_recipient_access pgsql:/etc/postfix/pgsql/tagged-rejects.cf
 smtpd_restriction_classes = aether_list_policy
 aether_list_policy = check_policy_service inet:__POLICY__
+aether_sending_policy = check_policy_service { inet:__POLICY__, policy_context=sending }
 smtpd_sender_restrictions = reject_non_fqdn_sender
 smtpd_data_restrictions = reject_unauth_pipelining
 nested_header_checks =

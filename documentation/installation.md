@@ -160,9 +160,9 @@ TLS policies apply to the delivery next hop. Use the recipient domain for direct
 
 Per-sender relay credentials are encrypted under `AETHER_SECRET_KEY`. Postfix retrieves them from the API over the internal socketmap listener. Custom deployments must provide the same `AETHER_MAIL_DB_PASSWORD` to the API and Postfix and allow Postfix to reach the API’s `AETHER_OUTBOUND_SASL_LISTEN` (default `:10041`). Set `AETHER_OUTBOUND_SASL_SERVICE` on Postfix if the API endpoint differs from `api:10041`. Keep the listener on a private network.
 
-## Distribution list policy service
+## Policy service
 
-Postfix decides who may send to a restricted distribution list by asking the API on port 10040 during the SMTP session. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). In Compose the port is not published and is reachable only inside the Compose network. If the API runs elsewhere, open that port to Postfix and set `AETHER_POLICY_SERVICE` on the Postfix container.
+Postfix decides who may send to a restricted distribution list, and whether a signed-in account is within its sending limits, by asking the API on port 10040 during the SMTP session. Without it, submission answers every recipient with a temporary error. The API listens on `AETHER_POLICY_LISTEN` (default `:10040`), and Postfix connects to `AETHER_POLICY_SERVICE` (default `api:10040`). In Compose the port is not published and is reachable only inside the Compose network. If the API runs elsewhere, open that port to Postfix and set `AETHER_POLICY_SERVICE` on the Postfix container.
 
 ## Mail flow milters
 

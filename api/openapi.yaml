@@ -769,6 +769,77 @@ paths:
       responses:
         "204": { description: Deleted. Stored mail on disk is retained for manual removal. }
         "503": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/sending-limits:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [mailboxes]
+      summary: Sending limits of the organization, its domains and its mailboxes (owners and administrators)
+      description: "defaults are the limits that apply where nothing is set. organization, domains and mailboxes hold only the limits set at that level, keyed by domain or mailbox id. A mailbox uses its own value first, then its domain's, then the organization's, then the default. 0 means no limit."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [defaults, organization, domains, mailboxes]
+                properties:
+                  defaults: { $ref: "#/components/schemas/SendingLimits" }
+                  organization: { $ref: "#/components/schemas/SendingLimits" }
+                  domains: { type: object, additionalProperties: { $ref: "#/components/schemas/SendingLimits" } }
+                  mailboxes: { type: object, additionalProperties: { $ref: "#/components/schemas/SendingLimits" } }
+    put:
+      tags: [mailboxes]
+      summary: Replace the sending limits of the organization, a domain or a mailbox
+      description: "Without domainId or mailboxId, sets the organization's limits. Limits left out are inherited; an empty object clears every limit at that level. Recorded in the audit log as sending_limits.update."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [limits]
+              properties:
+                domainId: { type: string, format: uuid }
+                mailboxId: { type: string, format: uuid }
+                limits: { $ref: "#/components/schemas/SendingLimits" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendingLimits" }
+        "422": { $ref: "#/components/responses/Error" }
+  /organizations/{orgId}/restricted-senders:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [mailboxes]
+      summary: Mailboxes whose outgoing mail is blocked after going over a sending limit (owners and administrators)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [mailboxId, address, displayName, restrictedAt, reason]
+                  properties:
+                    mailboxId: { type: string, format: uuid }
+                    address: { type: string }
+                    displayName: { type: string }
+                    restrictedAt: { type: string, format: date-time }
+                    reason: { type: string, enum: [messagesPerHour, messagesPerDay, recipientsPerDay, newRecipientsPerDay, spamPercent] }
+  /mailboxes/{mailboxId}/sending-restriction:
+    delete:
+      tags: [mailboxes]
+      summary: Release a restricted sender
+      description: "Lets the mailbox send again and resets its counts for the current hour and day. Recorded in the audit log as mailbox.sending_released. 404 when the mailbox is not restricted."
+      parameters: [{ $ref: "#/components/parameters/mailboxId" }]
+      responses:
+        "204": { description: Released }
+        "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/convert:
     post:
       tags: [mailboxes]
@@ -3295,6 +3366,15 @@ components:
       properties:
         label: { type: string, maxLength: 40 }
         url: { type: string, description: "An https://, http:// or mailto: address" }
+    SendingLimits:
+      type: object
+      properties:
+        messagesPerHour: { type: integer, minimum: 0, maximum: 100000 }
+        messagesPerDay: { type: integer, minimum: 0, maximum: 1000000 }
+        recipientsPerMessage: { type: integer, minimum: 0, maximum: 1000 }
+        recipientsPerDay: { type: integer, minimum: 0, maximum: 1000000 }
+        newRecipientsPerDay: { type: integer, minimum: 0, maximum: 1000000, description: "Recipients the mailbox has never sent to before." }
+        spamPercent: { type: integer, minimum: 0, maximum: 100, description: "Share of the day's messages Rspamd scored as spam, checked once the mailbox has sent 10 messages that day." }
     SignatureTemplate:
       type: object
       required: [html, logoWidth]

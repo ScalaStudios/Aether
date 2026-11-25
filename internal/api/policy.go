@@ -41,7 +41,12 @@ func (s *Server) policyConn(conn net.Conn) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		var action string
-		if attrs["policy_context"] == "senders" {
+		if attrs["policy_context"] == "sending" {
+			if action, err = s.sendingPolicy(ctx, attrs["sasl_username"], attrs["instance"], attrs["recipient"]); err != nil {
+				s.log.Warn("policy check failed", "context", "sending", "err", err)
+				action = "DEFER_IF_PERMIT 4.3.0 Try again later"
+			}
+		} else if attrs["policy_context"] == "senders" {
 			if action, err = s.senderPolicy(ctx, attrs); err != nil {
 				s.log.Warn("sender list check failed; accepting", "err", err)
 				action = "DUNNO"

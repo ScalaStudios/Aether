@@ -1076,3 +1076,22 @@ export interface JournalRule {
   createdBy: string | null
   createdAt: string
 }
+
+export type SendingLimitKey = "messagesPerHour" | "messagesPerDay" | "recipientsPerMessage" | "recipientsPerDay" | "newRecipientsPerDay" | "spamPercent"
+
+export type SendingLimits = Partial<Record<SendingLimitKey, number>>
+
+export interface SendingLimitSettings {
+  defaults: Record<SendingLimitKey, number>
+  organization: SendingLimits
+  domains: Record<string, SendingLimits>
+  mailboxes: Record<string, SendingLimits>
+}
+
+export interface RestrictedSender {
+  mailboxId: string
+  address: string
+  displayName: string
+  restrictedAt: string
+  reason: SendingLimitKey
+}

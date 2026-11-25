@@ -81,6 +81,8 @@ Aether sends each event as a JSON `POST`:
 }
 ```
 
+Events the server raises on its own have a null actor. `mailbox.sending_restricted` and `mailbox.sending_limit_near` carry `address`, `limit` (such as `messagesPerHour`), `count` and `max` in `data`. See [Sending limits and restricted senders](architecture.md#sending-limits-and-restricted-senders).
+
 The request carries these headers:
 
 - `Aether-Event`: the event name

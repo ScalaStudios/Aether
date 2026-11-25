@@ -54,7 +54,7 @@ The trade-off is that we must maintain glue: SQL lookups, the master-user bridge
 
 Rspamd queries DNS blocklists through a bundled Unbound recursive resolver. Spamhaus and URIBL refuse queries that arrive through large public resolvers, so using Docker's resolver would silently disable those checks.
 
-We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because Rspamd stores greylisting, rate-limit, Bayes, and DKIM key data there.
+We chose Valkey over Redis because Valkey is BSD-licensed. It is needed because Rspamd stores greylisting, Bayes, outbound spam counts, and DKIM key data there, and the API counts sending limits there.
 
 ## Trust boundaries
 
@@ -249,3 +249,22 @@ Each address has its own From name and signatures, kept per mailbox in `mailbox_
 A reply starts from the address the message was delivered to, when the person may send from it, and otherwise from the first address in To, Cc or Bcc they may send from. Postfix delivers to Dovecot over the `mailbox-lmtp` transport, an `lmtp` service with `flags=O` and a recipient limit of one, so each copy carries an `X-Original-To` header with the address it was sent to before alias expansion. That finds the alias even when the sender put it in Bcc.
 
 Sent copies go to the Sent folder of the mailbox the message was sent from. A list can instead name a shared mailbox of its organization (`sentMailboxId`), so that everyone who sends as the list sees one history. A scheduled message keeps its From address and is checked again when it goes out; if its sender can no longer use that address, it is not sent and shows an error.
+
+## Sending limits and restricted senders
+
+Postfix asks the API's policy service (the same one on port 10040 that checks distribution lists) about every recipient of mail sent through submission (ports 587 and 465), with `policy_context=sending`. Aether Mail and scheduled messages go through submission too, so they count. The limits belong to the account that signs in to send: a delegate who sends from a shared mailbox in a mail app counts against their own mailbox, while Aether Mail signs in as the shared mailbox and counts against it. Mail relayed by Sieve rules on port 10025 is not counted.
+
+| Limit | Default | When exceeded |
+| --- | --- | --- |
+| `messagesPerHour` | 200 | The account is restricted |
+| `messagesPerDay` | 1,000 | The account is restricted |
+| `recipientsPerMessage` | 100 | Further recipients of that message get `452 4.5.3`; the account is not restricted |
+| `recipientsPerDay` | 2,000 | The account is restricted |
+| `newRecipientsPerDay` | off | The account is restricted |
+| `spamPercent` | 50 | The account is restricted, once it has sent 10 messages that day |
+
+Administrators set limits under **Administration → Sending** or with `PUT /api/v1/organizations/{orgId}/sending-limits`, for the organization, a domain or a mailbox. A mailbox uses its own value first, then its domain's, then the organization's, then the default. 0 means no limit. Hours and days are fixed UTC windows counted in Valkey. A message counts when Postfix asks about its first recipient, so a message refused later still counts. First-time recipients are addresses the mailbox has never sent to before, kept in `sending_recipients`. Every mailbox starts with none recorded, so the limit is off by default.
+
+Rspamd counts, per signed-in account and day, outgoing messages whose verdict is `add header`, `rewrite subject` or `reject`, in `aether:sending:spam:<login>:<day>`. The policy service compares that with the day's message count when the next message starts. A message rejected because its From header does not match the sender is not counted. The GTUBE test string makes Rspamd skip every rule, including this count.
+
+A restricted account gets `5.7.1` for every recipient until an administrator releases it from the console or with `DELETE /api/v1/mailboxes/{mailboxId}/sending-restriction`. Releasing it resets its counts for the current hour and day. The account can still sign in, receive and read mail. When an account is restricted, or passes 80% of a limit (once per hour or day window), the API records `mailbox.sending_restricted` or `mailbox.sending_limit_near` in the audit log, which also sends them to webhooks subscribed to those events. It also puts a notice in the inbox of each owner and administrator who has a mailbox. If Valkey or the database is unreachable, Postfix gets `DEFER_IF_PERMIT` and the client tries again later.

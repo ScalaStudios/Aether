@@ -167,3 +167,28 @@ rspamd_config:register_symbol({
     end
   end,
 })
+
+local lua_redis = require 'lua_redis'
+local aether_redis = lua_redis.parse_redis_server('aether')
+
+rspamd_config:register_symbol({
+  name = 'AETHER_OUTBOUND_SPAM',
+  type = 'idempotent',
+  flags = 'ignore_passthrough',
+  callback = function(task)
+    local user = task:get_user()
+    if not aether_redis or not user or user == 'aether-sieve-relay' or task:has_symbol('AETHER_HEADER_FROM_MISMATCH') then
+      return
+    end
+    local action = task:get_metric_action()
+    if action ~= 'reject' and action ~= 'add header' and action ~= 'rewrite subject' then
+      return
+    end
+    local key = 'aether:sending:spam:' .. user:lower() .. ':' .. math.floor(os.time() / 86400)
+    lua_redis.redis_make_request(task, aether_redis, key, true, function(err)
+      if not err then
+        lua_redis.redis_make_request(task, aether_redis, key, true, function() end, 'EXPIRE', { key, '172800' })
+      end
+    end, 'INCR', { key })
+  end,
+})
