@@ -209,7 +209,7 @@ func TestSecurityNotifications(t *testing.T) {
 	var delegates []struct {
 		Email string `json:"email"`
 	}
-	w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/delegates", nil, &delegates, 200)
+	w.admin.must("GET", "/mailboxes/"+w.aliceMailbox+"/delegates", nil, &delegates, 200)
 	if len(delegates) != 0 {
 		t.Fatalf("delegates remain after undo: %+v", delegates)
 	}
@@ -231,7 +231,7 @@ func TestSecurityNotifications(t *testing.T) {
 		return findInboxSubjectContaining(w.alice, w.aliceMailbox, "Sign-in from") != ""
 	})
 	w.alice.must("POST", "/me/security-notifications/"+signInNotif.ID+"/undo", nil, nil, 200)
-	if status := otherDevice.do("GET", "/me", nil, nil); status != 401 {
+	if status := otherDevice.do("GET", "/session", nil, nil); status != 401 {
 		t.Fatalf("undone session still authenticated with status %d, want 401", status)
 	}
 
