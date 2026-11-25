@@ -90,7 +90,10 @@ export function MailView() {
   const [search, setSearch] = useState("")
   const q = useDebouncedValue(search.trim(), 300)
 
-  const isDrafts = folders?.data?.find((f) => f.name === folder)?.specialUse === "drafts"
+  const specialUse = folders?.data?.find((f) => f.name === folder)?.specialUse
+  const isDrafts = specialUse === "drafts"
+  const isJunk = specialUse === "junk"
+  const spamTarget = folders?.data?.find((f) => f.specialUse === (isJunk ? "inbox" : "junk"))
   const [view, setView] = useListView(`${mbx}/${folder}`)
   const listKey = ["messages", mbx, folder]
   const messages = useInfiniteQuery({
@@ -170,7 +173,7 @@ export function MailView() {
   })
 
   const remove = useMutation({
-    mutationFn: ({ uid, to, target, until, unsnooze }: { uid: number; to?: Folder; target?: Mailbox; until?: Date; unsnooze?: boolean }) =>
+    mutationFn: ({ uid, to, target, until, unsnooze }: { uid: number; to?: Folder; target?: Mailbox; until?: Date; unsnooze?: boolean; notice?: string }) =>
       unsnooze
         ? api(`/mailboxes/${mbx}/snoozed/${uid}`, { method: "DELETE" })
         : until
@@ -178,19 +181,20 @@ export function MailView() {
           : to
             ? api(`/mailboxes/${mbx}/messages/${uid}/move`, { method: "POST", query: { folder }, body: { to: to.name, mailboxId: target?.id } })
             : api(`/mailboxes/${mbx}/messages/${uid}`, { method: "DELETE", query: { folder } }),
-    onSuccess: (_d, { uid, to, target, until, unsnooze }) => {
+    onSuccess: (_d, { uid, to, target, until, unsnooze, notice }) => {
       const index = summaries.findIndex((m) => m.uid === uid)
       const next = summaries[index + 1] ?? summaries[index - 1]
       patchCaches(uid, null)
       if (selectedUid === uid) setSelectedUid(next?.uid ?? null)
       toast.success(
-        unsnooze
+        notice ??
+        (unsnooze
           ? `Moved back to ${snoozed.data?.find((s) => s.uid === uid)?.returnFolder ?? "its folder"}`
           : until
             ? `Snoozed until ${formatShortDateTime(until)}`
             : to
               ? `Moved to ${folderLabel(to)}${target ? ` in ${target.address}` : ""}`
-              : "Message deleted"
+              : "Message deleted")
       )
       qc.invalidateQueries({ queryKey: ["folders"] })
       qc.invalidateQueries({ queryKey: ["messages"] })
@@ -427,6 +431,12 @@ export function MailView() {
           onMove={(to, target) => selectedUid !== null && remove.mutate({ uid: selectedUid, to, target })}
           onCopy={(to, target) => selectedUid !== null && copy.mutate({ uid: selectedUid, to, target })}
           onDelete={() => selectedUid !== null && remove.mutate({ uid: selectedUid })}
+          onSpam={
+            spamTarget
+              ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, to: spamTarget, notice: isJunk ? "Marked as not spam and moved to Inbox" : "Reported as spam and moved to Junk" })
+              : undefined
+          }
+          junk={isJunk}
           onSnooze={(until) => selectedUid !== null && remove.mutate({ uid: selectedUid, until })}
           onUnsnooze={folder === snoozedFolder ? () => selectedUid !== null && remove.mutate({ uid: selectedUid, unsnooze: true }) : undefined}
           deleting={remove.isPending}

@@ -1,0 +1,3 @@
+#!/bin/sh
+exec curl -sf -o /dev/null --max-time 30 -H 'Content-Type: message/rfc822' --data-binary @- \
+  --url-query "class=$1" --url-query "user=$2" "$(cat /run/aether-api-url)/internal/spam-learn"

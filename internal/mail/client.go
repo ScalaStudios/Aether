@@ -1080,6 +1080,26 @@ func (c *Client) MarkAnswered(address string, messageID string) error {
 	})
 }
 
+func (c *Client) Sent(address, messageID string) (bool, error) {
+	var found bool
+	err := c.with(address, func(ic *imapclient.Client) error {
+		sent, err := c.specialFolder(ic, "sent")
+		if err != nil {
+			return err
+		}
+		if _, err := ic.Select(sent, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+			return err
+		}
+		data, err := ic.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Message-ID", Value: messageID}}}, nil).Wait()
+		if err != nil {
+			return err
+		}
+		found = len(data.AllUIDs()) > 0
+		return nil
+	})
+	return found, err
+}
+
 func ContentDisposition(filename string) string {
 	return mime.FormatMediaType("attachment", map[string]string{"filename": filename})
 }

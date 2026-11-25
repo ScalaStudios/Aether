@@ -83,6 +83,17 @@ Forwarding (`redirect`) and automatic replies (`vacation`) need Dovecot to send 
 - **Automatic replies** are sent with an empty envelope sender.
 - **Header From check.** Rspamd's From-header rule exempts the relay account, because forwarded mail keeps someone else's From.
 
+## Spam filtering and learning
+
+Rspamd scores every incoming message, and the global Sieve script that Dovecot runs before a mailbox's own rules files a message marked `X-Spam: Yes` into Junk. It leaves the message in the inbox when the sender is trusted and the message is not clearly malicious:
+
+- **Trusted** means the From address is in the recipient's contacts, or the message replies (`In-Reply-To`) to a message in the recipient's Sent folder. Dovecot asks the API on `POST /internal/trusted-sender`, which reads the address book of the mailbox owner and searches the Sent folder over IMAP. Shared mailboxes have no owner, so only replies count for them.
+- **Clearly malicious** means a score of 10 or more (Rspamd rejects at 15), or `dmarc=fail` in Rspamd's `Authentication-Results`, which is how a forged contact address shows up. Those always go to Junk, and so does everything when the API cannot be reached.
+
+The filter learns from people's actions in every mail app through Dovecot's `imapsieve` plugin. Copying or moving a message into Junk runs `learn-spam.sieve`; moving it out of Junk to any folder except Trash runs `learn-ham.sieve`. Both pipe the message to the API on `POST /internal/spam-learn`, which posts it to Rspamd's controller on port 11334 (`/learnspam` or `/learnham`) with `AETHER_RSPAMD_CONTROLLER_PASSWORD`. Bayes statistics live in Valkey. **Report spam** and **Not spam** in Aether Mail move the message to Junk or to the Inbox, so they take the same path. Administrators turn learning off for an organization under **Administration → Spam filter**, and the API then counts the move without sending it to Rspamd.
+
+Both internal endpoints answer only callers on private addresses, and the reverse proxy does not route `/internal/`.
+
 ## Calendar and contacts
 
 Aether serves CalDAV and CardDAV itself, using emersion's `go-webdav` library. Calendars and address books are rows in `dav_collections`. Events and cards are stored as iCalendar and vCard text in `dav_objects`, together with a few extracted columns: UID, ETag, summary, email addresses, start and end time, and whether the event repeats. Those columns serve the web app's JSON API and recipient suggestions without parsing every object. Sharing is a row in `calendar_shares` that grants a user or every member of an organization read or write access to one collection. A shared calendar appears in the other person's calendar home as `shared-<collection id>`, and writes to a read-only share are refused with 403.

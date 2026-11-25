@@ -160,6 +160,8 @@ Postfix decides who may send to a restricted distribution list by asking the API
 
 Dovecot serves its doveadm HTTP API on port 8089 inside the Compose network, protected by `AETHER_DOVECOT_API_KEY`, which `setup.sh` generates. The API uses it to end a member's IMAP sessions when their shared mailbox access changes. Only the API and the Dovecot containers receive the key, and neither starts without it; Postfix does not get it. Never publish the port: the key allows every doveadm command, including reading any mailbox. If the API runs elsewhere, set `AETHER_DOVECOT_API_URL` (default `http://dovecot:8089`) and open the port to the API only.
 
+Rspamd's controller accepts training requests only with `AETHER_RSPAMD_CONTROLLER_PASSWORD`, which `setup.sh` also generates. Only the API and Rspamd receive it; the API uses it to teach the spam filter when someone moves a message into or out of Junk. Installations created before spam learning existed must add it to `.env`, for example with `printf 'AETHER_RSPAMD_CONTROLLER_PASSWORD=%s\n' "$(head -c 48 /dev/urandom | base64 | tr -d '\n/+=' | cut -c1-40)" >> .env`, before upgrading.
+
 Installations created before shared mailboxes existed must add the key to `.env` before upgrading. [Shared mailboxes](shared-mailboxes.md#upgrading-an-existing-installation) lists the steps, including the check for existing folders named `Shared`.
 
 ## Monitoring
@@ -173,6 +175,7 @@ The API serves Prometheus metrics on port 9090 inside the Compose network (`AETH
 - identity provider webhooks,
 - pending IMAP session kicks (age of the oldest),
 - pending rights reconciliation (age of the oldest),
+- messages sent to the spam filter for learning, by class (`spam`, `ham`) and result (`learned`, `duplicate`, `disabled`, `failed`),
 - Go runtime and process statistics.
 
 No metric carries a user, mailbox, or address label.

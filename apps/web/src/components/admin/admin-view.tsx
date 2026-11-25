@@ -19,6 +19,7 @@ import { MembersTab } from "@/components/admin/members-tab"
 import { QuarantineTab } from "@/components/admin/quarantine-tab"
 import { SendersTab } from "@/components/admin/senders-tab"
 import { SignaturesTab } from "@/components/admin/signatures-tab"
+import { SpamFilterTab } from "@/components/admin/spam-filter-tab"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { PageContainer } from "@/components/page-container"
@@ -49,6 +50,7 @@ const orgTabs = [
   { value: "branding", label: "Branding", Component: BrandingTab },
   { value: "signatures", label: "Signatures", Component: SignaturesTab },
   { value: "quarantine", label: "Quarantine", Component: QuarantineTab },
+  { value: "spam", label: "Spam filter", Component: SpamFilterTab },
   { value: "audit", label: "Audit log", Component: AuditTab },
   { value: "integrations", label: "Integrations", Component: IntegrationsTab },
 ]

@@ -1,0 +1,5 @@
+#!/bin/sh
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+  --data-urlencode "user=$1" --data-urlencode "from=$2" --data-urlencode "inReplyTo=$3" \
+  "$(cat /run/aether-api-url)/internal/trusted-sender")
+[ "$code" = 204 ]

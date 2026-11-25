@@ -12,15 +12,16 @@ import (
 )
 
 type organization struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Slug      string    `json:"slug"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Slug         string    `json:"slug"`
+	CreatedAt    time.Time `json:"createdAt"`
+	SpamLearning bool      `json:"spamLearning"`
 }
 
 func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request, p *principal) {
 	rows, err := s.db.Query(r.Context(), `
-		SELECT id, name, slug, created_at FROM organizations o
+		SELECT id, name, slug, created_at, spam_learning FROM organizations o
 		WHERE $2 OR EXISTS (SELECT 1 FROM organization_members m WHERE m.org_id = o.id AND m.user_id = $1)
 		ORDER BY name`, p.User.ID, p.User.IsPlatformAdmin)
 	if err != nil {
@@ -52,8 +53,8 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request, p *p
 		return
 	}
 	var org organization
-	err := s.db.QueryRow(r.Context(), `INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id, name, slug, created_at`, in.Name, in.Slug).
-		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt)
+	err := s.db.QueryRow(r.Context(), `INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id, name, slug, created_at, spam_learning`, in.Name, in.Slug).
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		writeError(w, http.StatusConflict, "slug_taken", "Another organization already uses this slug.")
@@ -89,7 +90,7 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request, p *prin
 		return
 	}
 	var org organization
-	err := s.db.QueryRow(r.Context(), `SELECT id, name, slug, created_at FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt)
+	err := s.db.QueryRow(r.Context(), `SELECT id, name, slug, created_at, spam_learning FROM organizations WHERE id = $1`, orgID).Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -98,6 +99,32 @@ func (s *Server) getOrganization(w http.ResponseWriter, r *http.Request, p *prin
 		s.internalError(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, org)
+}
+
+func (s *Server) updateOrganization(w http.ResponseWriter, r *http.Request, p *principal) {
+	orgID, ok := s.orgFromPath(w, r, p, true)
+	if !ok {
+		return
+	}
+	var in struct {
+		SpamLearning *bool `json:"spamLearning"`
+	}
+	if !decode(w, r, 8<<10, &in) {
+		return
+	}
+	if in.SpamLearning == nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_organization", "Choose whether the spam filter learns from Junk moves.")
+		return
+	}
+	var org organization
+	err := s.db.QueryRow(r.Context(), `UPDATE organizations SET spam_learning = $2 WHERE id = $1 RETURNING id, name, slug, created_at, spam_learning`, orgID, *in.SpamLearning).
+		Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.SpamLearning)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.audit(r.Context(), r, p, &org.ID, "organization.update", "organization", org.ID, map[string]any{"spamLearning": org.SpamLearning})
 	writeJSON(w, http.StatusOK, org)
 }
 

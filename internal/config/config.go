@@ -24,6 +24,8 @@ type Config struct {
 	DovecotMasterPassword string
 	DovecotAPIURL         string
 	DovecotAPIKey         string
+	RspamdControllerURL   string
+	RspamdPassword        string
 	ValkeyAddr            string
 	ValkeyPassword        string
 	LocalLogin            bool
@@ -50,6 +52,8 @@ func Load() (*Config, error) {
 		DovecotMasterPassword: os.Getenv("AETHER_DOVECOT_MASTER_PASSWORD"),
 		DovecotAPIURL:         env("AETHER_DOVECOT_API_URL", "http://dovecot:8089"),
 		DovecotAPIKey:         os.Getenv("AETHER_DOVECOT_API_KEY"),
+		RspamdControllerURL:   env("AETHER_RSPAMD_CONTROLLER_URL", "http://rspamd:11334"),
+		RspamdPassword:        os.Getenv("AETHER_RSPAMD_CONTROLLER_PASSWORD"),
 		ValkeyAddr:            env("AETHER_VALKEY_ADDR", "valkey:6379"),
 		ValkeyPassword:        os.Getenv("AETHER_VALKEY_PASSWORD"),
 		LocalLogin:            env("AETHER_LOCAL_LOGIN", "true") == "true",

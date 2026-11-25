@@ -9,7 +9,7 @@ cat > /etc/rspamd/local.d/worker-controller.inc <<CONF
 bind_socket = "*:11334";
 allow_file_and_shm_inputs = false;
 password = "$(rspamadm pw -q -p "${AETHER_RSPAMD_METRICS_PASSWORD:-$(head -c 32 /dev/urandom | base64)}")";
-enable_password = "$(rspamadm pw -q -p "$(head -c 32 /dev/urandom | base64)")";
+enable_password = "$(rspamadm pw -q -p "${AETHER_RSPAMD_CONTROLLER_PASSWORD:-$(head -c 32 /dev/urandom | base64)}")";
 CONF
 if [ -n "${AETHER_CLAMAV_ADDR:-}" ]; then
   cat > /etc/rspamd/local.d/antivirus.conf <<CONF

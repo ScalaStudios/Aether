@@ -6,7 +6,8 @@ RUN apt-get update \
  && groupadd -g 5000 vmail && useradd -u 5000 -g vmail -d /var/vmail -s /usr/sbin/nologin vmail
 COPY dovecot.conf /etc/dovecot/dovecot.conf
 COPY sieve/ /etc/dovecot/sieve/
+COPY sieve-bin/ /usr/local/lib/aether-sieve/
 COPY entrypoint.sh tls-init.sh aether-token-check.sh /usr/local/bin/
-RUN sievec /etc/dovecot/sieve/spam-to-junk.sieve && chmod 0755 /usr/local/bin/*.sh
+RUN for s in /etc/dovecot/sieve/*.sieve; do sievec "$s"; done && chmod 0755 /usr/local/bin/*.sh /usr/local/lib/aether-sieve/*
 EXPOSE 143 993 24 12345 4190
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

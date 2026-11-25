@@ -35,6 +35,7 @@ export interface Organization {
   name: string
   slug: string
   createdAt: string
+  spamLearning: boolean
 }
 
 export interface Domain {

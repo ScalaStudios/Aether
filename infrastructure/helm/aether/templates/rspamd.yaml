@@ -7,6 +7,7 @@ spec:
   selector: {{- include "aether.selector" (dict "name" "rspamd" "root" .) | nindent 4 }}
   ports:
     - { name: milter, port: 11332, targetPort: 11332 }
+    - { name: controller, port: 11334, targetPort: 11334 }
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -34,11 +35,13 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             {{- include "aether.secretEnv" (dict "env" "AETHER_VALKEY_PASSWORD" "key" "valkeyPassword" "root" .) | nindent 12 }}
+            {{- include "aether.secretEnv" (dict "env" "AETHER_RSPAMD_CONTROLLER_PASSWORD" "key" "rspamdControllerPassword" "root" .) | nindent 12 }}
             {{- if .Values.clamav.enabled }}
             - { name: AETHER_CLAMAV_ADDR, value: "clamav:3310" }
             {{- end }}
           ports:
             - { name: milter, containerPort: 11332 }
+            - { name: controller, containerPort: 11334 }
           readinessProbe:
             tcpSocket: { port: 11332 }
             initialDelaySeconds: 10

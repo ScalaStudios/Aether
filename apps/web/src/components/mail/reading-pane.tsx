@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
-import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, Ban, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Globe, Mail, MailOpen, Reply, ReplyAll, Trash2 } from "lucide-react"
+import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, Ban, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Globe, Mail, MailOpen, OctagonAlert, Reply, ReplyAll, ShieldCheck, Trash2 } from "lucide-react"
 import { cn } from "cn"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -269,6 +269,8 @@ export function ReadingPane({
   onMove,
   onCopy,
   onDelete,
+  onSpam,
+  junk,
   onSnooze,
   onUnsnooze,
   deleting,
@@ -287,6 +289,8 @@ export function ReadingPane({
   onMove: (folder: Folder, mailbox?: Mailbox) => void
   onCopy: (folder: Folder, mailbox?: Mailbox) => void
   onDelete: () => void
+  onSpam?: () => void
+  junk?: boolean
   onSnooze: (until: Date) => void
   onUnsnooze?: () => void
   deleting: boolean
@@ -348,6 +352,11 @@ export function ReadingPane({
               </LaterMenu>
             )}
             <BlockMenu mailboxId={mailboxId} address={m?.from[0]?.address} disabled={!m} />
+            {onSpam && (
+              <IconButton label={junk ? "Not spam" : "Report spam"} disabled={!m || deleting} onClick={onSpam}>
+                {junk ? <ShieldCheck /> : <OctagonAlert />}
+              </IconButton>
+            )}
             <IconButton label="Delete" disabled={!m || deleting} onClick={onDelete}>
               <Trash2 />
             </IconButton>
