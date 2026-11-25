@@ -195,7 +195,7 @@ func serve(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Minute, WriteTimeout: 30 * time.Minute, IdleTimeout: 120 * time.Second,
 		MaxHeaderBytes: 64 << 10,
 	}
-	errCh := make(chan error, 7)
+	errCh := make(chan error, 8)
 	if cfg.MetricsListen != "" {
 		metrics := &http.Server{Addr: cfg.MetricsListen, Handler: api.MetricsHandler(), ReadHeaderTimeout: 10 * time.Second}
 		go func() {
