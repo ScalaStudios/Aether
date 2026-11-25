@@ -189,6 +189,9 @@ func (s *Server) Handler() http.Handler {
 	authed("DELETE /api/v1/webhooks/{webhookId}", s.deleteWebhook)
 	authed("GET /api/v1/webhooks/{webhookId}/deliveries", s.listDeliveries)
 	authed("POST /api/v1/webhooks/{webhookId}/test", s.testWebhook)
+	authed("GET /api/v1/organizations/{orgId}/suppressions", s.listSuppressions)
+	authed("POST /api/v1/organizations/{orgId}/suppressions", s.createSuppression)
+	authed("DELETE /api/v1/suppressions/{suppressionId}", s.deleteSuppression)
 
 	authed("GET /api/v1/organizations/{orgId}/domains", s.listDomains)
 	authed("POST /api/v1/organizations/{orgId}/domains", s.createDomain)

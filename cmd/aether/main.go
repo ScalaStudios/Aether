@@ -54,8 +54,10 @@ func main() {
 		err = healthcheck()
 	case "mail-trace":
 		err = mailTrace(log)
+	case "mail-events":
+		err = mailEvents(log)
 	default:
-		err = fmt.Errorf("unknown command %q; use serve, migrate, bootstrap-admin, healthcheck, or mail-trace", cmd)
+		err = fmt.Errorf("unknown command %q; use serve, migrate, bootstrap-admin, healthcheck, mail-trace, or mail-events", cmd)
 	}
 	if err != nil {
 		log.Error("aether exited with an error", "command", cmd, "err", err)
@@ -99,6 +101,26 @@ func mailTrace(log *slog.Logger) error {
 	}
 	mailtrace.New(pool, log, cmp.Or(os.Getenv("AETHER_MAIL_LOG"), "/var/log/postfix/mail.log"), retention).Run(ctx)
 	return nil
+}
+
+func mailEvents(log *slog.Logger) error {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		return errors.New("AETHER_DATABASE_URL is required")
+	}
+	path := os.Getenv("AETHER_MAIL_LOG")
+	if path == "" {
+		path = "/var/log/postfix/mail.log"
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	pool, err := db.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer pool.Close()
+	log.Info("following the postfix log for delivery events", "path", path)
+	return api.New(&config.Config{}, pool, nil, nil, nil, log).FollowMailLog(ctx, path)
 }
 
 func serve(log *slog.Logger) error {

@@ -1537,7 +1537,7 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "contacts:read", "contacts:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write"]
+                    enum: ["domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "aliases:read", "aliases:write", "contacts:read", "contacts:write", "members:read", "members:write", "audit:read", "audit:write", "webhooks:read", "webhooks:write", "mailflow:read", "mailflow:write", "message-trace:read", "message-trace:write", "suppressions:read", "suppressions:write"]
                 expiresAt: { type: string, format: date-time }
       responses:
         "201":
@@ -1571,7 +1571,7 @@ paths:
     post:
       tags: [integrations]
       summary: Create a webhook. The signing secret is returned once.
-      description: "Every audit event in the organization (for example mailbox.create or domain.verify) is posted to the URL as JSON. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
+      description: "Matching audit and mail delivery events in the organization are posted to the URL as JSON. The Aether-Signature header is t=<unix time>,v1=<hex HMAC-SHA256 of t + '.' + body> using the secret. Failed deliveries are retried for about two days."
       parameters: [{ $ref: "#/components/parameters/orgId" }]
       requestBody:
         required: true
@@ -1582,7 +1582,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri, description: Must be https and must resolve to a public address }
-                events: { type: array, items: { type: string }, description: "Audit action names, or * for all" }
+                events: { type: array, items: { type: string }, description: "Audit action names or message.delivered, message.deferred, message.bounced, message.received, and message.rejected. Use * for all." }
       responses:
         "201":
           description: The webhook and its secret
@@ -1631,6 +1631,49 @@ paths:
       parameters: [{ name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "202": { description: Queued }
+  /organizations/{orgId}/suppressions:
+    parameters: [{ $ref: "#/components/parameters/orgId" }]
+    get:
+      tags: [integrations]
+      summary: List up to 200 suppressed addresses, newest first
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Case-insensitive address substring }
+      responses:
+        "200":
+          description: Suppressions
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Suppression" } }
+    post:
+      tags: [integrations]
+      summary: Suppress an address for this organization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string, format: email, maxLength: 320 }
+                reason: { type: string, enum: [manual, complaint, bounce], default: manual }
+                detail: { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Suppression created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Suppression" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /suppressions/{suppressionId}:
+    delete:
+      tags: [integrations]
+      summary: Remove a suppressed address
+      parameters: [{ name: suppressionId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
   /organizations/{orgId}/audit:
     get:
       tags: [organizations]
@@ -3495,7 +3538,7 @@ components:
     apiKey:
       type: http
       scheme: bearer
-      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, organization contacts, members, audit, webhooks, and mail flow rules with their held messages. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
+      description: "An organization API key (aether_...). Keys work only on organization administration endpoints: domains, mailboxes (including delegates, rules, automatic replies, signatures and calendar and contact import), aliases, organization contacts, members, audit, webhooks, and mail flow rules with their held messages.suppressions. Each needs the matching resource:read or resource:write scope. No CSRF header is needed."
   parameters:
     orgId: { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
     domainId: { name: domainId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4330,6 +4373,15 @@ components:
         createdAt: { type: string, format: date-time }
         lastUsedAt: { type: [string, "null"], format: date-time }
         expiresAt: { type: [string, "null"], format: date-time }
+    Suppression:
+      type: object
+      required: [id, address, reason, detail, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        address: { type: string, format: email }
+        reason: { type: string, enum: [manual, complaint, bounce] }
+        detail: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
     Webhook:
       type: object
       properties:

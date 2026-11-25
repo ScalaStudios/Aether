@@ -1,4 +1,4 @@
-# API keys and webhooks
+# API keys, webhooks, and suppressions
 
 Organization administrators can automate Aether with API keys, and receive changes through webhooks. Both are managed per organization.
 
@@ -22,6 +22,7 @@ A key belongs to one organization and acts as an administrator of that organizat
 | `message-trace:read` | Searching and exporting the [message trace](message-trace.md) |
 | `webhooks:read`, `webhooks:write` | Managing webhooks and reading deliveries |
 | `mailflow:read`, `mailflow:write` | Listing and changing [mail flow rules](mail-flow-rules.md), reading their recent matches and held messages, and approving or rejecting held messages |
+| `suppressions:read`, `suppressions:write` | Listing, adding, and removing suppressed addresses |
 
 A `write` scope includes `read`. Keys cannot read mail, use the platform administration endpoints, or create other keys. Requests made with a key do not need a CSRF token. Each key may make 600 requests per minute. Actions taken with a key appear in the audit log under the key's name.
 
@@ -65,7 +66,7 @@ Every run is incremental: messages already in the destination folder are skipped
 
 ## Webhooks
 
-A webhook receives every audit event of its organization that matches its event list, for example `mailbox.create`, `domain.verify`, or `alias.delete`. Use `*` to receive all events. The audit log on the console shows the event names.
+A webhook receives audit and mail delivery events for its organization that match its event list. Use `*` to receive all events. The audit log on the console shows the event names.
 
 Aether sends each event as a JSON `POST`:
 
@@ -100,3 +101,33 @@ const valid = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1)) && 
 Any 2xx response counts as delivered. Otherwise, Aether retries after 1 minute, then 5 minutes, 30 minutes, 2 hours, 6 hours, 12 hours, and 24 hours. After eight attempts, the delivery is marked failed. Delivery takes up to 15 seconds after the event. `GET /api/v1/webhooks/{id}/deliveries` lists the last 50 deliveries, and `POST /api/v1/webhooks/{id}/test` sends a `webhook.test` event.
 
 Webhook URLs must use `https`. Aether refuses to connect to private, loopback, link-local, and other reserved addresses, and it does not follow redirects. This prevents a webhook from reaching services inside your network. For development only, `AETHER_WEBHOOK_ALLOW_PRIVATE=true` lifts both restrictions.
+
+### Mail delivery events
+
+| Event | When it is emitted |
+| --- | --- |
+| `message.delivered` | A recipient's mail server or a local mailbox accepts an authenticated submission |
+| `message.deferred` | A delivery attempt for an authenticated submission fails temporarily and Postfix holds the message for retry |
+| `message.bounced` | Delivery for an authenticated submission fails permanently or its retries expire |
+| `message.received` | A hosted mailbox accepts the message through LMTP |
+| `message.rejected` | Postfix rejects incoming mail for a hosted recipient during SMTP |
+
+Authenticated submission events go to the sender's organization. Received and rejected events go to the recipient's organization. A local delivery of an authenticated submission can emit both `message.delivered` and `message.received`.
+
+Mail events use the same signing and retry rules as audit events. The envelope includes `id`, `type`, `createdAt`, `organizationId`, and `data`. In `data`, `queueId` and `messageId` identify the message when available. `from`, `to`, and `originalTo` contain envelope addresses. `relay`, `dsn`, and `reply` contain the Postfix relay, enhanced status code, and SMTP reply. Unavailable fields are empty strings. For `message.bounced`, `suppressed` is true when that event added a suppression.
+
+Compose and Helm run the Postfix log follower automatically. For a custom installation, run `aether mail-events` alongside the API with `AETHER_DATABASE_URL` and a readable Postfix log at `/var/log/postfix/mail.log` or the path set in `AETHER_MAIL_LOG`. The follower checkpoints its position and queued message metadata in PostgreSQL. On first start it processes the current log from the beginning.
+
+## Suppression list
+
+In **Administration → Integrations → Suppression list**, organization administrators can search, add, and remove addresses. Record a reported complaint by adding the address with reason `complaint`. Aether automatically adds recipients of hard bounces with DSN `5.1.1`, `5.1.2`, `5.1.3`, `5.1.6`, or `5.2.1`. A temporary failure or an expired retry does not add a suppression.
+
+For authenticated SMTP submission, Aether checks the envelope sender's organization and rejects a suppressed recipient at `RCPT TO` with `550 5.7.1`. Remove the address to allow new submissions to it. The list is scoped per organization.
+
+| Route | Behavior |
+| --- | --- |
+| `GET /api/v1/organizations/{orgId}/suppressions` | List up to 200 entries, newest first. Optional `q` matches part of the address without regard to case. |
+| `POST /api/v1/organizations/{orgId}/suppressions` | Add an `address` with optional `reason` (`manual`, `complaint`, or `bounce`) and `detail` (up to 500 characters). Defaults to `manual`. A duplicate address returns `409 already_suppressed`. |
+| `DELETE /api/v1/suppressions/{suppressionId}` | Remove an entry. Returns `204`. |
+
+Manual changes appear as `suppression.create` and `suppression.delete` audit events.

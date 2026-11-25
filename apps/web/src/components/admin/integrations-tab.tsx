@@ -1,8 +1,8 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { History, KeyRound, Plus, Send, Trash2, Webhook as WebhookIcon } from "lucide-react"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Ban, History, KeyRound, Plus, SearchX, Send, Trash2, Webhook as WebhookIcon } from "lucide-react"
 import { useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
@@ -14,6 +14,7 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { SectionHeader } from "@/components/page-header"
+import { SearchInput } from "@/components/search-input"
 import { SegmentedControl } from "@/components/segmented-control"
 import { EmptyState, QueryView } from "@/components/states"
 import { StatusBadge } from "@/components/status-badge"
@@ -22,9 +23,10 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { api } from "@/lib/api"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { ApiError, api } from "@/lib/api"
 import { formatDate, formatDateTime } from "@/lib/format"
-import type { APIKey, Webhook, WebhookDelivery } from "@/lib/types"
+import type { APIKey, Suppression, Webhook, WebhookDelivery } from "@/lib/types"
 
 type Access = "" | "read" | "write"
 
@@ -44,6 +46,7 @@ const resources: { value: string; label: string; description: string; levels: Ac
   { value: "webhooks", label: "Webhooks", description: "Webhooks, their delivery history and test deliveries.", levels: ["", "read", "write"] },
   { value: "senders", label: "Senders", description: "Allowed and blocked senders for the organization and its domains.", levels: ["", "read", "write"] },
   { value: "mailflow", label: "Mail flow", description: "Mail flow rules, their recent matches and held messages. Write also approves and rejects held messages.", levels: ["", "read", "write"] },
+  { value: "suppressions", label: "Suppression list", description: "Addresses Aether refuses to send to. Write also adds and removes addresses.", levels: ["", "read", "write"] },
 ]
 
 const levelLabels: Record<Access, string> = { "": "None", read: "Read", write: "Write" }
@@ -87,6 +90,7 @@ export function IntegrationsTab({ orgId }: { orgId: string }) {
     <div className="flex flex-col gap-12">
       <APIKeys orgId={orgId} />
       <Webhooks orgId={orgId} />
+      <Suppressions orgId={orgId} />
     </div>
   )
 }
@@ -311,7 +315,7 @@ function Webhooks({ orgId }: { orgId: string }) {
     <section className="flex flex-col gap-6">
       <SectionHeader
         title="Webhooks"
-        description="Aether posts matching audit events to these URLs as JSON. Verify the Aether-Signature header with your secret."
+        description="Aether posts matching audit and mail delivery events to these URLs as JSON. Verify the Aether-Signature header with your secret."
         actions={
           <Button variant="secondary" onClick={() => setCreating(true)}>
             <Plus aria-hidden />
@@ -319,7 +323,7 @@ function Webhooks({ orgId }: { orgId: string }) {
           </Button>
         }
       />
-      <QueryView query={hooks} empty={<EmptyState icon={WebhookIcon} title="No webhooks" description="Create a webhook to receive events such as mailbox.create or domain.verify." />}>
+      <QueryView query={hooks} empty={<EmptyState icon={WebhookIcon} title="No webhooks" description="Create a webhook to receive events such as mailbox.create or message.bounced." />}>
         {(items) => (
           <Table>
             <TableHeader>
@@ -395,7 +399,7 @@ function Webhooks({ orgId }: { orgId: string }) {
             </Field>
             <SwitchField control={form.control} name="all" id="webhook-all" label="All events" />
             {!all && (
-              <Field id="webhook-events" label="Events" hint="Comma-separated audit actions, for example mailbox.create, domain.verify." error={form.formState.errors.events?.message}>
+              <Field id="webhook-events" label="Events" hint="Comma-separated event names, for example mailbox.create, message.bounced, message.delivered." error={form.formState.errors.events?.message}>
                 <Input id="webhook-events" autoComplete="off" spellCheck={false} className="font-mono" aria-invalid={!!form.formState.errors.events} {...form.register("events")} />
               </Field>
             )}
@@ -462,5 +466,167 @@ function DeliveriesDialog({ webhook, onClose }: { webhook: Webhook; onClose: () 
         </QueryView>
       </DialogContent>
     </Dialog>
+  )
+}
+
+const suppressionSchema = z.object({
+  address: z.string().trim().pipe(z.email("Enter an email address such as someone@example.com.").max(320, "Use up to 320 characters.")),
+  reason: z.enum(["manual", "complaint"]),
+  detail: z.string().trim().max(500, "Use up to 500 characters."),
+})
+
+type SuppressionValues = z.infer<typeof suppressionSchema>
+
+const suppressionReasons: Record<Suppression["reason"], { tone: "danger" | "warning" | "neutral"; label: string }> = {
+  bounce: { tone: "danger", label: "Hard bounce" },
+  complaint: { tone: "warning", label: "Complaint" },
+  manual: { tone: "neutral", label: "Added manually" },
+}
+
+function Suppressions({ orgId }: { orgId: string }) {
+  const qc = useQueryClient()
+  const [search, setSearch] = useState("")
+  const q = useDebouncedValue(search.trim(), 250)
+  const list = useQuery({
+    queryKey: ["suppressions", orgId, q],
+    queryFn: () => api<Suppression[]>(`/organizations/${orgId}/suppressions`, { query: { q } }),
+    placeholderData: keepPreviousData,
+  })
+  const [adding, setAdding] = useState(false)
+  const [removing, setRemoving] = useState<Suppression | null>(null)
+  const form = useForm<SuppressionValues>({ resolver: zodResolver(suppressionSchema), defaultValues: { address: "", reason: "manual", detail: "" } })
+
+  const add = useMutation({
+    mutationFn: (v: SuppressionValues) => api<Suppression>(`/organizations/${orgId}/suppressions`, { method: "POST", body: v }),
+    meta: { silent: true },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === "already_suppressed") {
+        form.setError("address", { message: error.message }, { shouldFocus: true })
+      } else {
+        toast.error(error.message)
+      }
+    },
+    onSuccess: (s) => {
+      toast.success(`${s.address} added to the suppression list`)
+      setAdding(false)
+      form.reset()
+      qc.invalidateQueries({ queryKey: ["suppressions", orgId] })
+    },
+  })
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/suppressions/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("Address removed. Aether sends to it again.")
+      setRemoving(null)
+      qc.invalidateQueries({ queryKey: ["suppressions", orgId] })
+    },
+  })
+
+  return (
+    <section className="flex flex-col gap-6">
+      <SectionHeader
+        title="Suppression list"
+        description="Aether refuses to send to these addresses from this organization’s domains. Addresses that hard-bounce are added automatically."
+        actions={
+          <Button variant="secondary" onClick={() => setAdding(true)}>
+            <Plus aria-hidden />
+            Add address
+          </Button>
+        }
+      />
+      <SearchInput aria-label="Search the suppression list" placeholder="Search by address" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-md" />
+      <QueryView
+        query={list}
+        empty={
+          q ? (
+            <EmptyState icon={SearchX} title="No matches" description={`No suppressed addresses match “${q}”.`} />
+          ) : (
+            <EmptyState icon={Ban} title="No suppressed addresses" description="Addresses that hard-bounce appear here, so your applications stop mailing them." />
+          )
+        }
+      >
+        {(items) => (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Address</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Details</TableHead>
+                <TableHead>Added</TableHead>
+                <TableHead className="w-12">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="font-mono text-sm break-all whitespace-normal">{s.address}</TableCell>
+                  <TableCell>
+                    <StatusBadge tone={suppressionReasons[s.reason].tone}>{suppressionReasons[s.reason].label}</StatusBadge>
+                  </TableCell>
+                  <TableCell className="text-sm break-words whitespace-normal text-fg-secondary">{s.detail || "—"}</TableCell>
+                  <TableCell>{formatDateTime(s.createdAt)}</TableCell>
+                  <TableCell>
+                    <IconButton label={`Remove ${s.address}`} size="icon-sm" onClick={() => setRemoving(s)}>
+                      <Trash2 />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </QueryView>
+      {list.data?.length === 200 && <p className="text-sm text-fg-tertiary">Showing the 200 most recent addresses. Search to find others.</p>}
+
+      <FormDialog
+        open={adding}
+        onOpenChange={(open) => {
+          setAdding(open)
+          if (!open) form.reset()
+        }}
+        title="Add to suppression list"
+        description="Aether rejects messages to this address until you remove it."
+        submitLabel="Add address"
+        pending={add.isPending}
+        onSubmit={form.handleSubmit((v) => add.mutate(v))}
+      >
+        <Field id="suppression-address" label="Address" error={form.formState.errors.address?.message}>
+          <Input id="suppression-address" type="email" placeholder="someone@example.com" autoComplete="off" spellCheck={false} aria-invalid={!!form.formState.errors.address} aria-describedby={form.formState.errors.address ? "suppression-address-error" : undefined} {...form.register("address")} />
+        </Field>
+        <Controller
+          control={form.control}
+          name="reason"
+          render={({ field }) => (
+            <fieldset className="flex flex-col">
+              <legend className="mb-2 text-label text-fg-secondary">Reason</legend>
+              <SegmentedControl
+                label="Reason"
+                options={[
+                  { value: "manual", label: "Manual" },
+                  { value: "complaint", label: "Complaint" },
+                ]}
+                value={field.value}
+                onChange={field.onChange}
+              />
+            </fieldset>
+          )}
+        />
+        <Field id="suppression-detail" label="Note" hint="Optional." error={form.formState.errors.detail?.message}>
+          <Input id="suppression-detail" autoComplete="off" aria-invalid={!!form.formState.errors.detail} aria-describedby={form.formState.errors.detail ? "suppression-detail-error" : undefined} {...form.register("detail")} />
+        </Field>
+      </FormDialog>
+
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(open) => !open && setRemoving(null)}
+        title="Remove from suppression list?"
+        description={`Aether sends to ${removing?.address} again. If the address still bounces, it is added back.`}
+        confirmLabel="Remove"
+        pending={remove.isPending}
+        onConfirm={() => removing && remove.mutate(removing.id)}
+      />
+    </section>
   )
 }

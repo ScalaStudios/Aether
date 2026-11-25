@@ -179,6 +179,20 @@ services:
       tls-init:
         condition: service_completed_successfully
 
+  mail-events:
+    image: aether/api:dev
+    restart: unless-stopped
+    command: ["mail-events"]
+    healthcheck:
+      disable: true
+    environment:
+      AETHER_DATABASE_URL: postgres://aether:${POSTGRES_PASSWORD}@postgres:5432/aether?sslmode=disable
+    volumes:
+      - postfix-logs:/var/log/postfix:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
   toxiproxy:
     profiles: ["test"]
     image: ghcr.io/shopify/toxiproxy:2.12.0

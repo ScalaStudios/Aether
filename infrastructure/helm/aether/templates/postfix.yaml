@@ -57,6 +57,7 @@ spec:
           securityContext: {{- include "aether.mailDaemonSecurity" . | nindent 12 }}
           volumeMounts:
             - { name: spool, mountPath: /var/spool/postfix }
+            - { name: logs, mountPath: /var/log/postfix }
             - { name: mail-tls, mountPath: /tls, readOnly: true }
             - { name: logs, mountPath: /var/log/postfix }
         - name: mail-trace
@@ -73,6 +74,19 @@ spec:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: logs, mountPath: /var/log/postfix, readOnly: true }
+        - name: mail-events
+          image: {{ include "aether.image" (dict "name" "api" "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["mail-events"]
+          env:
+            {{- include "aether.secretEnv" (dict "env" "AETHER_DATABASE_URL" "key" "databaseUrl" "root" .) | nindent 12 }}
+          resources: {{- toYaml .Values.resources.mailEvents | nindent 12 }}
+          securityContext:
+            {{- include "aether.restrictedSecurity" . | nindent 12 }}
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
           volumeMounts:
             - { name: logs, mountPath: /var/log/postfix, readOnly: true }
       volumes:

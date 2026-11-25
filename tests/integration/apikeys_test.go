@@ -48,6 +48,7 @@ func TestAPIKeysAndWebhooks(t *testing.T) {
 	}{
 		{"POST", "/organizations/" + org.ID + "/domains", 403},
 		{"GET", "/organizations/" + org.ID + "/audit", 403},
+		{"GET", "/organizations/" + org.ID + "/suppressions", 403},
 		{"GET", "/organizations/" + other.ID + "/domains", 404},
 		{"GET", "/me/mailboxes", 403},
 		{"GET", "/session", 403},
@@ -137,5 +138,79 @@ func testWebhookDelivery(t *testing.T, key *apiClient, orgID, domainID, domain s
 	waitFor(t, "the delivery to be marked delivered", func() bool {
 		key.must("GET", "/webhooks/"+hook.Webhook.ID+"/deliveries", nil, &deliveries, 200)
 		return len(deliveries) == 1 && deliveries[0].Status == "delivered"
+	})
+}
+
+func TestDeliveryEventsAndSuppressions(t *testing.T) {
+	if env(t, "AETHER_TEST_WEBHOOKS", "") != "true" {
+		t.Skip("webhooks are disabled")
+	}
+	w := setupWorld(t)
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	org := "/organizations/" + w.orgID
+	list := org + "/suppressions"
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	var ip string
+	addrs, _ := net.InterfaceAddrs()
+	for _, addr := range addrs {
+		if n, ok := addr.(*net.IPNet); ok && !n.IP.IsLoopback() && n.IP.To4() != nil {
+			ip = n.IP.String()
+			break
+		}
+	}
+	target := "http://" + net.JoinHostPort(ip, strconv.Itoa(ln.Addr().(*net.TCPAddr).Port))
+	var hook struct{ Webhook idOnly }
+	w.admin.must("POST", org+"/webhooks", map[string]any{
+		"url": target, "events": []string{"message.delivered", "message.received", "message.rejected"},
+	}, &hook, 201)
+
+	var entry idOnly
+	w.admin.must("POST", list, map[string]string{"address": strings.ToUpper(bob), "reason": "complaint"}, &entry, 201)
+	w.admin.must("POST", list, map[string]string{"address": bob}, nil, 409)
+	var entries []struct{ ID, Address, Reason string }
+	w.admin.must("GET", list+"?q=BOB", nil, &entries, 200)
+	if len(entries) != 1 || entries[0].Address != bob || entries[0].Reason != "complaint" {
+		t.Fatalf("unexpected suppressions: %+v", entries)
+	}
+	w.alice.must("GET", list, nil, nil, 403)
+
+	submission := env(t, "AETHER_TEST_SUBMISSION", "postfix:587")
+	send := func() error {
+		return submit(t, submission, alice, w.aliceAppPassword, alice, []string{bob}, rfc822(alice, bob, "Delivery events", "Authenticated submission"), false)
+	}
+	if err := send(); err == nil || !strings.Contains(err.Error(), "550") || !strings.Contains(err.Error(), "suppression list") {
+		t.Fatalf("suppressed submission returned %v", err)
+	}
+	inbound := env(t, "AETHER_TEST_SMTP", "postfix:25")
+	from := "sender@external.example"
+	if err := submit(t, inbound, "", "", from, []string{bob}, rfc822(from, bob, "Inbound event", "Inbound to a suppressed address"), false); err != nil {
+		t.Fatalf("inbound mail was blocked: %v", err)
+	}
+	unknown := "unknown@" + w.domain
+	if err := submit(t, inbound, "", "", from, []string{unknown}, rfc822(from, unknown, "Rejected event", "Unknown recipient"), false); err == nil {
+		t.Fatal("unknown inbound recipient was accepted")
+	}
+
+	w.admin.must("DELETE", "/suppressions/"+entry.ID, nil, nil, 204)
+	if err := send(); err != nil {
+		t.Fatalf("submission after removal: %v", err)
+	}
+	waitFor(t, "delivery, receipt, and rejection webhooks", func() bool {
+		var deliveries []struct{ Event, Status string }
+		w.admin.must("GET", "/webhooks/"+hook.Webhook.ID+"/deliveries", nil, &deliveries, 200)
+		count := map[string]int{}
+		for _, delivery := range deliveries {
+			if delivery.Status == "delivered" {
+				count[delivery.Event]++
+			}
+		}
+		return count["message.delivered"] == 1 && count["message.received"] == 2 && count["message.rejected"] == 1
 	})
 }

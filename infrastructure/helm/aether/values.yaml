@@ -92,6 +92,7 @@ resources:
   web: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
   postfix: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 256Mi } }
   mailTrace: { requests: { cpu: 20m, memory: 32Mi }, limits: { memory: 256Mi } }
+  mailEvents: { requests: { cpu: 20m, memory: 32Mi }, limits: { memory: 128Mi } }
   dovecot: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 1Gi } }
   rspamd: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
   unbound: { requests: { cpu: 20m, memory: 32Mi }, limits: { memory: 256Mi } }

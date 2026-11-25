@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/scalastudios/aether/internal/secrets"
 )
@@ -92,17 +93,22 @@ func signWebhook(secret, body []byte, at time.Time) string {
 }
 
 func (s *Server) enqueueWebhooks(ctx context.Context, orgID, event string, payload map[string]any) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		s.log.Error("encoding webhook payload failed", "event", event, "err", err)
-		return
-	}
-	_, err = s.db.Exec(ctx, `
-		INSERT INTO webhook_deliveries (webhook_id, event, payload)
-		SELECT id, $2, $3 FROM webhooks WHERE org_id = $1 AND active AND ($2 = ANY (events) OR '*' = ANY (events))`, orgID, event, body)
-	if err != nil {
+	if err := enqueueWebhooks(ctx, s.db, orgID, event, payload); err != nil {
 		s.log.Error("queueing webhooks failed", "event", event, "err", err)
 	}
+}
+
+func enqueueWebhooks(ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, orgID, event string, payload map[string]any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, `
+		INSERT INTO webhook_deliveries (webhook_id, event, payload)
+		SELECT id, $2, $3 FROM webhooks WHERE org_id = $1 AND active AND ($2 = ANY (events) OR '*' = ANY (events))`, orgID, event, body)
+	return err
 }
 
 func (s *Server) deliverWebhooks(ctx context.Context) {

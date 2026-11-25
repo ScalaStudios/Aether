@@ -405,6 +405,14 @@ export interface WebhookDelivery {
   deliveredAt: string | null
 }
 
+export interface Suppression {
+  id: string
+  address: string
+  reason: "bounce" | "complaint" | "manual"
+  detail: string | null
+  createdAt: string
+}
+
 export interface AppPassword {
   id: string
   name: string

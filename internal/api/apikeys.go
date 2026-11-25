@@ -14,7 +14,7 @@ import (
 
 const apiKeyPrefix = "aether_"
 
-var apiKeyResources = []string{"domains", "mailboxes", "aliases", "members", "audit", "webhooks", "senders", "mailflow", "message-trace", "contacts"}
+var apiKeyResources = []string{"domains", "mailboxes", "aliases", "members", "audit", "webhooks", "senders", "mailflow", "message-trace", "contacts", "suppressions"}
 
 var apiKeyRoutes = map[string]string{
 	"GET /api/v1/organizations/{orgId}":                            "",
@@ -81,6 +81,9 @@ var apiKeyRoutes = map[string]string{
 	"DELETE /api/v1/webhooks/{webhookId}":                          "webhooks",
 	"GET /api/v1/webhooks/{webhookId}/deliveries":                  "webhooks",
 	"POST /api/v1/webhooks/{webhookId}/test":                       "webhooks",
+	"GET /api/v1/organizations/{orgId}/suppressions":               "suppressions",
+	"POST /api/v1/organizations/{orgId}/suppressions":              "suppressions",
+	"DELETE /api/v1/suppressions/{suppressionId}":                  "suppressions",
 
 	"GET /api/v1/organizations/{orgId}/sender-lists":              "senders",
 	"POST /api/v1/organizations/{orgId}/sender-lists":             "senders",

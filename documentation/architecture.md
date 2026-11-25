@@ -196,6 +196,8 @@ Sender restrictions are enforced by Postfix during the SMTP session, on port 25 
 
 For `members` and `allowlist`, a sender on a domain that Aether hosts counts only when the session authenticated, so an outside server cannot claim a hosted address to reach a list. Mail with an empty envelope sender, such as a bounce, is rejected by every restricted list. The rejection is `5.7.1 <list> does not accept mail from this sender`, given while the sender is still connected. If the API cannot query the database, it asks Postfix to defer the message instead.
 
+Authenticated submission also asks that policy service, with `policy_context=suppression`, before accepting a recipient. The API looks up the envelope sender's active verified domain and rejects the recipient with `550 5.7.1` when that organization's suppression list contains the address. Inbound mail on port 25 is not checked, so a suppressed address can still receive mail. The list and the delivery events are described in [API keys, webhooks, and suppressions](integrations.md).
+
 ### Members from groups and domains
 
 Besides the addresses added by hand, a list's members can come from two places, both resolved when mail is delivered, so people join and leave with no change to the list:

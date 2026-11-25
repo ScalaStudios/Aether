@@ -268,7 +268,7 @@ The Go API is the only component that writes application data. It keeps organiza
 - [Sender warnings](documentation/sender-warnings.md): the External tag, first contact tips, impersonation warnings and sender verification in Aether Mail, and how the verdict is protected from forged headers.
 - [Architecture](documentation/architecture.md): the components, the trust boundaries, and how rules, forwarding and automatic replies work.
 - [Encryption](documentation/encryption.md): S/MIME, OpenPGP and password-protected messages, and where the keys stay.
-- [API keys and webhooks](documentation/integrations.md): automate Aether and react to its audit events.
+- [API keys, webhooks, and suppressions](documentation/integrations.md): automate Aether, react to audit and mail delivery events, and keep a suppression list.
 - [Kubernetes](documentation/kubernetes.md): the state of the Helm chart.
 - [Third-party components](documentation/third-party.md): every bundled component and its license.
 - [API specification](api/openapi.yaml): the OpenAPI 3.1 document.
