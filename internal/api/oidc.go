@@ -412,6 +412,11 @@ func resolveMappedRoles(groups []string, mappings []groupMapping) []resolvedMapp
 
 func (s *Server) applyGroupMappings(ctx context.Context, tx pgx.Tx, userID string, groups []string, mappings []groupMapping) error {
 	for _, rm := range resolveMappedRoles(groups, mappings) {
+		if rm.Role == roleOwner {
+			if err := lockOrganization(ctx, tx, rm.OrgID); err != nil {
+				return err
+			}
+		}
 		var orgExists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM organizations WHERE id = $1)`, rm.OrgID).Scan(&orgExists); err != nil {
 			return err

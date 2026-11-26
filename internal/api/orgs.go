@@ -325,10 +325,8 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		}
 	}
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if in.Role != roleOwner {
-			if err := refuseLastOwner(r.Context(), tx, orgID, userID); err != nil {
-				return err
-			}
+		if err := refuseLastOwner(r.Context(), tx, orgID, userID, in.Role); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(r.Context(), `
 			INSERT INTO organization_members (org_id, user_id, role, custom_role_id, compliance) VALUES ($1, $2, $3, $4, coalesce($5, false))
@@ -371,8 +369,16 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 
 var errLastOwner = errors.New("last owner")
 
-func refuseLastOwner(ctx context.Context, tx pgx.Tx, orgID, userID string) error {
-	rows, err := tx.Query(ctx, `SELECT user_id FROM organization_members WHERE org_id = $1 AND role = 'owner' ORDER BY user_id FOR UPDATE`, orgID)
+func lockOrganization(ctx context.Context, tx pgx.Tx, orgID string) error {
+	_, err := tx.Exec(ctx, `SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE`, orgID)
+	return err
+}
+
+func refuseLastOwner(ctx context.Context, tx pgx.Tx, orgID, userID, newRole string) error {
+	if err := lockOrganization(ctx, tx, orgID); err != nil || newRole == roleOwner {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT user_id FROM organization_members WHERE org_id = $1 AND role = 'owner'`, orgID)
 	if err != nil {
 		return err
 	}
@@ -417,7 +423,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 	type removed struct{ ID, Address string }
 	var mailboxes []removed
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if err := refuseLastOwner(r.Context(), tx, orgID, userID); err != nil {
+		if err := refuseLastOwner(r.Context(), tx, orgID, userID, ""); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(r.Context(), `DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID); err != nil {
