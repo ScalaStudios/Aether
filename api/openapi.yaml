@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Aether API
-  version: 0.1.0
+  version: 0.2.0
   license:
     name: AGPL-3.0-or-later
     identifier: AGPL-3.0-or-later
