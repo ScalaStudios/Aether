@@ -986,10 +986,17 @@ func TestImportStopsWhenTheStarterLosesAccess(t *testing.T) {
 	setDelegate(t, w.admin, w.bobMailbox, map[string]any{"email": alice, "access": "full"})
 	path := "/mailboxes/" + w.bobMailbox + "/imports"
 	proxy.hold(0)
-	w.alice.must("POST", path, map[string]any{
+	body := map[string]any{
 		"host": env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test"), "port": 143, "security": "starttls",
 		"username": alice, "password": w.aliceAppPassword,
-	}, nil, 202)
+	}
+	codes := make(chan int, 2)
+	for range 2 {
+		go func() { codes <- w.alice.do("POST", path, body, nil) }()
+	}
+	if got := []int{<-codes, <-codes}; slices.Min(got) != 202 || slices.Max(got) != 409 {
+		t.Fatalf("parallel imports returned %v, want one 202 and one 409", got)
+	}
 	setDelegate(t, w.admin, w.bobMailbox, map[string]any{"email": alice, "access": "read"})
 	waitUpTo(t, 20*time.Second, "the import to stop", func() bool {
 		var runs []importTestRun
