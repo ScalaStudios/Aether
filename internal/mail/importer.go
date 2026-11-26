@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strconv"
@@ -91,7 +92,7 @@ func importLogin(ic *imapclient.Client, src ImportSource) error {
 	return err
 }
 
-func (c *Client) Import(ctx context.Context, address string, src ImportSource, progress func(ImportProgress), sync *ImportSync) (err error) {
+func (c *Client) Import(ctx context.Context, address string, src ImportSource, maxBytes int64, progress func(ImportProgress), sync *ImportSync) (err error) {
 	defer func() {
 		if ctx.Err() != nil {
 			err = ctx.Err()
@@ -118,10 +119,10 @@ func (c *Client) Import(ctx context.Context, address string, src ImportSource, p
 	if _, err := c.login(to, address); err != nil {
 		return err
 	}
-	return importFolders(ctx, from, to, src.Host, progress, sync)
+	return importFolders(ctx, from, to, src.Host, maxBytes, progress, sync)
 }
 
-func importFolders(ctx context.Context, from, to *imapclient.Client, host string, progress func(ImportProgress), sync *ImportSync) error {
+func importFolders(ctx context.Context, from, to *imapclient.Client, host string, maxBytes int64, progress func(ImportProgress), sync *ImportSync) error {
 	sources, err := from.List("", "*", &imap.ListOptions{ReturnSpecialUse: true}).Collect()
 	if err != nil {
 		return fmt.Errorf("list folders on %s: %w", host, err)
@@ -147,7 +148,7 @@ func importFolders(ctx context.Context, from, to *imapclient.Client, host string
 			return err
 		}
 		if target != "" {
-			if err := copyFolder(ctx, from, to, folder.Mailbox, target, &p, progress, sync); err != nil {
+			if err := copyFolder(ctx, from, to, folder.Mailbox, target, maxBytes, &p, progress, sync); err != nil {
 				return fmt.Errorf("copy %s: %w", folder.Mailbox, err)
 			}
 		}
@@ -192,7 +193,7 @@ func importTarget(to *imapclient.Client, folder *imap.ListData, targets []*imap.
 	return name, nil
 }
 
-func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target string, p *ImportProgress, progress func(ImportProgress), sync *ImportSync) error {
+func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target string, maxBytes int64, p *ImportProgress, progress func(ImportProgress), sync *ImportSync) error {
 	sourceData, err := from.Select(source, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
 		return err
@@ -247,7 +248,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 			return err
 		}
 		batch := uids[start:min(start+importBatch, len(uids))]
-		heads, err := from.Fetch(imap.UIDSetNum(batch...), &imap.FetchOptions{UID: true, Envelope: true, Flags: sync != nil}).Collect()
+		heads, err := from.Fetch(imap.UIDSetNum(batch...), &imap.FetchOptions{UID: true, Envelope: true, RFC822Size: true, Flags: sync != nil}).Collect()
 		if err != nil {
 			return err
 		}
@@ -263,18 +264,19 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 					continue
 				}
 			}
-			if seen[importMessageID(m)] || (sync != nil && sync.Deletions && slices.Contains(m.Flags, imap.FlagDeleted)) {
+			if seen[importMessageID(m)] || m.RFC822Size > maxBytes || (sync != nil && sync.Deletions && slices.Contains(m.Flags, imap.FlagDeleted)) {
 				p.Skipped++
 				continue
 			}
 			wanted = append(wanted, m.UID)
 		}
 		if len(wanted) > 0 {
-			msgs, err := from.Fetch(imap.UIDSetNum(wanted...), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}}).Collect()
-			if err != nil {
-				return err
-			}
-			for _, m := range msgs {
+			cmd := from.Fetch(imap.UIDSetNum(wanted...), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}})
+			for data := cmd.Next(); data != nil; data = cmd.Next() {
+				m, err := collectLimited(data, maxBytes)
+				if err != nil {
+					return err
+				}
 				raw, id := m.FindBodySection(body), importMessageID(m)
 				if raw == nil || seen[id] || (sync != nil && sync.Deletions && slices.Contains(m.Flags, imap.FlagDeleted)) {
 					p.Skipped++
@@ -312,6 +314,9 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 					seen[id] = true
 				}
 			}
+			if err := cmd.Close(); err != nil {
+				return err
+			}
 		}
 		progress(*p)
 	}
@@ -329,6 +334,32 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 	return nil
 }
 
+func collectLimited(data *imapclient.FetchMessageData, maxBytes int64) (*imapclient.FetchMessageBuffer, error) {
+	m := &imapclient.FetchMessageBuffer{SeqNum: data.SeqNum}
+	for item := data.Next(); item != nil; item = data.Next() {
+		switch item := item.(type) {
+		case imapclient.FetchItemDataBodySection:
+			if item.Literal == nil || item.Literal.Size() > maxBytes {
+				continue
+			}
+			raw, err := io.ReadAll(item.Literal)
+			if err != nil {
+				return nil, err
+			}
+			m.BodySection = append(m.BodySection, imapclient.FetchBodySectionBuffer{Section: item.Section, Bytes: raw})
+		case imapclient.FetchItemDataUID:
+			m.UID = item.UID
+		case imapclient.FetchItemDataFlags:
+			m.Flags = item.Flags
+		case imapclient.FetchItemDataInternalDate:
+			m.InternalDate = item.Time
+		case imapclient.FetchItemDataEnvelope:
+			m.Envelope = item.Envelope
+		}
+	}
+	return m, nil
+}
+
 func importMessageID(m *imapclient.FetchMessageBuffer) string {
 	if m.Envelope != nil {
 		return m.Envelope.MessageID
@@ -339,14 +370,20 @@ func importMessageID(m *imapclient.FetchMessageBuffer) string {
 func importBodyHashes(to *imapclient.Client, uids []imap.UID, body *imap.FetchItemBodySection) (map[[32]byte]bool, error) {
 	hashes := map[[32]byte]bool{}
 	for start := 0; start < len(uids); start += importBatch {
-		msgs, err := to.Fetch(imap.UIDSetNum(uids[start:min(start+importBatch, len(uids))]...), &imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{body}}).Collect()
-		if err != nil {
-			return nil, err
-		}
-		for _, m := range msgs {
-			if raw := m.FindBodySection(body); raw != nil {
-				hashes[sha256.Sum256(raw)] = true
+		cmd := to.Fetch(imap.UIDSetNum(uids[start:min(start+importBatch, len(uids))]...), &imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{body}})
+		for data := cmd.Next(); data != nil; data = cmd.Next() {
+			for item := data.Next(); item != nil; item = data.Next() {
+				if section, ok := item.(imapclient.FetchItemDataBodySection); ok && section.Literal != nil {
+					h := sha256.New()
+					if _, err := io.Copy(h, section.Literal); err != nil {
+						return nil, err
+					}
+					hashes[[32]byte(h.Sum(nil))] = true
+				}
 			}
+		}
+		if err := cmd.Close(); err != nil {
+			return nil, err
 		}
 	}
 	return hashes, nil

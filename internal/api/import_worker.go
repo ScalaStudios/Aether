@@ -66,16 +66,20 @@ func (s *Server) runScheduledImport(ctx context.Context, conn *pgx.Conn, id, mai
 	var in importScheduleInput
 	var userID *string
 	var credential []byte
-	var address string
+	var address, orgID string
 	err := conn.QueryRow(ctx, `SELECT j.user_id, j.host, j.port, j.security, j.username, j.credential,
-		j.ends_at, j.sync_flags, j.sync_deletions, m.address
+		j.ends_at, j.sync_flags, j.sync_deletions, m.address, m.org_id
 		FROM mail_import_schedules j JOIN mailboxes m ON m.id = j.mailbox_id JOIN domains d ON d.id = m.domain_id
 		WHERE j.id = $1 AND j.credential IS NOT NULL AND j.next_run_at <= now()
 		AND (j.ends_at IS NULL OR j.ends_at > now()) AND `+importPermitted, id).
-		Scan(&userID, &in.Host, &in.Port, &in.Security, &in.Username, &credential, &in.EndsAt, &in.SyncFlags, &in.SyncDeletions, &address)
+		Scan(&userID, &in.Host, &in.Port, &in.Security, &in.Username, &credential, &in.EndsAt, &in.SyncFlags, &in.SyncDeletions, &address, &orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	limits, err := s.transferLimits(ctx, orgID)
 	if err != nil {
 		return err
 	}
@@ -101,7 +105,7 @@ func (s *Server) runScheduledImport(ctx context.Context, conn *pgx.Conn, id, mai
 			defer close(watched)
 			s.watchImportSchedule(runCtx, cancel, conn, id)
 		}()
-		s.runImport(runCtx, job.ID, address, s.importSource(in.importInput), s.importSync(id, in), true)
+		s.runImport(runCtx, job.ID, address, s.importSource(in.importInput), limits.MessageBytes, s.importSync(id, in), true)
 		cancel()
 		<-watched
 	}

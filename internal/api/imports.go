@@ -101,9 +101,14 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 	if !decode(w, r, 8<<10, &in) || !in.valid(w) {
 		return
 	}
+	limits, err := s.transferLimits(r.Context(), m.OrgID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	src := s.importSource(in)
 	checkCtx, cancelCheck := context.WithTimeout(r.Context(), 30*time.Second)
-	err := mail.CheckImportSource(checkCtx, src)
+	err = mail.CheckImportSource(checkCtx, src)
 	cancelCheck()
 	if err != nil {
 		message := "Aether could not connect to " + in.Host + ". Check the server name, port and security, and that the provider allows IMAP access."
@@ -133,7 +138,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 	go func() {
 		defer cancel()
 		defer closeImportLock(conn)
-		s.runImport(ctx, job.ID, m.Address, src, nil, false)
+		s.runImport(ctx, job.ID, m.Address, src, limits.MessageBytes, nil, false)
 	}()
 	s.audit(r.Context(), r, p, &m.OrgID, "mail_import.start", "mailbox", m.ID, map[string]any{"host": in.Host})
 	writeJSON(w, http.StatusAccepted, job)
@@ -211,13 +216,13 @@ func insertImportRun(ctx context.Context, conn *pgx.Conn, mailboxID string, user
 	return job, err
 }
 
-func (s *Server) runImport(ctx context.Context, id, address string, src mail.ImportSource, sync *mail.ImportSync, recurring bool) {
+func (s *Server) runImport(ctx context.Context, id, address string, src mail.ImportSource, maxBytes int64, sync *mail.ImportSync, recurring bool) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go s.watchImportCancel(ctx, cancel, id, 2*time.Second)
 	var latest mail.ImportProgress
 	var last time.Time
-	err := s.mail.Import(ctx, address, src, func(p mail.ImportProgress) {
+	err := s.mail.Import(ctx, address, src, maxBytes, func(p mail.ImportProgress) {
 		latest = p
 		if time.Since(last) < 2*time.Second {
 			return

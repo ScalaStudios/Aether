@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,17 @@ func appendMessage(t *testing.T, ic *imapclient.Client, folder, id string, flags
 	}
 }
 
+func appendLarge(t *testing.T, ic *imapclient.Client, folder, id string, size int) {
+	t.Helper()
+	raw := []byte("Message-ID: <" + id + ">\r\nSubject: " + id + "\r\n\r\n" + strings.Repeat("x", size) + "\r\n")
+	cmd := ic.Append(folder, int64(len(raw)), nil)
+	cmd.Write(raw)
+	cmd.Close()
+	if _, err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func folderMessages(t *testing.T, ic *imapclient.Client, folder string) map[string][]imap.Flag {
 	t.Helper()
 	if _, err := ic.Select(folder, nil).Wait(); err != nil {
@@ -95,7 +107,7 @@ func TestImportCopiesFoldersAndSkipsDuplicates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := copyFolder(context.Background(), from, to, folder.Mailbox, target, &p, func(ImportProgress) {}, nil); err != nil {
+		if err := copyFolder(context.Background(), from, to, folder.Mailbox, target, 1<<20, &p, func(ImportProgress) {}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -132,7 +144,7 @@ func TestImportNeverTouchesSharedFolders(t *testing.T) {
 	appendMessage(t, to, support, "known@example.com")
 
 	var p ImportProgress
-	if err := importFolders(context.Background(), from, to, "source", func(last ImportProgress) { p = last }, nil); err != nil {
+	if err := importFolders(context.Background(), from, to, "source", 1<<20, func(last ImportProgress) { p = last }, nil); err != nil {
 		t.Fatal(err)
 	}
 	if p.FoldersDone != 4 || p.FoldersTotal != 4 || p.Copied != 1 || p.Skipped != 0 {
@@ -148,6 +160,50 @@ func TestImportNeverTouchesSharedFolders(t *testing.T) {
 	for _, l := range list {
 		if SharedFolder(l.Mailbox) && l.Mailbox != support {
 			t.Errorf("import created %s", l.Mailbox)
+		}
+	}
+}
+
+func TestImportSkipsMessagesOverTheSizeLimit(t *testing.T) {
+	from, to := memIMAP(t), memIMAP(t)
+	appendMessage(t, from, "INBOX", "one@example.com")
+	appendLarge(t, from, "INBOX", "big@example.com", 4096)
+	appendMessage(t, from, "INBOX", "two@example.com")
+
+	var p ImportProgress
+	if err := copyFolder(context.Background(), from, to, "INBOX", "INBOX", 1024, &p, func(ImportProgress) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p.Copied != 2 || p.Skipped != 1 {
+		t.Errorf("copied %d, skipped %d; want 2 and 1", p.Copied, p.Skipped)
+	}
+	if inbox := folderMessages(t, to, "INBOX"); len(inbox) != 2 || inbox["big@example.com"] != nil {
+		t.Errorf("INBOX = %v, want the two small messages", inbox)
+	}
+}
+
+func TestCollectLimitedDropsBodiesOverTheLimit(t *testing.T) {
+	from := memIMAP(t)
+	appendLarge(t, from, "INBOX", "big@example.com", 4096)
+	if _, err := from.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	body := &imap.FetchItemBodySection{Peek: true}
+	for _, limit := range []int64{1024, 1 << 20} {
+		cmd := from.Fetch(imap.SeqSet{{Start: 1, Stop: 0}}, &imap.FetchOptions{UID: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}})
+		m, err := collectLimited(cmd.Next(), limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Close(); err != nil {
+			t.Fatal(err)
+		}
+		raw := m.FindBodySection(body)
+		if limit == 1024 && raw != nil {
+			t.Errorf("limit %d kept a %d byte body", limit, len(raw))
+		}
+		if limit > 1024 && (len(raw) < 4096 || importMessageID(m) != "big@example.com") {
+			t.Errorf("limit %d returned %d bytes for %q, want the whole message", limit, len(raw), importMessageID(m))
 		}
 	}
 }
