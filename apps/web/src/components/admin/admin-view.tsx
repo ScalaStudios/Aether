@@ -266,7 +266,7 @@ export function AdminView() {
                   <TabsTrigger key={t.value} value={t.value} ref={t.value === active ? reveal : undefined}>
                     {t.label}
                     {t.value === "alerts" && firing > 0 && (
-                      <span className="text-xs font-semibold tabular-nums text-danger">
+                      <span className="relative text-xs font-semibold tabular-nums text-danger">
                         {firing}
                         <span className="sr-only"> firing</span>
                       </span>
