@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -119,13 +120,13 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 	if in.AliasOf != nil {
 		var target bool
 		if uuidPattern.MatchString(*in.AliasOf) {
-			if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM domains WHERE id = $1 AND org_id = $2 AND alias_of IS NULL)`, *in.AliasOf, orgID).Scan(&target); err != nil {
+			if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM domains WHERE id = $1 AND org_id = $2 AND alias_of IS NULL AND verified_at IS NOT NULL)`, *in.AliasOf, orgID).Scan(&target); err != nil {
 				s.internalError(w, r, err)
 				return
 			}
 		}
 		if !target {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_alias_target", "Choose a domain of this organization that is not itself an alias domain.")
+			writeError(w, http.StatusUnprocessableEntity, "invalid_alias_target", "Choose a verified domain of this organization that is not itself an alias domain.")
 			return
 		}
 	}
@@ -141,10 +142,36 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		now := time.Now()
 		verifiedAt = &now
 	}
+	var staleID string
+	err = s.db.QueryRow(r.Context(), `SELECT id FROM domains WHERE name = $1 AND org_id <> $2 AND verified_at IS NULL`, name, orgID).Scan(&staleID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.internalError(w, r, err)
+		return
+	}
+	if staleID != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		rec, proven := s.domainClaimProven(ctx, orgID, name)
+		cancel()
+		if !proven {
+			writeError(w, http.StatusConflict, "domain_claim_required", "Another organization added this domain but has not verified it. To show that you control it, add a TXT record "+rec.Name+" with the value "+rec.Value+", then add the domain again.")
+			return
+		}
+		now := time.Now()
+		verifiedAt = &now
+	}
 	var id string
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
 		if err := s.checkDomainLimit(r.Context(), tx, orgID); err != nil {
 			return err
+		}
+		if staleID != "" {
+			err := tx.QueryRow(r.Context(), `SELECT id FROM domains WHERE id = $1 AND verified_at IS NULL FOR UPDATE`, staleID).Scan(&staleID)
+			if err == nil {
+				err = s.removeDomain(r.Context(), tx, staleID, name)
+			}
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
 		}
 		if err := tx.QueryRow(r.Context(), `INSERT INTO domains (org_id, name, verification_token, verified_at, alias_of, alias_send_as) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
 			orgID, name, secrets.Token(20), verifiedAt, in.AliasOf, in.AliasSendAs).Scan(&id); err != nil {
@@ -161,9 +188,16 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request, p *princip
 		writeError(w, http.StatusConflict, "domain_taken", "This domain is already registered on this server.")
 		return
 	}
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		writeError(w, http.StatusConflict, "domain_in_use", "Another organization still has mailboxes or alias domains on this domain. Ask the server administrator to release it.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	if staleID != "" {
+		s.audit(r.Context(), r, p, &orgID, "domain.claim", "domain", id, map[string]any{"name": name, "replaced": staleID})
 	}
 	if err := s.syncDomainDKIM(r.Context(), id, name); err != nil {
 		s.log.Error("dkim publish failed; outgoing mail for this domain will be unsigned until the API restarts", "domain", name, "err", err)
@@ -214,32 +248,7 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request, p *princip
 	}
 	ctx := r.Context()
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if err := lockDKIMDomain(ctx, tx, d.ID); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `SELECT selector FROM dkim_keys WHERE domain_id = $1`, d.ID)
-		if err != nil {
-			return err
-		}
-		selectors, err := pgx.CollectRows(rows, pgx.RowTo[string])
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM domains WHERE id = $1`, d.ID); err != nil {
-			return err
-		}
-		_, err = s.kv.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			pipe.HDel(ctx, dkimSelectorsHash, d.Name)
-			pipe.HDel(ctx, dkimEd25519SelectorsHash, d.Name)
-			if len(selectors) > 0 {
-				for i := range selectors {
-					selectors[i] += "." + d.Name
-				}
-				pipe.HDel(ctx, dkimKeysHash, selectors...)
-			}
-			return nil
-		})
-		return err
+		return s.removeDomain(ctx, tx, d.ID, d.Name)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
@@ -492,6 +501,43 @@ func (s *Server) checkRecords(ctx context.Context, records []dnsRecord) {
 	for range records {
 		<-done
 	}
+}
+
+func (s *Server) removeDomain(ctx context.Context, tx pgx.Tx, id, name string) error {
+	if err := lockDKIMDomain(ctx, tx, id); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT selector FROM dkim_keys WHERE domain_id = $1`, id)
+	if err != nil {
+		return err
+	}
+	selectors, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM domains WHERE id = $1`, id); err != nil {
+		return err
+	}
+	_, err = s.kv.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HDel(ctx, dkimSelectorsHash, name)
+		pipe.HDel(ctx, dkimEd25519SelectorsHash, name)
+		if len(selectors) > 0 {
+			for i := range selectors {
+				selectors[i] += "." + name
+			}
+			pipe.HDel(ctx, dkimKeysHash, selectors...)
+		}
+		return nil
+	})
+	return err
+}
+
+func (s *Server) domainClaimProven(ctx context.Context, orgID, name string) (dnsRecord, bool) {
+	mac := hmac.New(sha256.New, s.cfg.SecretKey)
+	mac.Write([]byte("domain-claim\x00" + orgID + "\x00" + name))
+	rec := dnsRecord{Type: "TXT", Name: "_aether." + name, Value: "aether-claim=" + hex.EncodeToString(mac.Sum(nil)[:20]), Purpose: "verification"}
+	s.checkRecord(ctx, &rec)
+	return rec, rec.Status == "ok"
 }
 
 func (s *Server) verifyDomain(w http.ResponseWriter, r *http.Request, p *principal) {

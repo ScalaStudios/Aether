@@ -26,7 +26,7 @@ import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useSession } from "@/hooks/use-session"
-import { api, errorMessage, limitMessage } from "@/lib/api"
+import { api, ApiError, errorMessage, limitMessage } from "@/lib/api"
 import { formatBytes, formatDate, formatPercent, MB, megabytes, plural } from "@/lib/format"
 import { hasPerm, isDomainScoped } from "@/lib/permissions"
 import { domainDefaultsQuery, domainsQuery, mailboxesQuery, organizationDefaultsQuery } from "@/lib/queries"
@@ -99,7 +99,7 @@ export function DomainsTab({ orgId }: { orgId: string }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { name: "", aliasOf: "none", aliasSendAs: false } })
   const aliasOf = useWatch({ control: form.control, name: "aliasOf" })
-  const targets = domains.data?.filter((d) => !d.aliasOf) ?? []
+  const targets = domains.data?.filter((d) => !d.aliasOf && d.verified) ?? []
   const domainName = (id: string | null) => domains.data?.find((d) => d.id === id)?.name
 
   const add = useMutation({
@@ -113,7 +113,7 @@ export function DomainsTab({ orgId }: { orgId: string }) {
       setOpenId(domain.id)
     },
     onError: (error) => {
-      const limit = limitMessage(error)
+      const limit = limitMessage(error) ?? (error instanceof ApiError && error.code === "domain_claim_required" ? error.message : undefined)
       if (limit) form.setError("root", { message: limit })
       else toast.error(errorMessage(error))
     },

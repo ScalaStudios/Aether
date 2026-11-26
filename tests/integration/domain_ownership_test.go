@@ -65,3 +65,28 @@ func TestMailboxesNeedAVerifiedDomainAndKeepExistingSignIns(t *testing.T) {
 	}
 	orgAdmin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": "carol"}, nil, 201)
 }
+
+func TestUnverifiedDomainDoesNotBlockAProvenClaim(t *testing.T) {
+	a := setupWorld(t)
+	b := setupWorld(t)
+	bAdmin := orgAdminOf(t, b)
+	name := "claimed" + randomSuffix() + ".test"
+	var held idOnly
+	bAdmin.must("POST", "/organizations/"+b.orgID+"/domains", map[string]string{"name": name}, &held, 201)
+	if code := errorCode(t, bAdmin, "POST", "/organizations/"+b.orgID+"/domains", map[string]any{"name": "alias" + randomSuffix() + ".test", "aliasOf": held.ID}, 422); code != "invalid_alias_target" {
+		t.Fatalf("alias domain of an unverified domain returned %q, want invalid_alias_target", code)
+	}
+	for _, c := range []*apiClient{orgAdminOf(t, a), a.admin} {
+		if code := errorCode(t, c, "POST", "/organizations/"+a.orgID+"/domains", map[string]string{"name": name}, 409); code != "domain_claim_required" {
+			t.Fatalf("adding a domain another org holds unverified returned %q, want domain_claim_required", code)
+		}
+	}
+	bAdmin.must("GET", "/domains/"+held.ID, nil, nil, 200)
+	bAdmin.must("POST", "/domains/"+held.ID+"/verify", nil, nil, 422)
+	if code := errorCode(t, bAdmin, "POST", "/organizations/"+b.orgID+"/domains", map[string]string{"name": name}, 409); code != "domain_taken" {
+		t.Fatalf("adding the same domain twice in one org returned %q, want domain_taken", code)
+	}
+	if code := errorCode(t, a.admin, "POST", "/organizations/"+a.orgID+"/domains", map[string]string{"name": b.domain}, 409); code != "domain_taken" {
+		t.Fatalf("adding another org's verified domain returned %q, want domain_taken", code)
+	}
+}
