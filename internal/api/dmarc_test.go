@@ -3,9 +3,13 @@ package api
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/emersion/go-smtp"
 )
 
 func gzipDMARC(t *testing.T, head, repeated, tail string, n int) []byte {
@@ -92,5 +96,30 @@ func TestValidDMARCRecordAndTruncate(t *testing.T) {
 	}
 	if got := truncate("aé", 2); got != "a" {
 		t.Errorf("truncate split a rune: %q", got)
+	}
+}
+
+func TestReportSessionWaitsForASlotWithATimeout(t *testing.T) {
+	for range cap(reportSlots) {
+		reportSlots <- struct{}{}
+	}
+	defer func() {
+		for range cap(reportSlots) {
+			<-reportSlots
+		}
+	}()
+	wait := reportSlotWait
+	reportSlotWait = 10 * time.Millisecond
+	defer func() { reportSlotWait = wait }()
+	done := make(chan error, 1)
+	go func() { done <- (&reportSession{}).Data(strings.NewReader("")) }()
+	select {
+	case err := <-done:
+		var smtpErr *smtp.SMTPError
+		if !errors.As(err, &smtpErr) || smtpErr.Code != 451 {
+			t.Fatalf("Data = %v, want a 451", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Data kept waiting for a report slot")
 	}
 }

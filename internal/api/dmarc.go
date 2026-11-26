@@ -136,6 +136,8 @@ func (x *xmlShapeReader) Read(p []byte) (int, error) {
 
 var reportSlots = make(chan struct{}, 2)
 
+var reportSlotWait = 30 * time.Second
+
 func parseDMARCMessage(r io.Reader, store func(*dmarcFeedback) error) error {
 	mr, err := mail.CreateReader(r)
 	if err != nil {
@@ -351,10 +353,16 @@ func reportRecipientDomain(rcpt string) (string, bool) {
 }
 
 func (r *reportSession) Data(body io.Reader) error {
+	wait, cancelWait := context.WithTimeout(context.Background(), reportSlotWait)
+	defer cancelWait()
+	select {
+	case reportSlots <- struct{}{}:
+		defer func() { <-reportSlots }()
+	case <-wait.Done():
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Try again later"}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	reportSlots <- struct{}{}
-	defer func() { <-reportSlots }()
 	var domainIDs []string
 	for _, rcpt := range r.rcpts {
 		if id, ok := reportRecipientDomain(rcpt); ok {
