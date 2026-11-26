@@ -278,3 +278,14 @@ func TestSanitizeDropsRelativeLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeMessageHTMLUpgradesOnlyImageSrc(t *testing.T) {
+	out := SanitizeMessageHTML(`<p>Set src=//fileserver/share</p><img src="//cdn.example/logo.png">`)
+	if !strings.Contains(out, "Set src=//fileserver/share") || !strings.Contains(out, `src="https://cdn.example/logo.png"`) {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	proxied, stats := PresentRemoteImages(`<p>Set src=//fileserver/share</p><img src="//cdn.example/logo.png">`, true, func(string) (string, bool) { return "/api/v1/image-proxy/x", true })
+	if stats.Remote != 1 || !strings.Contains(proxied, `src="/api/v1/image-proxy/x"`) || !strings.Contains(proxied, "Set src=//fileserver/share") {
+		t.Fatalf("unexpected proxied output: %v %s", stats, proxied)
+	}
+}

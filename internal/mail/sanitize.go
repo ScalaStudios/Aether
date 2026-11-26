@@ -5,11 +5,11 @@ import (
 	"html"
 	"io"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
 	"github.com/microcosm-cc/bluemonday"
+	xhtml "golang.org/x/net/html"
 )
 
 func newHTMLPolicy(links, keepRemoteImages bool) *bluemonday.Policy {
@@ -98,8 +98,29 @@ func clip(s string, limit int) string {
 	return s
 }
 
-var protocolRelativeSrc = regexp.MustCompile(`(?i)(\ssrc\s*=\s*["']?\s*)//`)
-
 func SanitizeMessageHTML(html string) string {
-	return messageHTMLPolicy.Sanitize(protocolRelativeSrc.ReplaceAllString(html, "${1}https://"))
+	return messageHTMLPolicy.Sanitize(upgradeProtocolRelativeImages(html))
+}
+
+func upgradeProtocolRelativeImages(in string) string {
+	z := xhtml.NewTokenizer(strings.NewReader(in))
+	var out strings.Builder
+	for z.Next() != xhtml.ErrorToken {
+		raw := string(z.Raw())
+		t := z.Token()
+		changed := false
+		if (t.Type == xhtml.StartTagToken || t.Type == xhtml.SelfClosingTagToken) && t.Data == "img" {
+			for i, a := range t.Attr {
+				if v := strings.TrimSpace(a.Val); a.Key == "src" && strings.HasPrefix(v, "//") {
+					t.Attr[i].Val, changed = "https:"+v, true
+				}
+			}
+		}
+		if changed {
+			out.WriteString(t.String())
+		} else {
+			out.WriteString(raw)
+		}
+	}
+	return out.String()
 }
