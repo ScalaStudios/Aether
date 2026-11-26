@@ -9,6 +9,7 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=check_recipient_access,regexp:/etc/postfix/coexist_recipient_guard,reject_non_fqdn_recipient,$aether_sending_policy,check_recipient_access,pgsql:/etc/postfix/pgsql/restricted-lists.cf,check_recipient_access,pgsql:/etc/postfix/pgsql/tagged-rejects.cf,aether_suppression_policy
   -o milter_macro_daemon_name=ORIGINATING
+  -o milter_default_action=tempfail
 submissions inet n      -       n       -       -       smtpd
   -o syslog_name=postfix/submissions
   -o cleanup_service_name=submission-cleanup
@@ -19,6 +20,7 @@ submissions inet n      -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=check_recipient_access,regexp:/etc/postfix/coexist_recipient_guard,reject_non_fqdn_recipient,$aether_sending_policy,check_recipient_access,pgsql:/etc/postfix/pgsql/restricted-lists.cf,check_recipient_access,pgsql:/etc/postfix/pgsql/tagged-rejects.cf,aether_suppression_policy
   -o milter_macro_daemon_name=ORIGINATING
+  -o milter_default_action=tempfail
 10025     inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/sieve-relay
   -o smtpd_tls_security_level=encrypt
@@ -28,6 +30,7 @@ submissions inet n      -       n       -       -       smtpd
   -o smtpd_relay_restrictions=permit_sasl_authenticated,reject
   -o smtpd_recipient_restrictions=check_recipient_access,regexp:/etc/postfix/coexist_recipient_guard,reject_non_fqdn_recipient,aether_list_policy
   -o milter_macro_daemon_name=ORIGINATING
+  -o milter_default_action=tempfail
 pickup    unix  n       -       n       60      1       pickup
 cleanup   unix  n       -       n       -       0       cleanup
 submission-cleanup unix n -     n       -       0       cleanup
