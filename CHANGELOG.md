@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - SCIM requests and group memberships only reach accounts linked to that identity provider, never platform administrators, and `externalId` is required when creating a user. A provider suspension no longer replaces an administrator's suspension, and an administrator suspension replaces a provider's.
 - Identity provider webhook events are recorded in the same transaction that applies them, so a retry after a failure is applied.
 - Sign-in provisioning skips addresses that are already an alias or distribution list, and `bootstrap-admin` clears the suspension label when it reactivates an account.
+- Mailboxes can only be created on verified domains, and creating a mailbox with a password for an existing account returns 409 instead of changing that account's password.
+- A domain another organization added but never verified can be claimed by publishing the TXT record shown at `_aether.<domain>`. Alias domains can only point at verified domains.
+- Custom CSS checks every `url()` and refuses targets that start with `//`, including escaped forms.
 
 ## 0.2.0 - 2026-11-25
 
