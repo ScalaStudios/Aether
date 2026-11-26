@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-ical"
 )
@@ -104,5 +106,30 @@ END:VCALENDAR
 	}
 	if strings.Count(again, "BEGIN:VTIMEZONE") != 1 {
 		t.Fatalf("cancelled booking has %d time zones:\n%s", strings.Count(again, "BEGIN:VTIMEZONE"), again)
+	}
+}
+
+func TestBookingPageEventUsesPageTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Lisbon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	event := ical.NewEvent().Component
+	event.Props.SetText(ical.PropUID, "booked")
+	event.Props.SetDateTime(ical.PropDateTimeStamp, start)
+	doc := bookingCalendar(event, start, start.Add(30*time.Minute), loc)
+	var buf bytes.Buffer
+	if err := ical.NewEncoder(&buf).Encode(doc); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"DTSTART;TZID=Europe/Lisbon:20260701T100000", "DTEND;TZID=Europe/Lisbon:20260701T103000", "BEGIN:VTIMEZONE\r\nTZID:Europe/Lisbon\r\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("booking missing %q:\n%s", want, out)
+		}
+	}
+	if got, _ := (&ical.Event{Component: event}).DateTimeStart(time.UTC); !got.Equal(start) {
+		t.Errorf("start moved to %s", got)
 	}
 }

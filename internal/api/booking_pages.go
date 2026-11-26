@@ -765,6 +765,15 @@ func (s *Server) publicBookingSlots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"timezone": offer.Timezone, "durationMinutes": offer.Duration, "slots": slots})
 }
 
+func bookingCalendar(event *ical.Component, start, end time.Time, loc *time.Location) *ical.Calendar {
+	event.Props.SetDateTime(ical.PropDateTimeStart, start.In(loc))
+	event.Props.SetDateTime(ical.PropDateTimeEnd, end.In(loc))
+	doc := newCalendar()
+	doc.Children = append(doc.Children, event)
+	addTimezones(doc)
+	return doc
+}
+
 func (s *Server) bookMeeting(w http.ResponseWriter, r *http.Request) {
 	if !s.allow(r.Context(), "book:"+s.clientIP(r), 10) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many booking requests. Wait a minute and try again.")
@@ -898,8 +907,6 @@ func (s *Server) bookMeeting(w http.ResponseWriter, r *http.Request) {
 	event := ical.NewEvent()
 	event.Props.SetText(ical.PropUID, uid)
 	event.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
-	event.Props.SetDateTime(ical.PropDateTimeStart, start)
-	event.Props.SetDateTime(ical.PropDateTimeEnd, end)
 	event.Props.SetText(ical.PropSummary, title)
 	if offer.Location != "" {
 		event.Props.SetText(ical.PropLocation, offer.Location)
@@ -916,9 +923,7 @@ func (s *Server) bookMeeting(w http.ResponseWriter, r *http.Request) {
 	guest := mailpkg.Address{Name: in.Name, Address: email}
 	attendee := attendeeProp(guest, "NEEDS-ACTION", true)
 	event.Props.Add(&attendee)
-	doc := newCalendar()
-	doc.Children = append(doc.Children, event.Component)
-	addTimezones(doc)
+	doc := bookingCalendar(event.Component, start, end, loc)
 	fields, err := calendarFields(doc)
 	if err != nil {
 		s.davError(w, r, err)
