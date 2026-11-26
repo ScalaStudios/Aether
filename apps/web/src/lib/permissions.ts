@@ -61,6 +61,11 @@ export function hasPerm(session: Session | undefined, orgId: string, ...perms: s
   return perms.some((p) => m.permissions.includes(p))
 }
 
+export function platformOnly(session: Session | undefined, orgId: string, ...roles: Role[]): boolean {
+  const role = orgMembership(session, orgId)?.role
+  return !!session?.user.isPlatformAdmin && !(role && ["owner", "admin", ...roles].includes(role))
+}
+
 export function isDomainScoped(session: Session | undefined, orgId: string): boolean {
   if (!session || session.user.isPlatformAdmin) return false
   const m = orgMembership(session, orgId)

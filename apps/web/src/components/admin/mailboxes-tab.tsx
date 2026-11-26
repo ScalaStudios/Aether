@@ -16,6 +16,7 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
 import { MailboxAccessReport } from "@/components/mailbox-access-report"
+import { LockNote } from "@/components/notice"
 import { SectionHeader } from "@/components/page-header"
 import { SegmentedControl } from "@/components/segmented-control"
 import { RecoverDialog } from "@/components/mail/recover-dialog"
@@ -40,8 +41,8 @@ import { api, ApiError, errorMessage, limitMessage } from "@/lib/api"
 import { downloadCsv, exportMailboxesCsv } from "@/lib/csv"
 import { formatBytes, formatDateTime, megabytes, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
-import { canReadDelegates, hasPerm } from "@/lib/permissions"
-import { domainDefaultsQuery, domainsQuery, featuresQuery, limitsQuery, mailboxesQuery, organizationsQuery } from "@/lib/queries"
+import { canReadDelegates, hasPerm, platformOnly } from "@/lib/permissions"
+import { domainDefaultsQuery, domainsQuery, featuresQuery, limitsQuery, mailboxesQuery, myMailboxesQuery, organizationsQuery } from "@/lib/queries"
 import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, OrganizationLimits, Protocol, QuotaDefault, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
@@ -117,6 +118,8 @@ const rightsLabel = (d: DelegateValues) => [d.access === "read" ? "read only" : 
 
 function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbox | null; canManage: boolean; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient()
+  const session = useSession().data
+  const self = mailbox && platformOnly(session, mailbox.orgId, "domain_admin", "custom") ? session?.user : undefined
   const key = ["delegates", mailbox?.id]
   const shared = mailbox?.kind === "shared"
   const delegates = useQuery({ queryKey: key, queryFn: () => api<Delegate[]>(`/mailboxes/${mailbox?.id}/delegates`), enabled: !!mailbox })
@@ -199,7 +202,9 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
         submitLabel={shared ? "Add member" : "Add delegate"}
         cancelLabel="Done"
         pending={add.isPending}
-        onSubmit={form.handleSubmit((v) => add.mutate(v))}
+        onSubmit={form.handleSubmit((v) =>
+          v.email.toLowerCase() === self?.email.toLowerCase() ? form.setError("email", { message: "Take the owner or administrator role under Members before adding yourself." }) : add.mutate(v)
+        )}
       >
         <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">{shared ? "No members yet." : "No delegates yet."}</p>}>
           {(items) => (
@@ -213,7 +218,7 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
                         <span className="truncate">{d.displayName || d.email}</span>
                         {d.displayName && <span className="truncate font-mono text-sm text-fg-tertiary">{d.email}</span>}
                       </div>
-                      <Select value={shown.access} disabled={change.isPending} onValueChange={(access) => change.mutate({ ...rights(d), access: access as DelegateAccess })}>
+                      <Select value={shown.access} disabled={change.isPending || d.userId === self?.id} onValueChange={(access) => change.mutate({ ...rights(d), access: access as DelegateAccess })}>
                         <SelectTrigger aria-label={`Access for ${d.email}`} className="w-36">
                           <SelectValue />
                         </SelectTrigger>
@@ -234,7 +239,7 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
                         <Switch
                           id={`send-as-${d.userId}`}
                           checked={shown.sendAs}
-                          disabled={change.isPending}
+                          disabled={change.isPending || d.userId === self?.id}
                           onCheckedChange={(sendAs) => change.mutate({ ...rights(d), sendAs })}
                           aria-label={`Send as for ${d.email}`}
                         />
@@ -244,7 +249,7 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
                         <Switch
                           id={`send-on-behalf-${d.userId}`}
                           checked={shown.sendOnBehalf}
-                          disabled={change.isPending}
+                          disabled={change.isPending || d.userId === self?.id}
                           onCheckedChange={(sendOnBehalf) => change.mutate({ ...rights(d), sendOnBehalf })}
                           aria-label={`Send on behalf for ${d.email}`}
                         />
@@ -257,7 +262,12 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
             </ul>
           )}
         </QueryView>
-        <Field id="delegate-email" label="Email" hint="The email of an active person in this organization." error={form.formState.errors.email?.message}>
+        <Field
+          id="delegate-email"
+          label="Email"
+          hint={`The email of an active person in this organization.${self ? " Platform administrators need the owner or administrator role here to add themselves or change their own access." : ""}`}
+          error={form.formState.errors.email?.message}
+        >
           <Input id="delegate-email" type="email" autoComplete="off" spellCheck={false} aria-invalid={!!form.formState.errors.email} {...form.register("email")} />
         </Field>
         <Controller
@@ -620,6 +630,10 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const canViewAppPasswords = hasPerm(session, orgId, "mailboxes:app_passwords", "mailboxes:read")
   const canRevokeAppPasswords = hasPerm(session, orgId, "mailboxes:app_passwords")
   const canAudit = hasPerm(session, orgId, "audit:read")
+  const mine = useQuery(myMailboxesQuery).data
+  const personal = (m: Mailbox) => m.ownerUserId === session?.user.id || !!mine?.some((x) => x.id === m.id)
+  const exportLocked = (m: Mailbox) => platformOnly(session, orgId) && !personal(m)
+  const settingsLocked = (m: Mailbox) => platformOnly(session, orgId, "domain_admin", "helpdesk", "custom") && !personal(m)
 
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
   const domains = useQuery(domainsQuery(orgId))
@@ -961,6 +975,12 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                             <TooltipContent>{`More actions for ${m.address}`}</TooltipContent>
                           </Tooltip>
                           <DropdownMenuContent align="end" className="w-auto min-w-64">
+                            {exportLocked(m) && (
+                              <>
+                                <LockNote className="max-w-72 px-3 py-2">Dimmed actions need the owner or administrator role here. Give yourself the role under Members.</LockNote>
+                                <DropdownMenuSeparator />
+                              </>
+                            )}
                             {canSettings && (
                               <DropdownMenuItem onSelect={() => openEdit(m)}>
                                 <Pencil aria-hidden />
@@ -968,7 +988,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                               </DropdownMenuItem>
                             )}
                             {canWrite && (
-                              <DropdownMenuItem onSelect={() => setExporting(m)}>
+                              <DropdownMenuItem disabled={exportLocked(m)} onSelect={() => setExporting(m)}>
                                 <Download aria-hidden />
                                 Export mailbox
                               </DropdownMenuItem>
@@ -980,7 +1000,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                               </DropdownMenuItem>
                             )}
                             {canSettings && (
-                              <DropdownMenuItem onSelect={() => setRecovering(m)}>
+                              <DropdownMenuItem disabled={settingsLocked(m)} onSelect={() => setRecovering(m)}>
                                 <ArchiveRestore aria-hidden />
                                 Recover deleted items…
                               </DropdownMenuItem>
@@ -1166,7 +1186,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <SheetTitle>Mail rules and automatic replies</SheetTitle>
             <SheetDescription>{managing?.address}</SheetDescription>
           </SheetHeader>
-          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} outsideForwardingOff={features?.externalForwarding === false} />}</div>
+          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} outsideForwardingOff={features?.externalForwarding === false} forwardingLocked={settingsLocked(managing)} />}</div>
         </SheetContent>
       </Sheet>
 

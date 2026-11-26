@@ -14,6 +14,7 @@ import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { LabelDot } from "@/components/mail/label-controls"
 import { IconButton } from "@/components/icon-button"
+import { LockNote } from "@/components/notice"
 import { RecipientInput } from "@/components/recipient-input"
 import { SectionHeader } from "@/components/page-header"
 import { EmptyState, QueryView } from "@/components/states"
@@ -172,17 +173,17 @@ export function MailRules() {
   )
 }
 
-export function MailboxRules({ mailboxId, outsideForwardingOff }: { mailboxId: string; outsideForwardingOff?: boolean }) {
+export function MailboxRules({ mailboxId, outsideForwardingOff, forwardingLocked }: { mailboxId: string; outsideForwardingOff?: boolean; forwardingLocked?: boolean }) {
   return (
     <>
-      <RuleList mailboxId={mailboxId} outsideForwardingOff={outsideForwardingOff} />
+      <RuleList mailboxId={mailboxId} outsideForwardingOff={outsideForwardingOff} forwardingLocked={forwardingLocked} />
       <TaggedMailCard mailboxId={mailboxId} />
       <AutoReplyCard mailboxId={mailboxId} />
     </>
   )
 }
 
-function RuleList({ mailboxId, outsideForwardingOff }: { mailboxId: string; outsideForwardingOff?: boolean }) {
+function RuleList({ mailboxId, outsideForwardingOff, forwardingLocked }: { mailboxId: string; outsideForwardingOff?: boolean; forwardingLocked?: boolean }) {
   const qc = useQueryClient()
   const key = ["rules", mailboxId]
   const rules = useQuery({ queryKey: key, queryFn: () => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`) })
@@ -223,6 +224,11 @@ function RuleList({ mailboxId, outsideForwardingOff }: { mailboxId: string; outs
 
   const submit = form.handleSubmit((v) => {
     if (editing === null) return
+    const known = list.flatMap((r) => r.actions.forwardTo ?? []).map((a) => a.toLowerCase())
+    if (forwardingLocked && v.forwardTo.some((a) => !known.includes(a.address.toLowerCase()))) {
+      form.setError("forwardTo", { message: "Use only addresses this mailbox already forwards to, or take the owner or administrator role under Members first." })
+      return
+    }
     const next = [...list]
     if (editing === "new") next.push(toRule(v, true))
     else next[editing] = toRule(v, list[editing].enabled)
@@ -453,6 +459,7 @@ function RuleList({ mailboxId, outsideForwardingOff }: { mailboxId: string; outs
             <span>Messages this rule deletes can’t be recovered. To keep a way back, move them to Trash instead.</span>
           </div>
         )}
+        {forwardingLocked && <LockNote>Platform administrators need the owner or administrator role in this organization to forward this mailbox to a new address. Give yourself the role under Members first.</LockNote>}
         <Controller
           control={form.control}
           name="forwardTo"

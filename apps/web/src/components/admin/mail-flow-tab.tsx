@@ -12,6 +12,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
 import { IconButton } from "@/components/icon-button"
+import { LockNote } from "@/components/notice"
 import { SectionHeader } from "@/components/page-header"
 import { RecipientInput } from "@/components/recipient-input"
 import { FlowApprovals } from "@/components/settings/approvals"
@@ -22,8 +23,10 @@ import { Button } from "@/components/ui/button"
 import { Input, Textarea } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
+import { platformOnly } from "@/lib/permissions"
 import type { FlowCondition, FlowField, FlowMatch, FlowRule, FlowScope } from "@/lib/types"
 
 const fields: Record<FlowField, string> = {
@@ -46,6 +49,8 @@ const scopes: Record<FlowScope, string> = {
   outside: "Is outside the organization",
   memberOf: "Is a member of list",
 }
+
+const flowTargets = ["bcc", "redirectTo", "approvers"] as const
 
 const directions = { incoming: "Incoming", outgoing: "Outgoing", internal: "Internal" }
 
@@ -204,16 +209,25 @@ function summary(rule: FlowRule) {
 }
 
 export function MailFlowTab({ orgId }: { orgId: string }) {
+  const session = useSession().data
+  const locked = platformOnly(session, orgId)
   return (
     <div className="flex flex-col gap-10">
-      <RuleList orgId={orgId} />
-      <FlowApprovals queryKey={["held", orgId]} path={`/organizations/${orgId}/mail-flow/held`} />
+      <RuleList orgId={orgId} lockedFor={locked ? session?.user.email.toLowerCase() : undefined} />
+      {locked ? (
+        <section className="flex flex-col gap-6">
+          <SectionHeader title="Messages held by mail flow rules" />
+          <LockNote>Platform administrators need the owner or administrator role in this organization to read and decide on held messages. Give yourself the role under Members to review them.</LockNote>
+        </section>
+      ) : (
+        <FlowApprovals queryKey={["held", orgId]} path={`/organizations/${orgId}/mail-flow/held`} />
+      )}
       <MatchLog orgId={orgId} />
     </div>
   )
 }
 
-function RuleList({ orgId }: { orgId: string }) {
+function RuleList({ orgId, lockedFor }: { orgId: string; lockedFor?: string }) {
   const qc = useQueryClient()
   const key = ["mail-flow-rules", orgId]
   const base = `/organizations/${orgId}/mail-flow`
@@ -326,7 +340,11 @@ function RuleList({ orgId }: { orgId: string }) {
         description="Text matching ignores letter case. Every change is recorded in the audit log with the old and new rule."
         submitLabel="Save rule"
         pending={save.isPending}
-        onSubmit={form.handleSubmit((v) => save.mutate(v))}
+        onSubmit={form.handleSubmit((v) => {
+          const refused = lockedFor && !v.reject ? flowTargets.filter((name) => (name === "approvers" ? v.approvers.some((a) => a.address.toLowerCase() === lockedFor) : v[name].length > 0)) : []
+          for (const name of refused) form.setError(name, { message: `Remove ${name === "approvers" ? "your own address" : "these addresses"}, or take the owner or administrator role under Members first.` })
+          if (!refused.length) save.mutate(v)
+        })}
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id="flow-name" label="Name" error={errors.name?.message}>
@@ -394,7 +412,8 @@ function RuleList({ orgId }: { orgId: string }) {
                   />
                 </div>
               )}
-              {(["bcc", "redirectTo", "approvers"] as const).map((name) => (
+              {lockedFor && <LockNote>Sending copies, redirecting mail and approving held messages yourself need the owner or administrator role in this organization. Give yourself the role under Members to use them.</LockNote>}
+              {flowTargets.map((name) => (
                 <Controller
                   key={name}
                   control={form.control}

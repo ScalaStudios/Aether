@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleAlert, Lock } from "lucide-react"
 import { toast } from "sonner"
 
+import { LockNote } from "@/components/notice"
 import { SectionHeader } from "@/components/page-header"
 import { Spinner } from "@/components/spinner"
 import { QueryView, RowsSkeleton } from "@/components/states"
@@ -70,10 +71,7 @@ export function FeaturesTab({ orgId }: { orgId: string }) {
         description="Turn off what this organization does not use. A feature that is off is hidden in Aether and its API stops answering for everyone in the organization. Its settings and data are kept, so turning it back on restores them."
       />
       {!owner && (
-        <p className="flex gap-2 text-sm text-fg-secondary">
-          <Lock aria-hidden className="size-4 shrink-0 translate-y-0.5 text-fg-tertiary" />
-          Only owners of this organization can change features.
-        </p>
+        <LockNote>Only owners of this organization can change features.</LockNote>
       )}
       <QueryView query={state} skeleton={<RowsSkeleton rows={8} />}>
         {(data) => (

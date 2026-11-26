@@ -1,4 +1,4 @@
-import { CircleAlert, CircleX } from "lucide-react"
+import { CircleAlert, CircleX, Lock } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const tones = {
@@ -13,5 +13,14 @@ export function Notice({ tone, children }: { tone: keyof typeof tones; children:
       <Icon aria-hidden className={cn("size-4 shrink-0 translate-y-0.5", text)} />
       <span>{children}</span>
     </div>
+  )
+}
+
+export function LockNote({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <p className={cn("flex gap-2 text-sm text-fg-secondary", className)}>
+      <Lock aria-hidden className="size-4 shrink-0 translate-y-0.5 text-fg-tertiary" />
+      <span>{children}</span>
+    </p>
   )
 }
