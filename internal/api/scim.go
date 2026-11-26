@@ -278,6 +278,10 @@ func (s *Server) scimLink(ctx context.Context, tx pgx.Tx, p *providerRow, userID
 			return err
 		case owner != userID:
 			return errSCIMConflict
+		default:
+			if _, err := tx.Exec(ctx, `DELETE FROM user_identities WHERE provider_id = $1 AND user_id = $2 AND subject <> $3`, p.ID, userID, externalID); err != nil {
+				return err
+			}
 		}
 	}
 	return s.linkMailboxForIdentity(ctx, tx, userID, email, true)

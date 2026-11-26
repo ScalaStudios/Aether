@@ -351,3 +351,39 @@ func TestAdministratorSuspensionReplacesProviderSuspension(t *testing.T) {
 		t.Fatalf("after provider then administrator suspension and provider restore: status %s, suspended_by %q", status, by)
 	}
 }
+
+func scimSubjects(t *testing.T, db *pgx.Conn, providerID, userID string) []string {
+	t.Helper()
+	rows, err := db.Query(context.Background(), `SELECT subject FROM user_identities WHERE provider_id = $1 AND user_id = $2 ORDER BY subject`, providerID, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjects, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return subjects
+}
+
+func TestSCIMReplaceKeepsOneSubject(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	slug, providerID, halo := scimClient(t, w, startFakeIssuer(t), false)
+	email, subject := "jo"+randomSuffix()+"@"+w.domain, "halo-"+randomSuffix()
+	var created scimUser
+	halo.must("POST", "/scim/"+slug+"/Users", scimUserBody(email, subject, true), &created, 201)
+	path := "/scim/" + slug + "/Users/" + created.ID
+
+	if _, err := db.Exec(context.Background(), `INSERT INTO user_identities (provider_id, subject, user_id) VALUES ($1, $2, $3)`, providerID, "stale-"+randomSuffix(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	halo.must("PUT", path, scimUserBody(email, subject, true), nil, 200)
+	if got := scimSubjects(t, db, providerID, created.ID); len(got) != 1 || got[0] != subject {
+		t.Fatalf("subjects after PUT with the linked subject: %v", got)
+	}
+	halo.must("PUT", path, scimUserBody(email, subject, true), nil, 200)
+	if got := scimSubjects(t, db, providerID, created.ID); len(got) != 1 || got[0] != subject {
+		t.Fatalf("subjects after a repeated PUT: %v", got)
+	}
+
+}
