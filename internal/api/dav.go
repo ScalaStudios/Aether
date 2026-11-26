@@ -21,6 +21,7 @@ import (
 	"github.com/emersion/go-webdav/caldav"
 	"github.com/emersion/go-webdav/carddav"
 	"github.com/jackc/pgx/v5"
+	"github.com/teambition/rrule-go"
 
 	"github.com/scalastudios/aether/internal/secrets"
 )
@@ -473,7 +474,49 @@ func (b *calendarBackend) QueryCalendarObjects(ctx context.Context, p string, qu
 	if err != nil {
 		return nil, err
 	}
-	return caldav.Filter(query, objs)
+	return filterCalendarObjects(query, objs)
+}
+
+func filterCalendarObjects(query *caldav.CalendarQuery, objs []caldav.CalendarObject) ([]caldav.CalendarObject, error) {
+	if query == nil {
+		return objs, nil
+	}
+	end := queryEnd(query.CompFilter)
+	var kept []caldav.CalendarObject
+	for _, o := range objs {
+		if recurrenceBounded(o.Data, end) {
+			kept = append(kept, o)
+		}
+	}
+	return caldav.Filter(query, kept)
+}
+
+func queryEnd(f caldav.CompFilter) time.Time {
+	end := f.End
+	for _, c := range f.Comps {
+		if e := queryEnd(c); e.After(end) {
+			end = e
+		}
+	}
+	return end
+}
+
+func recurrenceBounded(cal *ical.Calendar, end time.Time) bool {
+	for _, comp := range cal.Children {
+		set, err := comp.RecurrenceSet(time.UTC)
+		if err != nil || set == nil {
+			continue
+		}
+		next, done := set.Iterator(), false
+		for step := 0; step < maxRecurrenceSteps && !done; step++ {
+			t, ok := next()
+			done = !ok || t.After(end)
+		}
+		if !done {
+			return false
+		}
+	}
+	return true
 }
 
 func calendarFields(cal *ical.Calendar) (objectFields, error) {
@@ -500,6 +543,9 @@ func calendarFields(cal *ical.Calendar) (objectFields, error) {
 		}
 		f.Summary, _ = comp.Props.Text(ical.PropSummary)
 		f.Recurring = comp.Props.Get(ical.PropRecurrenceRule) != nil
+		if rule, err := comp.Props.RecurrenceRule(); err == nil && rule != nil && rule.Freq >= rrule.MINUTELY {
+			return f, webdav.NewHTTPError(http.StatusBadRequest, errors.New("events cannot repeat more often than hourly"))
+		}
 		ev := ical.Event{Component: comp}
 		if start, err := ev.DateTimeStart(time.UTC); err == nil && !start.IsZero() {
 			f.StartsAt = &start

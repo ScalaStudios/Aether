@@ -585,6 +585,9 @@ func eventsIn(ctx context.Context, db queryer, calendars []collectionRow, from, 
 	defer rows.Close()
 	out := []calendarEvent{}
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var collectionID, name, data string
 		if err := rows.Scan(&collectionID, &name, &data); err != nil {
 			return nil, err
@@ -597,9 +600,32 @@ func eventsIn(ctx context.Context, db queryer, calendars []collectionRow, from, 
 			e.CalendarID, e.ReadOnly = byID[collectionID].Slug, byID[collectionID].Access == "read" || subs[collectionID]
 			out = append(out, e)
 		}
+		if len(out) >= maxListedEvents {
+			break
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Start.Before(out[j].Start) })
 	return out, rows.Err()
+}
+
+const (
+	maxOccurrences     = 5000
+	maxRecurrenceSteps = 200000
+	maxListedEvents    = 20000
+)
+
+func occurrencesIn(next func() (time.Time, bool), from, to time.Time) []time.Time {
+	var out []time.Time
+	for step := 0; step < maxRecurrenceSteps && len(out) < maxOccurrences; step++ {
+		t, ok := next()
+		if !ok || t.After(to) {
+			break
+		}
+		if !t.Before(from) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func expandObject(name string, cal *ical.Calendar, from, to time.Time) []calendarEvent {
@@ -627,16 +653,13 @@ func expandObject(name string, cal *ical.Calendar, from, to time.Time) []calenda
 			}
 		} else {
 			length := base.End.Sub(base.Start)
-			for _, occurrence := range set.Between(from.Add(-length), to, true) {
+			for _, occurrence := range occurrencesIn(set.Iterator(), from.Add(-length), to) {
 				if overrides[occurrence.Unix()] != nil {
 					continue
 				}
 				o := base
 				o.Start, o.End = occurrence, occurrence.Add(length)
 				out = append(out, o)
-				if len(out) > 5000 {
-					break
-				}
 			}
 		}
 	}

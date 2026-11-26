@@ -127,7 +127,7 @@ func (s *Server) remindEvent(ctx context.Context, now time.Time, collection, own
 			starts = []time.Time{base.Start}
 		}
 	} else {
-		starts = set.Between(from, to, true)
+		starts = occurrencesIn(set.Iterator(), from, to)
 	}
 	for _, start := range starts {
 		if comp := overrides[start.Unix()]; comp != nil {
