@@ -402,3 +402,37 @@ func TestSCIMReplaceKeepsOneSubject(t *testing.T) {
 		}
 	}
 }
+
+func TestSCIMGroupHidesUnreachableMembers(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	f := startFakeIssuer(t)
+	slug, _, halo := scimClient(t, w, f, false)
+	linkToProvider(t, f, slug, "alice@"+w.domain, "bob@"+w.domain)
+	aliceID, bobID := userID(t, w.alice), userID(t, w.bob)
+	var group struct {
+		ID      string `json:"id"`
+		Members []struct {
+			Value string `json:"value"`
+		} `json:"members"`
+	}
+	halo.must("POST", "/scim/"+slug+"/Groups", map[string]any{
+		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}, "displayName": "Crew " + randomSuffix(),
+		"members": []map[string]string{{"value": aliceID}, {"value": bobID}},
+	}, &group, 201)
+	if _, err := db.Exec(context.Background(), `UPDATE users SET is_platform_admin = true WHERE id = $1`, bobID); err != nil {
+		t.Fatal(err)
+	}
+	halo.must("GET", "/scim/"+slug+"/Groups/"+group.ID, nil, &group, 200)
+	if len(group.Members) != 1 || group.Members[0].Value != aliceID {
+		t.Fatalf("group read returned members %+v, want only alice", group.Members)
+	}
+	halo.must("PATCH", "/scim/"+slug+"/Groups/"+group.ID, map[string]any{
+		"schemas":    []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		"Operations": []map[string]any{{"op": "remove", "path": `members[value eq "` + bobID + `"]`}},
+	}, nil, 200)
+	var left bool
+	if err := db.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM directory_group_members WHERE group_id = $1 AND user_id = $2)`, group.ID, bobID).Scan(&left); err != nil || left {
+		t.Fatalf("explicit removal of a hidden member: still a member %v, %v", left, err)
+	}
+}

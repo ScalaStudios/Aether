@@ -59,7 +59,7 @@ func (s *Server) scimGroups(ctx context.Context, p *providerRow, where string, w
 	for i, g := range groups {
 		ids[i] = g.ID
 	}
-	rows, err = s.db.Query(ctx, `SELECT gm.group_id, u.id, u.email FROM directory_group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id::text = ANY($1) ORDER BY u.email`, ids)
+	rows, err = s.db.Query(ctx, `SELECT gm.group_id, u.id, u.email FROM directory_group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id::text = ANY($2) AND `+scimReach+` ORDER BY u.email`, p.ID, ids)
 	if err != nil {
 		return nil, err
 	}
