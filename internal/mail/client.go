@@ -1367,8 +1367,11 @@ func (c *Client) Deliver(address string, raw []byte) error {
 	})
 }
 
-func (c *Client) DeliverInbox(address string, raw []byte) error {
-	return c.with(address, func(ic *imapclient.Client) error {
+func (c *Client) DeliverInbox(ctx context.Context, address string, raw []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*aclCommandTimeout)
+	defer cancel()
+	return c.withBounded(ctx, address, func(ic *imapclient.Client, conn *boundedConn) error {
+		conn.extend()
 		cmd := ic.Append("INBOX", int64(len(raw)), &imap.AppendOptions{Time: time.Now()})
 		if _, err := cmd.Write(raw); err != nil {
 			return err

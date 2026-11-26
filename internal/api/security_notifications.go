@@ -1567,7 +1567,7 @@ func (s *Server) deliverSecurityEmails(ctx context.Context) {
 			s.db.Exec(ctx, `UPDATE security_notification_emails SET status = 'failed', attempts = attempts + 1, last_error = $2 WHERE id = $1`, j.id, truncate(err.Error(), 500))
 			continue
 		}
-		if err := s.mail.DeliverInbox(targetMailbox, raw); err != nil {
+		if err := s.mail.DeliverInbox(ctx, targetMailbox, raw); err != nil {
 			s.log.Warn("delivering security notification email failed", "emailId", j.id, "mailbox", targetMailbox, "err", err)
 			s.retrySecurityEmail(ctx, j.id, j.attempts, err)
 			continue
