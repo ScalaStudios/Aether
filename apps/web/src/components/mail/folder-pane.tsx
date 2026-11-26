@@ -426,7 +426,7 @@ export function FolderPane({
         </Button>
       )}
       <NewslettersDialog open={newslettersOpen} onOpenChange={setNewslettersOpen} mailboxId={active.mailboxId} readOnly={readOnly} />
-      <nav aria-label={t("mail.folders.navLabel")} className="-mx-2 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2">
+      <nav aria-label={t("mail.folders.navLabel")} className="relative -mx-2 flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-2">
         {primary && tree(primary)}
         {shared.map((item) => {
           const unread = item.folders.data?.reduce((n, f) => n + f.unread, 0) ?? 0
