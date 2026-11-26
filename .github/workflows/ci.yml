@@ -9,8 +9,8 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: go.mod
       - run: test -z "$(gofmt -l .)"
@@ -23,8 +23,8 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
           cache: npm
@@ -36,8 +36,8 @@ jobs:
   helm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
       - run: helm lint infrastructure/helm/aether
       - run: helm template ci infrastructure/helm/aether --set mailTLS.certManager.enabled=true > rendered.yaml
       - run: docker run --rm -v "$PWD/rendered.yaml:/r.yaml:ro" ghcr.io/yannh/kubeconform:v0.8.0-alpine -strict -summary -ignore-missing-schemas /r.yaml
@@ -53,7 +53,7 @@ jobs:
       AETHER_ALERT_FROM: alerts@alerts.aether.test
       AETHER_TIKA_URL: http://tika:9998/tika/
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - run: ./scripts/setup.sh dev
       - run: AETHER_IMAP_ADDR=toxiproxy:1143 AETHER_DOVECOT_API_URL=http://toxiproxy:18089 docker compose --profile tika up -d --build --wait --wait-timeout 120 postgres valkey rspamd dovecot postfix toxiproxy tika api mail-events mail-trace
       - run: echo "$AETHER_TEST_ADMIN_PASSWORD" | docker compose exec -T api aether bootstrap-admin --email "$AETHER_TEST_ADMIN_EMAIL" --password-stdin
