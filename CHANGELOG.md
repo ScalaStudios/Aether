@@ -32,6 +32,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Helm network policy admits only the `monitoring` namespace to the API metrics port.
 - Mailbox, alias and sign-in provisioning take a per-address lock, so one address cannot become both a mailbox and an alias.
 - The mail page no longer scrolls as a whole when a shared mailbox lower in the folder list has unread mail; the folder list and message list scroll on their own.
+- At most two password hashes run at once; sign-ins that cannot get a slot within three seconds get `503 busy` instead of queueing.
+- Platform administrators without an organization role can no longer add themselves as a delegate, add forwarding or copy rules, export a mailbox, list its deleted items or review held messages.
+- The last owner check for organization members runs inside the membership transaction, so concurrent changes cannot leave an organization without an owner.
+- IMAP imports read one message at a time, skip messages over the organization's message size limit, and stop when the person who started them loses access to the mailbox.
+- List sender rules apply to list addresses that contain a `+`.
+- Read-only shared mailbox members can cancel only the scheduled messages they created, including after losing the send right.
+- A scheduled message is claimed before it is sent, so a failed cleanup cannot send it twice.
+- Webhooks are delivered in their own loop, concurrently, with per-webhook and per-organization limits, so a slow endpoint no longer holds up other organizations or scheduled sends.
+- The architecture documentation states that rate limits refuse requests while Valkey is unreachable.
 
 ## 0.2.0 - 2026-11-25
 
