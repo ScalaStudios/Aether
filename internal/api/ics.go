@@ -22,6 +22,7 @@ import (
 const (
 	maxImportBytes   = 10 << 20
 	maxImportObjects = 5000
+	maxObservances   = 400
 )
 
 func newCalendar() *ical.Calendar {
@@ -88,18 +89,30 @@ func vtimezone(id string, loc *time.Location, from, to int) *ical.Component {
 	tz := ical.NewComponent(ical.CompTimezone)
 	tz.Props.SetText(ical.PropTimezoneID, id)
 	t := time.Date(min(from, to), 1, 1, 0, 0, 0, 0, loc)
-	for {
+	for i := 0; i < 50*maxObservances && len(tz.Children) < maxObservances; i++ {
 		_, next := t.ZoneBounds()
 		if next.IsZero() || next.Year() > to {
 			break
 		}
-		tz.Children = append(tz.Children, observance(t, next, next.Year() == to))
+		if !next.After(t) {
+			t = t.Add(time.Hour)
+			continue
+		}
+		if !sameZone(t, next) {
+			tz.Children = append(tz.Children, observance(t, next, next.Year() == to))
+		}
 		t = next
 	}
 	if len(tz.Children) == 0 {
 		tz.Children = append(tz.Children, observance(t, t, false))
 	}
 	return tz
+}
+
+func sameZone(a, b time.Time) bool {
+	an, ao := a.Zone()
+	bn, bo := b.Zone()
+	return an == bn && ao == bo && a.IsDST() == b.IsDST()
 }
 
 func observance(before, at time.Time, repeat bool) *ical.Component {
