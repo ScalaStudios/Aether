@@ -314,6 +314,7 @@ func cancelInstance(cal *ical.Calendar, comp *ical.Component) {
 }
 
 func encodeCalendar(cal *ical.Calendar) (string, objectFields, error) {
+	addTimezones(cal)
 	f, err := calendarFields(cal)
 	if err != nil {
 		return "", f, err

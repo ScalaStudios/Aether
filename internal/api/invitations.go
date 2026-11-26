@@ -268,6 +268,7 @@ func (s *Server) eventByUID(ctx context.Context, userID, uid string) (*storedEve
 }
 
 func (s *Server) storeEvent(ctx context.Context, collectionID, name string, cal *ical.Calendar, ifMatch string) error {
+	addTimezones(cal)
 	f, err := calendarFields(cal)
 	if err != nil {
 		return err

@@ -918,6 +918,7 @@ func (s *Server) bookMeeting(w http.ResponseWriter, r *http.Request) {
 	event.Props.Add(&attendee)
 	doc := newCalendar()
 	doc.Children = append(doc.Children, event.Component)
+	addTimezones(doc)
 	fields, err := calendarFields(doc)
 	if err != nil {
 		s.davError(w, r, err)

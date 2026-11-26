@@ -59,3 +59,49 @@ func TestJMAPMovingSeriesReanchorsExceptions(t *testing.T) {
 		}
 	}
 }
+
+func TestResourceBookingsStoreTimezones(t *testing.T) {
+	request, err := ical.NewDecoder(strings.NewReader(strings.ReplaceAll(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:test
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:room
+DTSTAMP:20260101T000000Z
+DTSTART;TZID=America/Chicago:20261019T090000
+DTEND;TZID=America/Chicago:20261019T100000
+RRULE:FREQ=WEEKLY
+SUMMARY:Room booking
+END:VEVENT
+END:VCALENDAR
+`, "\n", "\r\n"))).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := bookingDocument(request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _, err := encodeCalendar(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(data, "BEGIN:VTIMEZONE\r\nTZID:America/Chicago\r\n") || !strings.Contains(data, "TZOFFSETTO:-0600") {
+		t.Fatalf("booking stored without its time zone:\n%s", data)
+	}
+	stored, err := ical.NewDecoder(strings.NewReader(data)).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, _ := cloneCalendar(request)
+	instance := masterEvent(cancelled)
+	instance.Props.Set(&ical.Prop{Name: ical.PropRecurrenceID, Value: "20261026T090000", Params: ical.Params{ical.ParamTimezoneID: {"America/Chicago"}}})
+	cancelInstance(stored, instance)
+	again, _, err := encodeCalendar(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(again, "BEGIN:VTIMEZONE") != 1 {
+		t.Fatalf("cancelled booking has %d time zones:\n%s", strings.Count(again, "BEGIN:VTIMEZONE"), again)
+	}
+}
