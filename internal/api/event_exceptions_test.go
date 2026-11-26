@@ -35,14 +35,15 @@ func TestJMAPMovingSeriesReanchorsExceptions(t *testing.T) {
 		patch map[string]any
 		kept  bool
 	}{
-		"title only":      {map[string]any{"title": "Renamed"}, true},
-		"same start":      {map[string]any{"start": "2026-10-19T09:00:00"}, true},
-		"new duration":    {map[string]any{"duration": "PT2H"}, true},
-		"start next day":  {map[string]any{"start": "2026-10-20T09:00:00"}, false},
-		"other time zone": {map[string]any{"timeZone": "America/New_York"}, false},
-		"different rule":  {map[string]any{"recurrenceRules": []any{map[string]any{"frequency": "daily"}}}, false},
-		"rule removed":    {map[string]any{"recurrenceRules": nil}, false},
-		"becomes all day": {map[string]any{"start": "2026-10-19", "showWithoutTime": true, "duration": "P1D"}, false},
+		"title only":              {map[string]any{"title": "Renamed"}, true},
+		"same start":              {map[string]any{"start": "2026-10-19T09:00:00"}, true},
+		"new duration":            {map[string]any{"duration": "PT2H"}, true},
+		"start next day":          {map[string]any{"start": "2026-10-20T09:00:00"}, false},
+		"other time zone":         {map[string]any{"timeZone": "America/New_York"}, false},
+		"same instant other zone": {map[string]any{"timeZone": "Africa/Johannesburg"}, false},
+		"different rule":          {map[string]any{"recurrenceRules": []any{map[string]any{"frequency": "daily"}}}, false},
+		"rule removed":            {map[string]any{"recurrenceRules": nil}, false},
+		"becomes all day":         {map[string]any{"start": "2026-10-19", "showWithoutTime": true, "duration": "P1D"}, false},
 	} {
 		cal, err := ical.NewDecoder(strings.NewReader(strings.ReplaceAll(seriesWithExceptions, "\n", "\r\n"))).Decode()
 		if err != nil {

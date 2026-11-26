@@ -762,8 +762,11 @@ func rescheduleEvent(cal *ical.Calendar, comp *ical.Component, patch map[string]
 	schedule := func() string {
 		start, _ := (&ical.Event{Component: comp}).DateTimeStart(time.UTC)
 		out := start.UTC().Format(time.RFC3339)
-		if p := comp.Props.Get(ical.PropDateTimeStart); p != nil && p.ValueType() == ical.ValueDate {
-			out += " date"
+		if p := comp.Props.Get(ical.PropDateTimeStart); p != nil {
+			out += " " + p.Params.Get(ical.ParamTimezoneID)
+			if p.ValueType() == ical.ValueDate {
+				out += " date"
+			}
 		}
 		if p := comp.Props.Get(ical.PropRecurrenceRule); p != nil {
 			out += " " + p.Value
