@@ -301,12 +301,25 @@ func bookingDocument(request *ical.Calendar, stored *storedBooking) (*ical.Calen
 	return doc, nil
 }
 
-func cancelInstance(cal *ical.Calendar, comp *ical.Component) {
+func cancelInstance(cal, source *ical.Calendar, comp *ical.Component) {
 	rid := comp.Props.Get(ical.PropRecurrenceID).Value
+	have := map[string]bool{}
 	kept := cal.Children[:0]
 	for _, c := range cal.Children {
+		if c.Name == ical.CompTimezone {
+			id, _ := c.Props.Text(ical.PropTimezoneID)
+			have[id] = true
+		}
 		if p := c.Props.Get(ical.PropRecurrenceID); c.Name != ical.CompEvent || p == nil || p.Value != rid {
 			kept = append(kept, c)
+		}
+	}
+	needed := referencedTZIDs([]*ical.Component{comp})
+	for _, c := range source.Children {
+		id, _ := c.Props.Text(ical.PropTimezoneID)
+		if _, ok := needed[id]; ok && c.Name == ical.CompTimezone && !have[id] {
+			kept = append(kept, c)
+			have[id] = true
 		}
 	}
 	comp.Props.SetText(ical.PropStatus, "CANCELLED")
@@ -466,7 +479,7 @@ func (s *Server) cancelResourceBooking(ctx context.Context, r *resource, organiz
 				if err != nil {
 					return err
 				}
-				cancelInstance(stored.Cal, masterEvent(cancelled))
+				cancelInstance(stored.Cal, cancelled, masterEvent(cancelled))
 				data, f, err := encodeCalendar(stored.Cal)
 				if err != nil {
 					return err

@@ -124,7 +124,7 @@ func TestBookingDocumentMergesOverrides(t *testing.T) {
 		t.Fatalf("the moved occurrence should replace the regular one: %+v", occ)
 	}
 	cancel := decodeTestCalendar(t, "BEGIN:VEVENT", "UID:weekly", "DTSTAMP:20260101T000000Z", "RECURRENCE-ID:20260119T090000Z", "DTSTART:20260119T090000Z", "SUMMARY:Standup", "END:VEVENT")
-	cancelInstance(doc, masterEvent(cancel))
+	cancelInstance(doc, cancel, masterEvent(cancel))
 	if occ := room.occurrences(doc, time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC)); len(occ) != 2 {
 		t.Fatalf("a cancelled occurrence must free the room: %+v", occ)
 	}

@@ -495,7 +495,7 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 			}
 			break
 		}
-		cancelInstance(stored.Cal, comp)
+		cancelInstance(stored.Cal, cal, comp)
 		if err := s.storeEvent(ctx, stored.CollectionID, stored.Name, stored.Cal, stored.ETag); err != nil {
 			s.davError(w, r, err)
 			return

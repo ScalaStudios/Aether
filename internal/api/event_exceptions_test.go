@@ -99,7 +99,7 @@ END:VCALENDAR
 	cancelled, _ := cloneCalendar(request)
 	instance := masterEvent(cancelled)
 	instance.Props.Set(&ical.Prop{Name: ical.PropRecurrenceID, Value: "20261026T090000", Params: ical.Params{ical.ParamTimezoneID: {"America/Chicago"}}})
-	cancelInstance(stored, instance)
+	cancelInstance(stored, cancelled, instance)
 	again, _, err := encodeCalendar(stored)
 	if err != nil {
 		t.Fatal(err)
@@ -131,5 +131,26 @@ func TestBookingPageEventUsesPageTimezone(t *testing.T) {
 	}
 	if got, _ := (&ical.Event{Component: event}).DateTimeStart(time.UTC); !got.Equal(start) {
 		t.Errorf("start moved to %s", got)
+	}
+}
+
+func TestCancelledInstanceKeepsItsCustomTimezone(t *testing.T) {
+	stored := decodeTestCalendar(t, "BEGIN:VEVENT", "UID:weekly", "DTSTAMP:20260101T000000Z", "DTSTART:20260105T080000Z", "RRULE:FREQ=WEEKLY", "SUMMARY:Standup", "END:VEVENT")
+	cancel := decodeTestCalendar(t,
+		"BEGIN:VTIMEZONE", "TZID:W. Europe Standard Time", "BEGIN:STANDARD", "DTSTART:16010101T000000", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0100", "END:STANDARD", "END:VTIMEZONE",
+		"BEGIN:VTIMEZONE", "TZID:Unused Zone", "BEGIN:STANDARD", "DTSTART:16010101T000000", "TZOFFSETFROM:+0300", "TZOFFSETTO:+0300", "END:STANDARD", "END:VTIMEZONE",
+		"BEGIN:VEVENT", "UID:weekly", "DTSTAMP:20260101T000000Z", "RECURRENCE-ID;TZID=W. Europe Standard Time:20260112T090000", "DTSTART;TZID=W. Europe Standard Time:20260112T090000", "SUMMARY:Standup", "END:VEVENT")
+	for range 2 {
+		cancelInstance(stored, cancel, masterEvent(cancel))
+		zones := map[string]int{}
+		for _, c := range stored.Children {
+			if c.Name == ical.CompTimezone {
+				id, _ := c.Props.Text(ical.PropTimezoneID)
+				zones[id]++
+			}
+		}
+		if zones["W. Europe Standard Time"] != 1 || zones["Unused Zone"] != 0 {
+			t.Fatalf("time zones after cancelling: %v", zones)
+		}
 	}
 }
