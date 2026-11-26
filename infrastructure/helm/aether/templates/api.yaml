@@ -58,8 +58,9 @@ spec:
             - { name: AETHER_MESSAGE_SIZE_LIMIT, value: {{ .Values.messageSizeLimit | quote }} }
             - { name: AETHER_MAX_LINK_BYTES, value: {{ .Values.maxLinkBytes | quote }} }
             - { name: AETHER_MAX_STORAGE_BYTES, value: {{ .Values.maxStorageBytes | quote }} }
-            {{- $mem := .Values.resources.api.limits.memory | toString }}
-            {{- $mi := ternary (mul (trimSuffix "Gi" $mem | atoi) 1024) (trimSuffix "Mi" $mem | atoi) (hasSuffix "Gi" $mem) }}
+            {{- $mem := dig "limits" "memory" "" (.Values.resources.api | default dict) | toString }}
+            {{- $mi := 0 }}
+            {{- if regexMatch "^[0-9]+Gi$" $mem }}{{- $mi = mul (trimSuffix "Gi" $mem | atoi) 1024 }}{{- else if regexMatch "^[0-9]+Mi$" $mem }}{{- $mi = trimSuffix "Mi" $mem | atoi }}{{- end }}
             {{- if gt $mi 0 }}
             - { name: GOMEMLIMIT, value: {{ printf "%dMiB" (div (mul $mi 9) 10) | quote }} }
             {{- end }}
