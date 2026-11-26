@@ -156,6 +156,15 @@ func (s *Server) saveRules(w http.ResponseWriter, r *http.Request, p *principal)
 		s.internalError(w, r, err)
 		return
 	}
+	if m.PlatformOnly {
+		existing := forwardDestinations(before)
+		for addr := range forwardDestinations(rules) {
+			if _, ok := existing[addr]; !ok {
+				forbidden(w)
+				return
+			}
+		}
+	}
 	if !s.installSieve(w, r, p, m, rules, reply, nonNil(rules)) {
 		return
 	}

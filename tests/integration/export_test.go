@@ -74,8 +74,11 @@ func TestMailboxExportAndDeletion(t *testing.T) {
 		t.Fatalf("archive missing mail=%v calendar=%v contacts=%v files=%v", sawMail, sawCalendar, sawContact, names)
 	}
 
-	w.admin.must("POST", "/mailboxes/"+w.bobMailbox+"/exports", map[string]any{"format": "mbox", "includeCalendar": false, "includeContacts": false}, nil, 202)
-	waitExport(t, w.admin, w.bobMailbox)
+	mbox := map[string]any{"format": "mbox", "includeCalendar": false, "includeContacts": false}
+	w.admin.must("POST", "/mailboxes/"+w.bobMailbox+"/exports", mbox, nil, 403)
+	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": alice, "role": "admin"}, nil, 204)
+	w.alice.must("POST", "/mailboxes/"+w.bobMailbox+"/exports", mbox, nil, 202)
+	waitExport(t, w.alice, w.bobMailbox)
 	var events []struct {
 		Action string `json:"action"`
 	}

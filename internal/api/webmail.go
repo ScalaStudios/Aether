@@ -22,6 +22,7 @@ type ownedMailbox struct {
 	DisplayName          string
 	Kind, Access         string
 	SendAs, SendOnBehalf bool
+	PlatformOnly         bool
 }
 
 func (s *Server) accessibleMailbox(ctx context.Context, id, userID string) (*ownedMailbox, string, error) {

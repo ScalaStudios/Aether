@@ -108,6 +108,10 @@ func (s *Server) addDelegate(w http.ResponseWriter, r *http.Request, p *principa
 		writeError(w, http.StatusUnprocessableEntity, "already_owner", "This person already owns the mailbox.")
 		return
 	}
+	if d.UserID == p.User.ID && p.User.IsPlatformAdmin && !p.memberCan(m.OrgID, m.DomainID, permMailboxesDelegates) {
+		forbidden(w)
+		return
+	}
 	var existed, lowered, elevated bool
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
 		var prevAccess string
@@ -198,7 +202,13 @@ func (s *Server) managedMailbox(w http.ResponseWriter, r *http.Request, p *princ
 	write := r.Method != http.MethodGet && r.Method != http.MethodHead
 	if err == nil && p.canManageMailboxSettings(m.OrgID, m.DomainID, write) {
 		m.SendAs = true
-		return m, true
+		if !p.User.IsPlatformAdmin || p.memberCan(m.OrgID, m.DomainID, permMailboxesSettings) {
+			return m, true
+		}
+		if _, _, err := s.accessibleMailbox(r.Context(), m.ID, p.User.ID); err != nil {
+			m.PlatformOnly = true
+			return m, true
+		}
 	}
 	if p.apiKey != nil {
 		notFound(w)

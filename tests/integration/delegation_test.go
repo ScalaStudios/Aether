@@ -253,3 +253,24 @@ func TestTokenDelegatedSessionsEndOnRevocation(t *testing.T) {
 		}
 	}
 }
+
+func TestPlatformAdminCannotReachMail(t *testing.T) {
+	w := setupWorld(t)
+	admin, alice := env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "alice@"+w.domain
+	members := "/organizations/" + w.orgID + "/members"
+	bob := "/mailboxes/" + w.bobMailbox
+	forward := []map[string]any{{
+		"name": "Out", "enabled": true, "match": "all", "conditions": []map[string]string{{"field": "subject", "contains": "copy"}},
+		"actions": map[string]any{"forwardTo": []string{"someone@elsewhere.test"}},
+	}}
+
+	w.admin.must("POST", members, map[string]string{"email": admin, "role": "member"}, nil, 204)
+	w.admin.must("POST", bob+"/delegates", map[string]any{"email": admin}, nil, 403)
+	w.admin.must("PUT", bob+"/rules", forward, nil, 403)
+	w.admin.must("PUT", bob+"/rules", []map[string]any{}, nil, 200)
+	w.admin.must("POST", bob+"/delegates", map[string]any{"email": alice, "access": "read"}, nil, 200)
+
+	w.admin.must("POST", members, map[string]string{"email": alice, "role": "owner"}, nil, 204)
+	w.alice.must("PUT", bob+"/rules", forward, nil, 200)
+	w.alice.must("POST", bob+"/delegates", map[string]any{"email": admin}, nil, 200)
+}
