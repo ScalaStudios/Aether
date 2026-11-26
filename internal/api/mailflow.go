@@ -45,7 +45,7 @@ func (s *Server) listFlowRules(w http.ResponseWriter, r *http.Request, p *princi
 	writeJSON(w, http.StatusOK, nonNil(rules))
 }
 
-func (s *Server) decodeFlowRule(w http.ResponseWriter, r *http.Request, orgID string) (*mailflow.Rule, bool) {
+func (s *Server) decodeFlowRule(w http.ResponseWriter, r *http.Request, p *principal, orgID string) (*mailflow.Rule, bool) {
 	var in mailflow.Rule
 	if !decode(w, r, 256<<10, &in) {
 		return nil, false
@@ -56,6 +56,10 @@ func (s *Server) decodeFlowRule(w http.ResponseWriter, r *http.Request, orgID st
 	}
 	if err := in.Validate(); err != nil {
 		return fail(err.Error())
+	}
+	if !p.memberAdmin(orgID) && (len(in.Actions.Bcc) > 0 || len(in.Actions.RedirectTo) > 0 || slices.Contains(in.Actions.Approvers, strings.ToLower(p.User.Email))) {
+		forbidden(w)
+		return nil, false
 	}
 	if d := in.Actions.Disclaimer; d != nil && d.HTML != "" {
 		d.HTML = mailpkg.SanitizeHTML(d.HTML)
@@ -105,7 +109,7 @@ func (s *Server) createFlowRule(w http.ResponseWriter, r *http.Request, p *princ
 	if !ok {
 		return
 	}
-	in, ok := s.decodeFlowRule(w, r, orgID)
+	in, ok := s.decodeFlowRule(w, r, p, orgID)
 	if !ok {
 		return
 	}
@@ -139,7 +143,7 @@ func (s *Server) updateFlowRule(w http.ResponseWriter, r *http.Request, p *princ
 	if !ok {
 		return
 	}
-	in, ok := s.decodeFlowRule(w, r, orgID)
+	in, ok := s.decodeFlowRule(w, r, p, orgID)
 	if !ok {
 		return
 	}
@@ -291,7 +295,12 @@ func (s *Server) listHeld(w http.ResponseWriter, r *http.Request, where string, 
 }
 
 func (s *Server) listOrgHeld(w http.ResponseWriter, r *http.Request, p *principal) {
-	if orgID, ok := s.orgFromPath(w, r, p, true); ok {
+	orgID, ok := s.orgFromPath(w, r, p, true)
+	if ok && !p.memberAdmin(orgID) {
+		forbidden(w)
+		return
+	}
+	if ok {
 		s.listHeld(w, r, `org_id = $1`, orgID)
 	}
 }
@@ -324,7 +333,7 @@ func (s *Server) decideHeld(w http.ResponseWriter, r *http.Request, p *principal
 		if err != nil {
 			return err
 		}
-		if !p.canAdminOrg(orgID) && (p.apiKey != nil || p.orgRole(orgID) == "" || !slices.Contains(approvers, strings.ToLower(p.User.Email))) {
+		if !p.memberAdmin(orgID) && (p.apiKey != nil || p.orgRole(orgID) == "" || !slices.Contains(approvers, strings.ToLower(p.User.Email))) {
 			return pgx.ErrNoRows
 		}
 		status := "rejected"

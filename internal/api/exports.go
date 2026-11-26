@@ -74,8 +74,7 @@ func (s *Server) mailboxForExport(w http.ResponseWriter, r *http.Request, p *pri
 		s.internalError(w, r, err)
 		return nil, false, false
 	}
-	role := p.grants[m.OrgID].Role
-	admin := role == roleOwner || role == roleAdmin
+	admin := p.memberAdmin(m.OrgID)
 	_, _, accessErr := s.accessibleMailbox(r.Context(), m.ID, p.User.ID)
 	ownerDuringGrace := m.OwnerUserID != nil && *m.OwnerUserID == p.User.ID && m.PurgeAfter != nil
 	switch {

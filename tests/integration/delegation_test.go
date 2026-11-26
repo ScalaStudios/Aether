@@ -268,6 +268,12 @@ func TestPlatformAdminCannotReachMail(t *testing.T) {
 	w.admin.must("POST", bob+"/delegates", map[string]any{"email": admin}, nil, 403)
 	w.admin.must("PUT", bob+"/rules", forward, nil, 403)
 	w.admin.must("PUT", bob+"/rules", []map[string]any{}, nil, 200)
+	w.admin.must("GET", bob+"/recoverable", nil, nil, 403)
+	flow := "/organizations/" + w.orgID + "/mail-flow"
+	for _, actions := range []map[string]any{{"bcc": []string{admin}}, {"redirectTo": []string{"someone@elsewhere.test"}}, {"approvers": []string{admin}}} {
+		w.admin.must("POST", flow+"/rules", map[string]any{"name": "Copy", "mode": "enforce", "conditions": []map[string]any{{"field": "subject", "values": []string{"copy"}}}, "actions": actions}, nil, 403)
+	}
+	w.admin.must("GET", flow+"/held", nil, nil, 403)
 	w.admin.must("POST", bob+"/delegates", map[string]any{"email": alice, "access": "read"}, nil, 200)
 
 	w.admin.must("POST", members, map[string]string{"email": alice, "role": "owner"}, nil, 204)

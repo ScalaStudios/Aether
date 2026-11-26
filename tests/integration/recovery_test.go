@@ -105,6 +105,10 @@ func TestRecoverDeletedItems(t *testing.T) {
 		t.Fatalf("restoring %q by its owner: %+v", trashed, restored)
 	}
 
+	if code := w.admin.do("GET", recoverable, nil, nil); code != 403 {
+		t.Fatalf("platform administrator without an organization role listed deleted items: %d", code)
+	}
+	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "role": "admin"}, nil, 204)
 	byAdmin := list(w.admin)
 	if len(byAdmin.Items) != 1 || byAdmin.Items[0].Subject != phone {
 		t.Fatalf("administrator sees %+v", byAdmin.Items)

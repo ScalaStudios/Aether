@@ -17,6 +17,10 @@ func (s *Server) listRecoverable(w http.ResponseWriter, r *http.Request, p *prin
 	if !ok {
 		return
 	}
+	if m.PlatformOnly {
+		forbidden(w)
+		return
+	}
 	var days int
 	if err := s.db.QueryRow(r.Context(), `SELECT deleted_item_retention_days FROM organizations WHERE id = $1`, m.OrgID).Scan(&days); err != nil {
 		s.internalError(w, r, err)

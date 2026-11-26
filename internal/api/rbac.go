@@ -272,6 +272,11 @@ func (p *principal) memberCan(orgID, domainID, perm string) bool {
 	return ok && g.Perms[perm] && (!g.DomainScoped || slices.Contains(g.DomainIDs, domainID))
 }
 
+func (p *principal) memberAdmin(orgID string) bool {
+	role := p.grants[orgID].Role
+	return role == roleOwner || role == roleAdmin
+}
+
 func (p *principal) orgRole(orgID string) string {
 	g, ok := p.orgGrant(orgID)
 	if !ok {
