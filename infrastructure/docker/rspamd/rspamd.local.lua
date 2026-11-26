@@ -198,13 +198,15 @@ local hosted_from = rspamd_config:register_symbol({
     if not domain then
       return
     end
-    local envelope = (task:get_from({ 'smtp', 'orig' }) or {})[1] or {}
-    if task:has_symbol('R_SPF_ALLOW') and org_domain(envelope.domain ~= '' and envelope.domain or task:get_helo()) == domain then
-      return
-    end
-    for _, res in ipairs(task:get_dkim_results() or {}) do
-      if res.result == 'allow' and org_domain(res.domain) == domain then
+    if not (task:has_symbol('DMARC_POLICY_REJECT') or task:has_symbol('DMARC_POLICY_QUARANTINE') or task:has_symbol('DMARC_POLICY_SOFTFAIL')) then
+      local envelope = (task:get_from({ 'smtp', 'orig' }) or {})[1] or {}
+      if task:has_symbol('R_SPF_ALLOW') and org_domain(envelope.domain ~= '' and envelope.domain or task:get_helo()) == domain then
         return
+      end
+      for _, res in ipairs(task:get_dkim_results() or {}) do
+        if res.result == 'allow' and org_domain(res.domain) == domain then
+          return
+        end
       end
     end
     local upstream = api_upstream()
@@ -282,7 +284,7 @@ rspamd_config:register_symbol({
 local lua_mime = require "lua_mime"
 local aether_auth_checks = {
   { 'spf', { { 'R_SPF_ALLOW', 'pass' }, { 'R_SPF_FAIL', 'fail' }, { 'R_SPF_SOFTFAIL', 'softfail' }, { 'R_SPF_NEUTRAL', 'neutral' }, { 'R_SPF_DNSFAIL', 'temperror' }, { 'R_SPF_PERMFAIL', 'permerror' } } },
-  { 'dmarc', { { 'DMARC_POLICY_ALLOW', 'pass' }, { 'DMARC_POLICY_ALLOW_WITH_FAILURES', 'pass' }, { 'DMARC_POLICY_REJECT', 'fail' }, { 'DMARC_POLICY_QUARANTINE', 'fail' }, { 'DMARC_POLICY_SOFTFAIL', 'fail' }, { 'DMARC_BAD_POLICY', 'permerror' }, { 'DMARC_DNSFAIL', 'temperror' }, { 'AETHER_HOSTED_FROM_JUNK', 'fail' } } },
+  { 'dmarc', { { 'AETHER_HOSTED_FROM_JUNK', 'fail' }, { 'DMARC_POLICY_ALLOW', 'pass' }, { 'DMARC_POLICY_ALLOW_WITH_FAILURES', 'pass' }, { 'DMARC_POLICY_REJECT', 'fail' }, { 'DMARC_POLICY_QUARANTINE', 'fail' }, { 'DMARC_POLICY_SOFTFAIL', 'fail' }, { 'DMARC_BAD_POLICY', 'permerror' }, { 'DMARC_DNSFAIL', 'temperror' } } },
 }
 local aether_dkim_results = { allow = 'pass', reject = 'fail', tempfail = 'temperror', permerror = 'permerror', permfail = 'permerror', ['bad record'] = 'permerror' }
 
