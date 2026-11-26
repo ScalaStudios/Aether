@@ -71,8 +71,6 @@ spec:
             {{- include "aether.secretEnv" (dict "env" "AETHER_POSTFIX_API_KEY" "key" "postfixApiKey" "optional" true "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_VALKEY_PASSWORD" "key" "valkeyPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_RSPAMD_CONTROLLER_PASSWORD" "key" "rspamdControllerPassword" "root" .) | nindent 12 }}
-            {{- include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) | nindent 12 }}
-            {{- include "aether.secretEnv" (dict "env" "AETHER_SIEVE_RELAY_PASSWORD" "key" "sieveRelayPassword" "root" .) | nindent 12 }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
