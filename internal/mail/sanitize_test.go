@@ -261,3 +261,20 @@ func TestTextPreview(t *testing.T) {
 		t.Errorf("garbage preview %q", got)
 	}
 }
+
+func TestSanitizeDropsRelativeLinks(t *testing.T) {
+	in := `<a href="/api/v1/me">a</a><a href="//evil.example/x">b</a><a href="../settings">c</a><a href="https://example.com">ok</a><img src="//cdn.example/logo.png">`
+	for name, out := range map[string]string{"html": SanitizeHTML(in), "message": SanitizeMessageHTML(in), "preview": SanitizePreviewHTML(in)} {
+		for _, banned := range []string{"/api/v1/me", "evil.example", "../settings"} {
+			if strings.Contains(out, banned) {
+				t.Errorf("%s: kept %q: %s", name, banned, out)
+			}
+		}
+	}
+	out := SanitizeMessageHTML(in)
+	for _, kept := range []string{`href="https://example.com"`, `src="https://cdn.example/logo.png"`} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("message: lost %q: %s", kept, out)
+		}
+	}
+}

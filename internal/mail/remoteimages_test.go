@@ -91,3 +91,10 @@ func TestPresentRemoteImages(t *testing.T) {
 		t.Fatalf("hidden = %+v %s", hiddenStats, hidden)
 	}
 }
+
+func TestPresentRemoteImagesProxiesProtocolRelative(t *testing.T) {
+	out, stats := PresentRemoteImages(`<img src="//cdn.example/logo.png">`, true, func(string) (string, bool) { return "/api/v1/image-proxy/x", true })
+	if stats.Remote != 1 || !strings.Contains(out, `src="/api/v1/image-proxy/x"`) {
+		t.Fatalf("protocol-relative image not proxied: %v %s", stats, out)
+	}
+}

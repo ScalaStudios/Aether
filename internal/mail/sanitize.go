@@ -5,6 +5,7 @@ import (
 	"html"
 	"io"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
@@ -28,11 +29,11 @@ func newHTMLPolicy(links, keepRemoteImages bool) *bluemonday.Policy {
 		"width", "max-width", "min-width", "height", "max-height", "display",
 	).Globally()
 	p.AllowURLSchemes("mailto", "http", "https")
+	p.AllowRelativeURLs(false)
 	if !links {
 		for _, scheme := range []string{"mailto", "http", "https"} {
 			p.AllowURLSchemeWithCustomPolicy(scheme, func(*url.URL) bool { return false })
 		}
-		p.AllowRelativeURLs(false)
 	}
 	p.RequireNoReferrerOnLinks(true)
 	p.AddTargetBlankToFullyQualifiedLinks(true)
@@ -97,6 +98,8 @@ func clip(s string, limit int) string {
 	return s
 }
 
+var protocolRelativeSrc = regexp.MustCompile(`(?i)(\ssrc\s*=\s*["']?\s*)//`)
+
 func SanitizeMessageHTML(html string) string {
-	return messageHTMLPolicy.Sanitize(html)
+	return messageHTMLPolicy.Sanitize(protocolRelativeSrc.ReplaceAllString(html, "${1}https://"))
 }
