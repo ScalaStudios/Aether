@@ -4,6 +4,14 @@ All notable changes to Aether are recorded in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 1.0, a minor version may change the API or the configuration; the notes for that version say how.
 
+## Unreleased
+
+### Fixed
+
+- Opening a folder or the folder list no longer fails with a 502, or a false "folder no longer exists", when a change to delegate access ends the mailbox's mail sessions during the request. The read is retried once on a new connection.
+- SMTP TLS reports read the rotated Postfix logs again. `postfix logrotate` compresses old logs readable by root only, so the API skipped every day but the current one; the Postfix container now makes them readable when it starts and after each rotation.
+- The storage check updates only mailboxes whose usage changed, so it no longer locks every mailbox row each run and holds up the shared mailbox access sync.
+
 ## 0.2.0 - 2026-11-25
 
 ### Added
@@ -133,7 +141,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Field labels in the web app use the 12px label size again, the same as group legends. Class merging dropped the custom `text-label`, `text-h1`, `text-h2` and `text-h3` sizes whenever a text color class came after them.
 - Inbound mail is queued and retried while Dovecot is restarting, and report mail while the API is restarting. Postfix used to bounce it with `5.4.4 Host or domain name not found` once the stopped container's name disappeared from Docker DNS; LMTP lookup failures now defer with `4.4.4`.
 - With Docker Compose, Dovecot restarts when a `docker compose up` that includes it, such as a plain `docker compose up -d`, recreates the API. Dovecot kept connecting to the old API container's address, so the sign-in policy let blocked addresses in and IMAP mailbox audit events were lost until Dovecot was restarted by hand.
-- Opening a folder or the folder list no longer fails with a 502, or a false "folder no longer exists", when a change to delegate access ends the mailbox's mail sessions during the request. The read is retried once on a new connection.
 
 ### Upgrade notes
 
