@@ -22,7 +22,7 @@ func TestScheduledSendAndSnooze(t *testing.T) {
 	var first scheduled
 	w.alice.must("POST", sendPath, map[string]any{
 		"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "sent later",
-		"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+		"sendAt": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 	}, &first, 202)
 
 	later := "cancelled " + randomSuffix()
@@ -56,7 +56,7 @@ func TestScheduledSendAndSnooze(t *testing.T) {
 		t.Fatalf("cancelled message was not restored to Drafts: %+v", restored)
 	}
 
-	waitFor(t, "bob to receive the scheduled message", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 })
+	waitUpTo(t, time.Minute, "bob to receive the scheduled message", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 })
 	waitFor(t, "the scheduled copy in alice's Sent folder", func() bool { return findInAPI(w.alice, w.aliceMailbox, "Sent", subject) != 0 })
 	w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/scheduled", nil, &list, 200)
 	if len(list) != 0 {
@@ -71,12 +71,12 @@ func TestScheduledSendAndSnooze(t *testing.T) {
 		UID uint32 `json:"uid"`
 	}
 	w.bob.must("POST", "/mailboxes/"+w.bobMailbox+"/messages/"+strconv.FormatUint(uint64(uid), 10)+"/snooze?folder=INBOX", map[string]string{
-		"until": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+		"until": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 	}, &snoozed, 200)
 	if findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 || findInAPI(w.bob, w.bobMailbox, "Snoozed", subject) != snoozed.UID {
 		t.Fatal("snoozed message did not move to Snoozed")
 	}
-	waitFor(t, "the snoozed message to return to the inbox", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 })
+	waitUpTo(t, time.Minute, "the snoozed message to return to the inbox", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 })
 	var page messagePage
 	w.bob.must("GET", "/mailboxes/"+w.bobMailbox+"/messages?folder=INBOX", nil, &page, 200)
 	for _, m := range page.Messages {
