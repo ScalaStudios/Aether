@@ -154,3 +154,22 @@ func TestCancelledInstanceKeepsItsCustomTimezone(t *testing.T) {
 		}
 	}
 }
+
+func TestInstanceUpdateKeepsSuppliedTimezone(t *testing.T) {
+	stored := decodeTestCalendar(t, "BEGIN:VEVENT", "UID:weekly", "DTSTAMP:20260101T000000Z", "DTSTART;TZID=America/Chicago:20260105T090000", "RRULE:FREQ=WEEKLY", "SUMMARY:Standup", "END:VEVENT")
+	addTimezones(stored)
+	request := decodeTestCalendar(t,
+		"BEGIN:VTIMEZONE", "TZID:America/Chicago", "BEGIN:STANDARD", "DTSTART:19701101T020000", "TZOFFSETFROM:-0500", "TZOFFSETTO:-0600", "TZNAME:SUPPLIED", "END:STANDARD", "END:VTIMEZONE",
+		"BEGIN:VEVENT", "UID:weekly", "DTSTAMP:20260101T000000Z", "RECURRENCE-ID;TZID=America/Chicago:20260112T090000", "DTSTART;TZID=America/Chicago:20260112T140000", "SUMMARY:Standup", "END:VEVENT")
+	doc, err := bookingDocument(request, &storedBooking{Cal: stored})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _, err := encodeCalendar(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(data, "BEGIN:VTIMEZONE") != 1 || !strings.Contains(data, "TZNAME:SUPPLIED") {
+		t.Fatalf("supplied time zone not kept:\n%s", data)
+	}
+}

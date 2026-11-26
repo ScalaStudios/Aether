@@ -284,7 +284,7 @@ func bookingDocument(request *ical.Calendar, stored *storedBooking) (*ical.Calen
 		replaced[c.Props.Get(ical.PropRecurrenceID).Value] = true
 	}
 	for _, c := range stored.Cal.Children {
-		if c.Name == ical.CompTimezone {
+		if c.Name == ical.CompTimezone && c.Props.Get(propGeneratedTimezone) == nil {
 			id, _ := c.Props.Text(ical.PropTimezoneID)
 			timezones[id] = true
 		}
