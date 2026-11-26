@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"net/url"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -386,4 +387,18 @@ func TestSCIMReplaceKeepsOneSubject(t *testing.T) {
 		t.Fatalf("subjects after a repeated PUT: %v", got)
 	}
 
+	for i := 0; i < 20; i++ {
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				halo.do("PUT", path, scimUserBody(email, "halo-"+randomSuffix(), true), nil)
+			}()
+		}
+		wg.Wait()
+		if got := scimSubjects(t, db, providerID, created.ID); len(got) != 1 {
+			t.Fatalf("round %d: concurrent PUTs left subjects %v", i, got)
+		}
+	}
 }

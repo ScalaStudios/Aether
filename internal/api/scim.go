@@ -264,6 +264,9 @@ var errSCIMConflict = errors.New("scim conflict")
 
 func (s *Server) scimLink(ctx context.Context, tx pgx.Tx, p *providerRow, userID, email, externalID string) error {
 	if externalID != "" {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, userID); err != nil {
+			return err
+		}
 		var owner string
 		err := tx.QueryRow(ctx, `SELECT user_id FROM user_identities WHERE provider_id = $1 AND subject = $2`, p.ID, externalID).Scan(&owner)
 		switch {
