@@ -153,6 +153,7 @@ services:
         condition: service_completed_successfully
       api:
         condition: service_healthy
+        restart: true
 
   postfix:
     build:

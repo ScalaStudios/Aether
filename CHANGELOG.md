@@ -132,6 +132,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The web app runs Next.js 16.4.6, which fixes the security advisories affecting 16.4.4 and earlier. `next build` no longer stops on its first run with an upgrade notice.
 - Field labels in the web app use the 12px label size again, the same as group legends. Class merging dropped the custom `text-label`, `text-h1`, `text-h2` and `text-h3` sizes whenever a text color class came after them.
 - Inbound mail is queued and retried while Dovecot is restarting, and report mail while the API is restarting. Postfix used to bounce it with `5.4.4 Host or domain name not found` once the stopped container's name disappeared from Docker DNS; LMTP lookup failures now defer with `4.4.4`.
+- With Docker Compose, Dovecot restarts when a `docker compose up` that includes it, such as a plain `docker compose up -d`, recreates the API. Dovecot kept connecting to the old API container's address, so the sign-in policy let blocked addresses in and IMAP mailbox audit events were lost until Dovecot was restarted by hand.
 
 ### Upgrade notes
 

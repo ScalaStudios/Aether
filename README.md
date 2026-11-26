@@ -292,7 +292,7 @@ AETHER_IMAP_ADDR=toxiproxy:1143 AETHER_DOVECOT_API_URL=http://toxiproxy:18089 \
   docker compose --profile test up -d --wait toxiproxy api
 AETHER_TEST_ADMIN_EMAIL=admin@aether.test AETHER_TEST_ADMIN_PASSWORD=choose-a-long-password \
   docker compose --profile test run --rm --no-deps integration-tests
-docker compose up -d api
+docker compose up -d api dovecot
 ```
 
 The first command routes the API's Dovecot connections through toxiproxy so that the tests can cut and delay them, and the last one puts the API back on the direct addresses.
