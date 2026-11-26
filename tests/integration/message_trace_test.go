@@ -87,7 +87,11 @@ func TestMessageTrace(t *testing.T) {
 		}
 	}
 
-	pageB := traceSearch(adminB, b.orgID, url.Values{"sender": {sender}})
+	var pageB tracePage
+	waitUpTo(t, 60*time.Second, "organization B to see both messages from the sender", func() bool {
+		pageB = traceSearch(adminB, b.orgID, url.Values{"sender": {sender}})
+		return len(pageB.Messages) >= 2
+	})
 	if len(pageB.Messages) != 2 {
 		t.Fatalf("organization B sees %d messages from the sender, want 2", len(pageB.Messages))
 	}
