@@ -79,7 +79,7 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 	if !ok {
 		return "DUNNO", nil
 	}
-	local, _, _ = strings.Cut(local, "+")
+	base, _, _ := strings.Cut(local, "+")
 	sender = strings.ToLower(sender)
 	senderLocal, senderDomain, _ := strings.Cut(sender, "@")
 	var targetDomain *string
@@ -93,11 +93,12 @@ func (s *Server) listPolicy(ctx context.Context, recipient, sender, saslUser str
 	var orgID, acceptFrom string
 	var members, allowed []string
 	var moderated, dynamicMember bool
-	err := s.db.QueryRow(ctx, `WITH target AS (SELECT $1::text || '@' || coalesce((SELECT target_name FROM mail_alias_domains WHERE alias_name = $2::text), $2::text) AS address)
-		SELECT org_id, accept_from, destinations, allowed_senders, moderated, EXISTS (SELECT 1 FROM list_dynamic_members lm WHERE lm.alias_id = aliases.id AND lm.address = ANY ($3))
-		FROM aliases WHERE active AND address = (SELECT address FROM target)
-		UNION ALL SELECT org_id, 'resource', '{}', '{}', false, false FROM mailboxes WHERE kind = 'resource' AND active AND address = (SELECT address FROM target)`, local, domain, senders).
-		Scan(&orgID, &acceptFrom, &members, &allowed, &moderated, &dynamicMember)
+	err := s.db.QueryRow(ctx, `WITH target AS (SELECT l || '@' || coalesce((SELECT target_name FROM mail_alias_domains WHERE alias_name = $2::text), $2::text) AS address FROM unnest($1::text[]) l)
+		SELECT * FROM (SELECT split_part(address, '@', 1) AS local, org_id, accept_from, destinations, allowed_senders, moderated, EXISTS (SELECT 1 FROM list_dynamic_members lm WHERE lm.alias_id = aliases.id AND lm.address = ANY ($3))
+		FROM aliases WHERE active AND address IN (SELECT address FROM target)
+		UNION ALL SELECT split_part(address, '@', 1), org_id, 'resource', '{}', '{}', false, false FROM mailboxes WHERE kind = 'resource' AND active AND address IN (SELECT address FROM target)) found
+		ORDER BY local = $4 DESC LIMIT 1`, []string{local, base}, domain, senders, local).
+		Scan(&local, &orgID, &acceptFrom, &members, &allowed, &moderated, &dynamicMember)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "DUNNO", nil
 	}

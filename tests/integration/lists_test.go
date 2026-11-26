@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/mail"
@@ -23,6 +24,34 @@ type aliasBody struct {
 	SendAs         []string `json:"sendAs"`
 	Owners         []string `json:"owners"`
 	AllowedSenders []string `json:"allowedSenders"`
+}
+
+func TestRestrictedListWithPlusInAddress(t *testing.T) {
+	w := setupWorld(t)
+	smtpAddr := env(t, "AETHER_TEST_SMTP", "postfix:25")
+	alice := "alice@" + w.domain
+	outsider := "outsider@external.example"
+	create := func(local string) aliasBody {
+		var list aliasBody
+		w.admin.must("POST", "/organizations/"+w.orgID+"/aliases", map[string]any{
+			"domainId": w.domainID, "localPart": local, "kind": "list", "name": local,
+			"destinations": []string{alice}, "acceptFrom": "members",
+		}, &list, 201)
+		return list
+	}
+	legacy := create("legacy" + randomSuffix())
+	plus := strings.Replace(legacy.Address, "@", "+all@", 1)
+	if _, err := testDB(t).Exec(context.Background(), `UPDATE aliases SET local_part = split_part($2, '@', 1), address = $2 WHERE id = $1`, legacy.ID, plus); err != nil {
+		t.Fatal(err)
+	}
+	if err := submit(t, smtpAddr, "", "", outsider, []string{plus}, rfc822(outsider, plus, "plus list", "x"), false); err == nil || !strings.Contains(err.Error(), "does not accept mail") {
+		t.Fatalf("outside sender to a restricted list with a plus in its address: %v", err)
+	}
+	plain := create("plain" + randomSuffix())
+	tagged := strings.Replace(plain.Address, "@", "+tag@", 1)
+	if err := submit(t, smtpAddr, "", "", outsider, []string{tagged}, rfc822(outsider, tagged, "tagged list", "x"), false); err == nil || !strings.Contains(err.Error(), "does not accept mail") {
+		t.Fatalf("outside sender to a tagged address of a restricted list: %v", err)
+	}
 }
 
 func TestAliasUpdateAndDistributionLists(t *testing.T) {
