@@ -129,6 +129,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Mail imports can be cancelled from any API replica: the cancel request is stored in Valkey and the running import checks it every two seconds. Previously only the replica that started an import could cancel it.
 - Snoozed messages are claimed before they are woken, so two API replicas no longer move the same message back at once.
 - With `postgresql.enabled=false`, the Helm chart's Postfix and Dovecot still connected to `postgres`. Set `postgresql.externalHost` to the external database's host.
+- The web app runs Next.js 16.4.6, which fixes the security advisories affecting 16.4.4 and earlier. `next build` no longer stops on its first run with an upgrade notice.
 
 ### Upgrade notes
 
