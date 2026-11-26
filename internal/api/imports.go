@@ -277,7 +277,7 @@ func importFailure(err error) string {
 	if errors.As(err, &netErr) || errors.Is(err, errBlockedAddress) {
 		return "The connection to the other provider was lost. Start the import again; messages already copied are skipped."
 	}
-	return "The import stopped: " + err.Error() + ". Start it again; messages already copied are skipped."
+	return "The import stopped: " + truncate(err.Error(), 500) + ". Start it again; messages already copied are skipped."
 }
 
 func (s *Server) cancelImport(w http.ResponseWriter, r *http.Request, p *principal) {
