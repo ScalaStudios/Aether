@@ -23,6 +23,7 @@ virtual_alias_domains = $myhostname
 virtual_alias_maps = pgsql:/etc/postfix/pgsql/aliases.cf, pgsql:/etc/postfix/pgsql/tagged-mail.cf, tcp:127.0.0.1:10002
 virtual_transport = mailbox-lmtp:inet:dovecot:24
 mailbox-lmtp_destination_recipient_limit = 1
+lmtp_delivery_status_filter = regexp:{ { /^5(\.4\.4 .+)/ 4$$1 } }
 relay_domains = aether-reports.internal
 transport_maps = pgsql:/etc/postfix/pgsql/coexist-transports.cf, regexp:/etc/postfix/coexist_transport_guard, inline:{ aether-reports.internal=lmtp:inet:__REPORTS__ }, pgsql:/etc/postfix/pgsql/outbound-transports.cf
 sender_dependent_default_transport_maps = pgsql:/etc/postfix/pgsql/outbound-relays.cf

@@ -130,6 +130,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Snoozed messages are claimed before they are woken, so two API replicas no longer move the same message back at once.
 - With `postgresql.enabled=false`, the Helm chart's Postfix and Dovecot still connected to `postgres`. Set `postgresql.externalHost` to the external database's host.
 - The web app runs Next.js 16.4.6, which fixes the security advisories affecting 16.4.4 and earlier. `next build` no longer stops on its first run with an upgrade notice.
+- Inbound mail is queued and retried while Dovecot is restarting, and report mail while the API is restarting. Postfix used to bounce it with `5.4.4 Host or domain name not found` once the stopped container's name disappeared from Docker DNS; LMTP lookup failures now defer with `4.4.4`.
 
 ### Upgrade notes
 
