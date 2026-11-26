@@ -250,3 +250,22 @@ func TestSCIMOnlyReachesLinkedAccounts(t *testing.T) {
 		t.Fatalf("filter found a linked platform admin: %+v", list.Resources)
 	}
 }
+
+func TestSCIMDeleteKeepsAdministratorSuspension(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	slug, _, halo := scimClient(t, w, startFakeIssuer(t), false)
+	var created scimUser
+	halo.must("POST", "/scim/"+slug+"/Users", scimUserBody("gina"+randomSuffix()+"@"+w.domain, "halo-"+randomSuffix(), true), &created, 201)
+
+	w.admin.must("PATCH", "/admin/users/"+created.ID, map[string]string{"status": "suspended"}, nil, 204)
+	halo.must("DELETE", "/scim/"+slug+"/Users/"+created.ID, nil, nil, 204)
+	halo.must("PATCH", "/scim/"+slug+"/Users/"+created.ID, scimActive(true), nil, 200)
+	var status, by string
+	if err := db.QueryRow(context.Background(), `SELECT status, suspended_by FROM users WHERE id = $1`, created.ID).Scan(&status, &by); err != nil {
+		t.Fatal(err)
+	}
+	if status == "active" || by != "admin" {
+		t.Fatalf("after SCIM delete and reactivate: status %s, suspended_by %q", status, by)
+	}
+}
