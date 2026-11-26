@@ -302,34 +302,33 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		s.internalError(w, r, err)
 		return
 	}
-	currentGrant, err := s.loadMemberGrant(r.Context(), orgID, userID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	var compliance bool
-	if err := s.db.QueryRow(r.Context(), `SELECT compliance FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&compliance); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		s.internalError(w, r, err)
-		return
-	}
-	complianceChanged := in.Compliance != nil && *in.Compliance != compliance
-	if p.grantsOwnMembership(userID, targetIsPlatformAdmin) && (raisesGrant(currentGrant, targetGrant) || (complianceChanged && *in.Compliance)) {
-		selfMembershipError(w)
-		return
-	}
-	if complianceChanged && p.orgRole(orgID) != roleOwner {
-		forbidden(w)
-		return
-	}
 	var previous string
-	if currentGrant != nil {
-		previous = currentGrant.Role
-		if !p.canManageMemberRole(orgID, currentGrant.Role, currentGrant) {
-			forbidden(w)
-			return
-		}
-	}
+	var complianceChanged bool
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if err := lockOrganization(r.Context(), tx, orgID); err != nil {
+			return err
+		}
+		currentGrant, err := loadMemberGrant(r.Context(), tx, orgID, userID)
+		if err != nil {
+			return err
+		}
+		var compliance bool
+		if err := tx.QueryRow(r.Context(), `SELECT compliance FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID).Scan(&compliance); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		complianceChanged = in.Compliance != nil && *in.Compliance != compliance
+		if p.grantsOwnMembership(userID, targetIsPlatformAdmin) && (raisesGrant(currentGrant, targetGrant) || (complianceChanged && *in.Compliance)) {
+			return errSelfMembership
+		}
+		if complianceChanged && p.orgRole(orgID) != roleOwner {
+			return errForbiddenChange
+		}
+		if currentGrant != nil {
+			previous = currentGrant.Role
+			if !p.canManageMemberRole(orgID, currentGrant.Role, currentGrant) {
+				return errForbiddenChange
+			}
+		}
 		if err := refuseLastOwner(r.Context(), tx, orgID, userID, in.Role); err != nil {
 			return err
 		}
@@ -353,6 +352,14 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
 		return
 	}
+	if errors.Is(err, errSelfMembership) {
+		selfMembershipError(w)
+		return
+	}
+	if errors.Is(err, errForbiddenChange) {
+		forbidden(w)
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -372,7 +379,11 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-var errLastOwner = errors.New("last owner")
+var (
+	errLastOwner       = errors.New("last owner")
+	errSelfMembership  = errors.New("self membership")
+	errForbiddenChange = errors.New("forbidden member change")
+)
 
 func lockOrganization(ctx context.Context, tx pgx.Tx, orgID string) error {
 	_, err := tx.Exec(ctx, `SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE`, orgID)
@@ -416,7 +427,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		s.internalError(w, r, err)
 		return
 	}
-	currentGrant, err := s.loadMemberGrant(r.Context(), orgID, userID)
+	currentGrant, err := loadMemberGrant(r.Context(), s.db, orgID, userID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return

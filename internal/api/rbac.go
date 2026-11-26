@@ -507,11 +507,11 @@ func (s *Server) loadUserGrants(ctx context.Context, userID string) (map[string]
 	return grants, rows.Err()
 }
 
-func (s *Server) loadMemberGrant(ctx context.Context, orgID, userID string) (*orgGrant, error) {
+func loadMemberGrant(ctx context.Context, q rowQuery, orgID, userID string) (*orgGrant, error) {
 	var role, customName string
 	var customID *string
 	var scopes, domainIDs []string
-	err := s.db.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT m.role, m.custom_role_id, coalesce(r.name, ''), coalesce(r.scopes, '{}'),
 			coalesce((SELECT array_agg(d.domain_id::text ORDER BY d.domain_id) FROM organization_member_domains d WHERE d.org_id = m.org_id AND d.user_id = m.user_id), '{}')
 		FROM organization_members m

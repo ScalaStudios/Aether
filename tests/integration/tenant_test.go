@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -359,4 +360,35 @@ func TestPlatformAdminCannotGiveThemselvesARole(t *testing.T) {
 		t.Fatalf("after promotion by an owner the platform administrator is %q", r)
 	}
 	w.admin.must("POST", members, map[string]any{"email": admin, "role": "member"}, nil, 204)
+
+	ctx := context.Background()
+	db, watcher := testDB(t), testDB(t)
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE`, w.orgID); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan int, 1)
+	go func() {
+		result <- w.admin.do("POST", members, map[string]any{"email": admin, "role": "member"}, nil)
+	}()
+	waitFor(t, "the request to wait for the organization lock", func() bool {
+		var waiting bool
+		return watcher.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%FROM organizations WHERE id = $1 FOR UPDATE%' AND pid <> pg_backend_pid())`).Scan(&waiting) == nil && waiting
+	})
+	if _, err := tx.Exec(ctx, `DELETE FROM organization_members WHERE org_id = $1 AND user_id = (SELECT id FROM users WHERE email = $2)`, w.orgID, admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if code := <-result; code != 403 {
+		t.Fatalf("platform administrator rejoined after being removed: %d", code)
+	}
+	if r := role(); r != "" {
+		t.Fatalf("platform administrator is %q after being removed", r)
+	}
 }
