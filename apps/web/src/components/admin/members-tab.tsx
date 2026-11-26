@@ -162,6 +162,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
       toast.success(t("admin.members.removedToast", { email: member.email }))
       qc.invalidateQueries({ queryKey: ["members", orgId] })
       qc.invalidateQueries({ queryKey: ["roles", orgId] })
+      qc.invalidateQueries({ queryKey: ["session"] })
       setRemoving(null)
     },
   })
@@ -189,6 +190,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
       toast.success(editing === "new" ? `Added ${values.email}` : `Updated role for ${values.email}`)
       qc.invalidateQueries({ queryKey: ["members", orgId] })
       qc.invalidateQueries({ queryKey: ["roles", orgId] })
+      qc.invalidateQueries({ queryKey: ["session"] })
       close()
     },
     onError: (error) => {
