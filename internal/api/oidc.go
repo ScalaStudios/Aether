@@ -519,7 +519,7 @@ func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, 
 			return err
 		}
 		tag, err := tx.Exec(ctx, `INSERT INTO mailboxes (org_id, domain_id, local_part, address, owner_user_id, protocols, quota_bytes)
-			SELECT $1, $2, $3, $4, $5, (SELECT mailbox_protocols FROM organizations WHERE id = $1), $6 WHERE NOT EXISTS (SELECT 1 FROM aliases WHERE address = $4 AND personal_owner_id IS NOT NULL)`, orgID, domainID, local, email, userID, quota)
+			SELECT $1, $2, $3, $4, $5, (SELECT mailbox_protocols FROM organizations WHERE id = $1), $6 WHERE NOT EXISTS (SELECT 1 FROM aliases WHERE address = $4)`, orgID, domainID, local, email, userID, quota)
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}

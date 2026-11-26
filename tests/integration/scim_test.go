@@ -269,3 +269,30 @@ func TestSCIMDeleteKeepsAdministratorSuspension(t *testing.T) {
 		t.Fatalf("after SCIM delete and reactivate: status %s, suspended_by %q", status, by)
 	}
 }
+
+func TestProvisioningSkipsAliasAddress(t *testing.T) {
+	w := setupWorld(t)
+	f := startFakeIssuer(t)
+	slug, _, halo := scimClient(t, w, f, true)
+	org := "/organizations/" + w.orgID
+	scimAlias, oidcAlias := "team"+randomSuffix(), "list"+randomSuffix()
+	for _, local := range []string{scimAlias, oidcAlias} {
+		w.admin.must("POST", org+"/aliases", map[string]any{"domainId": w.domainID, "localPart": local, "destinations": []string{"alice@" + w.domain}}, nil, 201)
+	}
+	halo.do("POST", "/scim/"+slug+"/Users", scimUserBody(scimAlias+"@"+w.domain, "halo-"+randomSuffix(), true), nil)
+	f.subject, f.email = "halo-"+randomSuffix(), oidcAlias+"@"+w.domain
+	browser, callback, _ := oidcAuthorize(t, f, slug)
+	if resp, err := browser.http.Get(callback); err == nil {
+		resp.Body.Close()
+	}
+
+	var mailboxes []struct {
+		Address string `json:"address"`
+	}
+	w.admin.must("GET", org+"/mailboxes", nil, &mailboxes, 200)
+	for _, m := range mailboxes {
+		if m.Address == scimAlias+"@"+w.domain || m.Address == oidcAlias+"@"+w.domain {
+			t.Fatalf("provisioning created a mailbox on alias %s", m.Address)
+		}
+	}
+}
