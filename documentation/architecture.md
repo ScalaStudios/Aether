@@ -202,7 +202,7 @@ There is no benchmark harness yet; it is part of Phase 4. In development, the in
 ## Known limitations
 
 - The API opens one IMAP connection per request, with no pooling. Measured in October 2026, a request that uses IMAP takes about 14 ms in total, so a pool would save little. Revisit this if the mail routes' 95th percentile latency on the Aether overview dashboard goes above 100 ms. Live mail adds up to eight long-lived IDLE connections per mailbox, counted inside Dovecot's per-user connection limit.
-- Login, OIDC, and webmail send rate limits are fixed one-minute windows counted in Valkey, so they hold across API replicas. If Valkey is unreachable, the API allows the request and logs an error.
+- Login, OIDC, and webmail send rate limits are fixed one-minute windows counted in Valkey, so they hold across API replicas. If Valkey is unreachable, the API refuses the request with `rate_limited` and logs an error.
 
 ## Sender Rewriting Scheme
 
