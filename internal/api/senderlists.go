@@ -187,6 +187,29 @@ func (s *Server) checkSenderLists(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"action": action})
 }
 
+func (s *Server) checkHostedSender(w http.ResponseWriter, r *http.Request) {
+	if !internalCaller(r) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	var in struct {
+		From string `json:"from"`
+	}
+	if !decode(w, r, 4<<10, &in) {
+		return
+	}
+	var hosted bool
+	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM mail_domains WHERE name = ANY ($1))`, nonNil(senderDomains(senderAddresses([]string{in.From})))).Scan(&hosted); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if !hosted {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func validSenderAction(w http.ResponseWriter, action string) bool {
 	if action != "allow" && action != "block" {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_action", "action must be allow or block.")

@@ -63,11 +63,13 @@ func TestDecideSender(t *testing.T) {
 
 func TestCheckSenderListsRejectsPublicClients(t *testing.T) {
 	s := &Server{}
-	req := httptest.NewRequest(http.MethodPost, "/internal/sender-lists/check", strings.NewReader(`{}`))
-	req.RemoteAddr = "8.8.8.8:4000"
-	rec := httptest.NewRecorder()
-	s.checkSenderLists(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", rec.Code)
+	for _, handle := range []http.HandlerFunc{s.checkSenderLists, s.checkHostedSender} {
+		req := httptest.NewRequest(http.MethodPost, "/internal/sender-lists/check", strings.NewReader(`{}`))
+		req.RemoteAddr = "8.8.8.8:4000"
+		rec := httptest.NewRecorder()
+		handle(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", rec.Code)
+		}
 	}
 }

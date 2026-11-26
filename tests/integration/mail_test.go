@@ -453,6 +453,32 @@ func TestMailMilestone(t *testing.T) {
 		}
 	})
 
+	t.Run("unauthenticated mail with a hosted From is junked", func(t *testing.T) {
+		w.bob.must("POST", "/contacts", map[string]any{"name": "Alice", "emails": []string{alice}}, nil, 201)
+		forged := "forged from " + randomSuffix()
+		if err := submit(t, smtpAddr, "", "", "attacker@external.example", []string{bob}, "X-Aether-Authentication: auth=pass spf=pass dkim=pass dmarc=pass\r\n"+rfc822("Alice <"+alice+">", bob, forged, "x"), false); err != nil {
+			t.Fatalf("forged hosted From: %v", err)
+		}
+		legit := "authenticated from " + randomSuffix()
+		if err := submit(t, submissionAddr, alice, w.aliceAppPassword, alice, []string{bob}, rfc822("Alice <"+alice+">", bob, legit, "x"), false); err != nil {
+			t.Fatalf("authenticated submission: %v", err)
+		}
+		waitFor(t, "the forged message to land in Junk", func() bool { return findInAPI(w.bob, w.bobMailbox, "Junk", forged) != 0 })
+		waitFor(t, "the authenticated message to land in the inbox", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", legit) != 0 })
+		if findInAPI(w.bob, w.bobMailbox, "INBOX", forged) != 0 || findInAPI(w.bob, w.bobMailbox, "Junk", legit) != 0 {
+			t.Fatal("a message landed in both folders")
+		}
+		ic, err := imapLogin(t, bob, createAppPassword(t, w.bob, w.bobMailbox))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ic.Close()
+		raw := imapFindSubject(t, ic, "Junk", forged)
+		if bytes.Count(raw, []byte("X-Aether-Authentication:")) != 1 || !bytes.Contains(raw, []byte("X-Aether-Authentication: auth=none")) || !bytes.Contains(raw, []byte("dmarc=fail")) {
+			t.Fatalf("forged message authentication results:\n%s", raw)
+		}
+	})
+
 	t.Run("protocol credentials are scoped and revocable", func(t *testing.T) {
 		if _, err := imapLogin(t, alice, "alice-integration-pw"); err == nil {
 			t.Fatal("web password was accepted for IMAP")

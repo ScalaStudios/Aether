@@ -18,6 +18,7 @@ if header :is "X-Spam" "Yes" {
   }
   if anyof (string :value "ge" :comparator "i;ascii-numeric" "${score}" "10",
             header :contains "Authentication-Results" "dmarc=fail",
+            header :contains "X-Aether-Authentication" "dmarc=fail",
             not execute "aether-trusted" ["${rcpt}", "${from}", "${reply}"]) {
     fileinto "Junk";
     stop;

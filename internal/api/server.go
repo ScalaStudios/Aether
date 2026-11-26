@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/mail-token", s.verifyMailToken)
 	mux.HandleFunc("POST /internal/quarantine", s.quarantineIngest)
 	mux.HandleFunc("POST /internal/sender-lists/check", s.checkSenderLists)
+	mux.HandleFunc("POST /internal/hosted-sender", s.checkHostedSender)
 	mux.HandleFunc("POST /internal/spam-learn", s.learnSpam)
 	mux.HandleFunc("POST /internal/trusted-sender", s.trustedSender)
 	mux.HandleFunc("POST /internal/mail-events", s.receiveMailEvent)

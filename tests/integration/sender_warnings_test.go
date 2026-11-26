@@ -48,7 +48,7 @@ func TestSenderWarnings(t *testing.T) {
 	alice, bob := "alice@"+w.domain, "bob@"+w.domain
 	forged := "X-Aether-Authentication: auth=pass spf=pass dkim=pass dmarc=pass\r\n"
 
-	deliver := func(t *testing.T, addr, user, pass, from, header string) senderView {
+	deliver := func(t *testing.T, folder, addr, user, pass, from, header string) senderView {
 		t.Helper()
 		subject := "sender " + randomSuffix()
 		if err := submit(t, addr, user, pass, from, []string{alice}, forged+rfc822(header, alice, subject, "hello"), false); err != nil {
@@ -56,11 +56,11 @@ func TestSenderWarnings(t *testing.T) {
 		}
 		var uid uint32
 		waitFor(t, "the message to arrive", func() bool {
-			uid = findInAPI(w.alice, w.aliceMailbox, "INBOX", subject)
+			uid = findInAPI(w.alice, w.aliceMailbox, folder, subject)
 			return uid != 0
 		})
 		var v senderView
-		w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/messages/"+strconv.FormatUint(uint64(uid), 10)+"?folder=INBOX", nil, &v, 200)
+		w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/messages/"+strconv.FormatUint(uint64(uid), 10)+"?folder="+folder, nil, &v, 200)
 		if v.Sender == nil || v.Sender.Authentication == nil {
 			t.Fatalf("no trusted sender assessment for %s: %+v", from, v.Sender)
 		}
@@ -95,21 +95,21 @@ func TestSenderWarnings(t *testing.T) {
 	})
 
 	t.Run("outside sender using a colleague's name", func(t *testing.T) {
-		v := deliver(t, smtpAddr, "", "", "bob.personal@partner.example", "Bob <bob.personal@partner.example>")
+		v := deliver(t, "INBOX", smtpAddr, "", "", "bob.personal@partner.example", "Bob <bob.personal@partner.example>")
 		if !v.Sender.External || !v.Sender.FirstContact || v.Sender.Authentication.Submission != "none" {
 			t.Fatalf("want external first contact with forged results replaced: %+v", v.Sender)
 		}
 		if !slices.Equal(v.kinds(), []string{"name"}) || v.Sender.Warnings[0].Address != bob {
 			t.Fatalf("want a display name warning pointing at %s: %+v", bob, v.Sender.Warnings)
 		}
-		again := deliver(t, smtpAddr, "", "", "bob.personal@partner.example", "Bob <bob.personal@partner.example>")
+		again := deliver(t, "INBOX", smtpAddr, "", "", "bob.personal@partner.example", "Bob <bob.personal@partner.example>")
 		if again.Sender.FirstContact {
 			t.Fatal("a second message from the same sender is still a first contact")
 		}
 	})
 
 	t.Run("outside sender claiming the organization's domain", func(t *testing.T) {
-		v := deliver(t, smtpAddr, "", "", "ceo@"+w.domain, "Chief <ceo@"+w.domain+">")
+		v := deliver(t, "Junk", smtpAddr, "", "", "ceo@"+w.domain, "Chief <ceo@"+w.domain+">")
 		if !v.Sender.External || !slices.Contains(v.kinds(), "spoofed") || v.Sender.FirstContact {
 			t.Fatalf("want a spoofing warning without a first contact tip: %+v", v.Sender)
 		}
@@ -117,7 +117,7 @@ func TestSenderWarnings(t *testing.T) {
 
 	t.Run("outside sender on a look-alike domain", func(t *testing.T) {
 		lookalike := w.domain[1:2] + w.domain[:1] + w.domain[2:]
-		v := deliver(t, smtpAddr, "", "", "billing@"+lookalike, "Billing <billing@"+lookalike+">")
+		v := deliver(t, "INBOX", smtpAddr, "", "", "billing@"+lookalike, "Billing <billing@"+lookalike+">")
 		if !slices.Contains(v.kinds(), "lookalike") || v.Sender.Warnings[slices.Index(v.kinds(), "lookalike")].Resembles != w.domain {
 			t.Fatalf("want a look-alike warning for %s: %+v", lookalike, v.Sender.Warnings)
 		}
@@ -134,7 +134,7 @@ func TestSenderWarnings(t *testing.T) {
 			t.Fatalf("warnings should be on by default: %v", settings)
 		}
 		w.admin.must("PUT", path, map[string]bool{"externalTag": false, "firstContact": false, "impersonation": false}, &settings, 200)
-		v := deliver(t, smtpAddr, "", "", "someone@elsewhere.example", "Bob <someone@elsewhere.example>")
+		v := deliver(t, "INBOX", smtpAddr, "", "", "someone@elsewhere.example", "Bob <someone@elsewhere.example>")
 		if v.Sender.External || v.Sender.FirstContact || len(v.Sender.Warnings) != 0 || v.Sender.Authentication.Submission != "none" {
 			t.Fatalf("turned off warnings still show: %+v", v.Sender)
 		}

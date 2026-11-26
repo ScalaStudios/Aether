@@ -28,7 +28,16 @@ local rspamd_http = require 'rspamd_http'
 local upstream_list = require 'rspamd_upstream_list'
 
 local quarantine_score = 10
-local quarantine_api
+local api_upstreams
+
+local function api_upstream()
+  api_upstreams = api_upstreams or upstream_list.create(rspamd_config, 'api:8080', 8080)
+  local upstream = api_upstreams and api_upstreams:get_upstream_round_robin()
+  if not upstream then
+    api_upstreams = nil
+  end
+  return upstream
+end
 
 rspamd_config:register_symbol({
   name = 'AETHER_QUARANTINE',
@@ -36,7 +45,7 @@ rspamd_config:register_symbol({
   priority = 10,
   flags = 'empty,ignore_passthrough',
   callback = function(task)
-    if task:get_user() or task:has_symbol('AETHER_BLOCKED_ATTACHMENT') then
+    if task:get_user() or task:has_symbol('AETHER_BLOCKED_ATTACHMENT') or task:has_symbol('AETHER_HOSTED_FROM_REJECT') then
       return
     end
     local action = task:get_metric_action()
@@ -44,10 +53,8 @@ rspamd_config:register_symbol({
     if action ~= 'reject' and not ((action == 'add header' or action == 'rewrite subject') and score >= quarantine_score) then
       return
     end
-    quarantine_api = quarantine_api or upstream_list.create(rspamd_config, 'api:8080', 8080)
-    local upstream = quarantine_api and quarantine_api:get_upstream_round_robin()
+    local upstream = api_upstream()
     if not upstream then
-      quarantine_api = nil
       rspamd_logger.warnx(task, 'quarantine skipped: the API address could not be resolved')
       return
     end
@@ -84,7 +91,7 @@ rspamd_config:register_symbol({
       callback = function(err, code)
         if err then
           upstream:fail()
-          quarantine_api = nil
+          api_upstreams = nil
           rspamd_logger.warnx(task, 'quarantine failed, keeping action %s: %s', action, err)
         elseif code == 201 then
           upstream:ok()
@@ -160,6 +167,74 @@ local sender_lists = rspamd_config:register_symbol({
 rspamd_config:register_symbol({ name = 'AETHER_SENDER_BLOCKED', type = 'virtual', parent = sender_lists, score = 0.0, description = 'Sender is on an Aether block list' })
 rspamd_config:register_symbol({ name = 'AETHER_SENDER_ALLOWED', type = 'virtual', parent = sender_lists, score = 0.0, description = 'Sender is on an Aether allow list' })
 
+local rspamd_util = require 'rspamd_util'
+
+local function org_domain(domain)
+  if domain and domain ~= '' then
+    return rspamd_util.get_tld(domain:lower())
+  end
+end
+
+local hosted_from = rspamd_config:register_symbol({
+  name = 'AETHER_HOSTED_FROM',
+  type = 'callback',
+  callback = function(task)
+    if task:get_user() or task:has_symbol('DMARC_POLICY_ALLOW') or task:has_symbol('DMARC_POLICY_ALLOW_WITH_FAILURES') or task:has_symbol('ARC_ALLOW_TRUSTED') then
+      return
+    end
+    local from = task:get_from({ 'mime', 'orig' })
+    if not from or #from ~= 1 then
+      return
+    end
+    local domain = org_domain(from[1].domain)
+    if not domain then
+      return
+    end
+    local envelope = (task:get_from({ 'smtp', 'orig' }) or {})[1] or {}
+    if task:has_symbol('R_SPF_ALLOW') and org_domain(envelope.domain ~= '' and envelope.domain or task:get_helo()) == domain then
+      return
+    end
+    for _, res in ipairs(task:get_dkim_results() or {}) do
+      if res.result == 'allow' and org_domain(res.domain) == domain then
+        return
+      end
+    end
+    local upstream = api_upstream()
+    if not upstream then
+      rspamd_logger.warnx(task, 'hosted sender check skipped: the API address could not be resolved')
+      return
+    end
+    rspamd_http.request({
+      task = task,
+      url = 'http://' .. upstream:get_addr():to_string(true) .. '/internal/hosted-sender',
+      method = 'post',
+      mime_type = 'application/json',
+      timeout = 3,
+      body = ucl.to_format({ from = from[1].addr }, 'json-compact'),
+      callback = function(err, code)
+        if err then
+          upstream:fail()
+          api_upstreams = nil
+          rspamd_logger.warnx(task, 'hosted sender check failed: %s', err)
+        elseif code ~= 204 and code ~= 404 then
+          rspamd_logger.warnx(task, 'hosted sender check refused with HTTP %s', code)
+        elseif code == 204 and task:has_symbol('DMARC_POLICY_REJECT') then
+          task:insert_result('AETHER_HOSTED_FROM_REJECT', 1.0, from[1].domain)
+          task:set_pre_result('reject', 'Message rejected: it fails the DMARC policy of the sender domain', 'aether')
+        elseif code == 204 then
+          task:insert_result('AETHER_HOSTED_FROM_JUNK', 1.0, from[1].domain)
+          task:set_pre_result('add header', 'Unauthenticated mail from a hosted domain', 'aether', nil, nil, 'least')
+        end
+      end,
+    })
+  end,
+})
+
+rspamd_config:register_symbol({ name = 'AETHER_HOSTED_FROM_REJECT', type = 'virtual', parent = hosted_from, score = 0.0, description = 'Unaligned mail from a hosted domain with a reject policy' })
+rspamd_config:register_symbol({ name = 'AETHER_HOSTED_FROM_JUNK', type = 'virtual', parent = hosted_from, score = 0.0, description = 'Unaligned mail from a hosted domain' })
+rspamd_config:register_dependency('AETHER_HOSTED_FROM', 'DMARC_CHECK')
+rspamd_config:register_dependency('AETHER_HOSTED_FROM', 'ARC_CHECK')
+
 rspamd_config:register_symbol({
   name = 'AETHER_FLOW_SCORE',
   score = 1.0,
@@ -199,7 +274,7 @@ rspamd_config:register_symbol({
 local lua_mime = require "lua_mime"
 local aether_auth_checks = {
   { 'spf', { { 'R_SPF_ALLOW', 'pass' }, { 'R_SPF_FAIL', 'fail' }, { 'R_SPF_SOFTFAIL', 'softfail' }, { 'R_SPF_NEUTRAL', 'neutral' }, { 'R_SPF_DNSFAIL', 'temperror' }, { 'R_SPF_PERMFAIL', 'permerror' } } },
-  { 'dmarc', { { 'DMARC_POLICY_ALLOW', 'pass' }, { 'DMARC_POLICY_ALLOW_WITH_FAILURES', 'pass' }, { 'DMARC_POLICY_REJECT', 'fail' }, { 'DMARC_POLICY_QUARANTINE', 'fail' }, { 'DMARC_POLICY_SOFTFAIL', 'fail' }, { 'DMARC_BAD_POLICY', 'permerror' }, { 'DMARC_DNSFAIL', 'temperror' } } },
+  { 'dmarc', { { 'DMARC_POLICY_ALLOW', 'pass' }, { 'DMARC_POLICY_ALLOW_WITH_FAILURES', 'pass' }, { 'DMARC_POLICY_REJECT', 'fail' }, { 'DMARC_POLICY_QUARANTINE', 'fail' }, { 'DMARC_POLICY_SOFTFAIL', 'fail' }, { 'DMARC_BAD_POLICY', 'permerror' }, { 'DMARC_DNSFAIL', 'temperror' }, { 'AETHER_HOSTED_FROM_JUNK', 'fail' } } },
 }
 local aether_dkim_results = { allow = 'pass', reject = 'fail', tempfail = 'temperror', permerror = 'permerror', permfail = 'permerror', ['bad record'] = 'permerror' }
 

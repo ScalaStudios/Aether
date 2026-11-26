@@ -151,9 +151,9 @@ func TestForwardedCopiesKeepOnlyTheOriginalSignature(t *testing.T) {
 		if err := submit(t, smtpAddr, "", "", "sender@external.example", []string{bob}, rfc822(from, bob, subject, "x"), false); err != nil {
 			t.Fatalf("inbound delivery from %s: %v", from, err)
 		}
-		waitFor(t, "the forwarded copy of mail from "+from, func() bool { raw = imapFindSubject(t, c, "INBOX", subject); return raw != nil })
-		if slices.Contains(dkimDomains(t, raw), w.domain) {
-			t.Fatalf("forwarded outside mail from %s was signed for %s:\n%s", from, w.domain, raw)
+		waitFor(t, "outside mail from "+from+" to land in Junk", func() bool { return findInAPI(w.bob, w.bobMailbox, "Junk", subject) != 0 })
+		if raw = imapFindSubject(t, c, "INBOX", subject); raw != nil {
+			t.Fatalf("outside mail from %s was forwarded:\n%s", from, raw)
 		}
 	}
 }
