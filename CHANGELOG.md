@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Opening a folder or the folder list no longer fails with a 502, or a false "folder no longer exists", when a change to delegate access ends the mailbox's mail sessions during the request. The read is retried once on a new connection.
 - SMTP TLS reports read the rotated Postfix logs again. `postfix logrotate` compresses old logs readable by root only, so the API skipped every day but the current one; the Postfix container now makes them readable when it starts and after each rotation.
 - The storage check updates only mailboxes whose usage changed, so it no longer locks every mailbox row each run and holds up the shared mailbox access sync.
+- DMARC aggregate reports are read record by record and stop at the record limit, at most two are parsed at a time, and a report is stored only under the organization that owns the address it was sent to. Reports with invalid records are kept without those records instead of being deferred.
+- Inline images may add at most 10 MiB to an opened message; any beyond that are listed as attachments. Relative links are removed from received HTML.
+- SCIM requests and group memberships only reach accounts linked to that identity provider, never platform administrators, and `externalId` is required when creating a user. A provider suspension no longer replaces an administrator's suspension, and an administrator suspension replaces a provider's.
+- Identity provider webhook events are recorded in the same transaction that applies them, so a retry after a failure is applied.
+- Sign-in provisioning skips addresses that are already an alias or distribution list, and `bootstrap-admin` clears the suspension label when it reactivates an account.
 
 ## 0.2.0 - 2026-11-25
 
