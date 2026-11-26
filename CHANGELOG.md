@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Recipients in the internal `aether-reports.internal` routing domain are refused.
 - The Helm network policy admits only the `monitoring` namespace to the API metrics port.
 - Mailbox, alias and sign-in provisioning take a per-address lock, so one address cannot become both a mailbox and an alias.
+- The mail page no longer scrolls as a whole when a shared mailbox lower in the folder list has unread mail; the folder list and message list scroll on their own.
 
 ## 0.2.0 - 2026-11-25
 
