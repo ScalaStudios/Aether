@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Unauthenticated mail whose From is a domain hosted here and that fails DMARC alignment is refused when the domain publishes `p=reject`, and otherwise filed in Junk, even when the sender is in the recipient's contacts or allow list.
+- Rspamd's sender block and allow list check reaches the API again; it previously failed to resolve the API's host name and was skipped.
+- IMAP imports stop when the source server sends more than 16 MiB outside message bodies for one batch, and stored import errors are capped at 500 characters.
+- JMAP calendar events keep their time zone and repeat rules, and saved, exported and invitation calendars include `VTIMEZONE` definitions for every time zone they use.
+- Platform administrators cannot add themselves to an organization or raise their own role there; another owner or admin has to grant it. The admin console explains which mailbox and mail flow actions need an organization role instead of showing permission errors.
+- The Helm chart sets `GOMEMLIMIT` on the API to 90% of its memory limit and no longer repeats environment entries or network policy rules. Prometheus, Grafana, Rspamd, kubeconform and GitHub Actions are pinned to exact versions.
 - Opening a folder or the folder list no longer fails with a 502, or a false "folder no longer exists", when a change to delegate access ends the mailbox's mail sessions during the request. The read is retried once on a new connection.
 - SMTP TLS reports read the rotated Postfix logs again. `postfix logrotate` compresses old logs readable by root only, so the API skipped every day but the current one; the Postfix container now makes them readable when it starts and after each rotation.
 - The storage check updates only mailboxes whose usage changed, so it no longer locks every mailbox row each run and holds up the shared mailbox access sync.
