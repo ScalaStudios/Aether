@@ -320,7 +320,6 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		}
 		s.wakeSnoozed(ctx)
 		s.dispatchImports(ctx)
-		s.deliverWebhooks(ctx)
 		s.sweepQuarantine(ctx)
 		s.sendQuarantineDigests(ctx)
 		if time.Since(cleaned) > time.Hour {

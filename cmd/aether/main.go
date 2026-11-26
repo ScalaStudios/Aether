@@ -168,6 +168,7 @@ func serve(log *slog.Logger) error {
 		log.Error("attachment policy sync incomplete; affected domains do not filter attachments", "err", err)
 	}
 	go srv.RunScheduler(ctx)
+	go srv.RunWebhooks(ctx)
 	go srv.RunReports(ctx)
 	go srv.RunAccessWorkers(ctx)
 	go srv.RunQueueMetrics(ctx)

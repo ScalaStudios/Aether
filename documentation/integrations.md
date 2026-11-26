@@ -135,7 +135,7 @@ const expected = crypto.createHmac("sha256", secret).update(`${t}.${rawBody}`).d
 const valid = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1)) && Date.now() / 1000 - Number(t) < 300
 ```
 
-Any 2xx response counts as delivered. Otherwise, Aether retries after 1 minute, then 5 minutes, 30 minutes, 2 hours, 6 hours, 12 hours, and 24 hours. After eight attempts, the delivery is marked failed. Delivery takes up to 15 seconds after the event. `GET /api/v1/webhooks/{id}/deliveries` lists the last 50 deliveries, and `POST /api/v1/webhooks/{id}/test` sends a `webhook.test` event.
+Any 2xx response counts as delivered. Otherwise, Aether retries after 1 minute, then 5 minutes, 30 minutes, 2 hours, 6 hours, 12 hours, and 24 hours. After eight attempts, the delivery is marked failed. Delivery takes up to 15 seconds after the event. Each pass sends at most two deliveries per webhook and ten per organization at a time, so a slow endpoint holds up other webhooks by at most one 15 second pass. `GET /api/v1/webhooks/{id}/deliveries` lists the last 50 deliveries, and `POST /api/v1/webhooks/{id}/test` sends a `webhook.test` event.
 
 Webhook URLs must use `https`. Aether refuses to connect to private, loopback, link-local, and other reserved addresses, and it does not follow redirects. This prevents a webhook from reaching services inside your network. For development only, `AETHER_WEBHOOK_ALLOW_PRIVATE=true` lifts both restrictions.
 

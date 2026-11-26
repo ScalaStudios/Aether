@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -114,18 +115,38 @@ func enqueueWebhooks(ctx context.Context, db interface {
 	return tag.RowsAffected(), err
 }
 
-func (s *Server) deliverWebhooks(ctx context.Context) {
+func (s *Server) RunWebhooks(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		for s.deliverWebhooks(ctx) {
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Server) deliverWebhooks(ctx context.Context) bool {
 	rows, err := s.db.Query(ctx, `
 		UPDATE webhook_deliveries d SET next_attempt_at = now() + interval '2 minutes'
 		FROM webhooks w
-		WHERE d.id IN (SELECT id FROM webhook_deliveries WHERE status = 'pending' AND next_attempt_at <= now()
-			AND webhook_id IN (SELECT h.id FROM webhooks h WHERE NOT EXISTS (SELECT 1 FROM organization_disabled_features f WHERE f.org_id = h.org_id AND f.feature = 'webhooks'))
-			ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
-		  AND w.id = d.webhook_id
+		WHERE d.id IN (SELECT id FROM webhook_deliveries WHERE id IN (
+			SELECT id FROM (
+				SELECT id, next_attempt_at, row_number() OVER (PARTITION BY org_id ORDER BY next_attempt_at) AS per_org FROM (
+					SELECT q.id, q.next_attempt_at, h.org_id, row_number() OVER (PARTITION BY q.webhook_id ORDER BY q.next_attempt_at) AS per_hook
+					FROM webhook_deliveries q JOIN webhooks h ON h.id = q.webhook_id
+					WHERE q.status = 'pending' AND q.next_attempt_at <= now()
+					  AND NOT EXISTS (SELECT 1 FROM organization_disabled_features f WHERE f.org_id = h.org_id AND f.feature = 'webhooks')) hooked
+				WHERE per_hook <= 2) ranked
+			WHERE per_org <= 10 ORDER BY next_attempt_at LIMIT 50) FOR UPDATE SKIP LOCKED)
+		  AND d.status = 'pending' AND d.next_attempt_at <= now() AND w.id = d.webhook_id
 		RETURNING d.id, d.event, d.payload, d.attempts, w.url, w.secret`)
 	if err != nil {
 		s.log.Error("loading webhook deliveries failed", "err", err)
-		return
+		return false
 	}
 	type delivery struct {
 		id, event, url string
@@ -139,20 +160,25 @@ func (s *Server) deliverWebhooks(ctx context.Context) {
 	})
 	if err != nil {
 		s.log.Error("loading webhook deliveries failed", "err", err)
-		return
+		return false
 	}
+	var wg sync.WaitGroup
 	for _, d := range due {
-		code, err := s.postWebhook(ctx, d.id, d.event, d.url, d.secret, d.payload)
-		switch {
-		case err == nil:
-			s.db.Exec(ctx, `UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, response_code = $2, last_error = NULL, delivered_at = now() WHERE id = $1`, d.id, code)
-		case d.attempts+1 >= maxWebhookAttempts:
-			s.db.Exec(ctx, `UPDATE webhook_deliveries SET status = 'failed', attempts = attempts + 1, response_code = $2, last_error = $3 WHERE id = $1`, d.id, code, truncate(err.Error(), 500))
-		default:
-			s.db.Exec(ctx, `UPDATE webhook_deliveries SET attempts = attempts + 1, response_code = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4) WHERE id = $1`,
-				d.id, code, truncate(err.Error(), 500), webhookRetryDelays[min(d.attempts, len(webhookRetryDelays)-1)].Seconds())
-		}
+		wg.Go(func() {
+			code, err := s.postWebhook(ctx, d.id, d.event, d.url, d.secret, d.payload)
+			switch {
+			case err == nil:
+				s.db.Exec(ctx, `UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, response_code = $2, last_error = NULL, delivered_at = now() WHERE id = $1`, d.id, code)
+			case d.attempts+1 >= maxWebhookAttempts:
+				s.db.Exec(ctx, `UPDATE webhook_deliveries SET status = 'failed', attempts = attempts + 1, response_code = $2, last_error = $3 WHERE id = $1`, d.id, code, truncate(err.Error(), 500))
+			default:
+				s.db.Exec(ctx, `UPDATE webhook_deliveries SET attempts = attempts + 1, response_code = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4) WHERE id = $1`,
+					d.id, code, truncate(err.Error(), 500), webhookRetryDelays[min(d.attempts, len(webhookRetryDelays)-1)].Seconds())
+			}
+		})
 	}
+	wg.Wait()
+	return len(due) > 0
 }
 
 func (s *Server) postWebhook(ctx context.Context, deliveryID, event, target string, sealed, body []byte) (*int, error) {

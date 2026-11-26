@@ -234,15 +234,7 @@ func TestPlatformAuditAndWebhooks(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		got <- body
 	}))
-	var ip string
-	addrs, _ := net.InterfaceAddrs()
-	for _, a := range addrs {
-		if n, ok := a.(*net.IPNet); ok && !n.IP.IsLoopback() && n.IP.To4() != nil {
-			ip = n.IP.String()
-			break
-		}
-	}
-	target := "http://" + net.JoinHostPort(ip, strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)) + "/platform"
+	target := listenerURL(ln) + "/platform"
 	var hook struct {
 		Webhook struct{ ID string }
 		Secret  string
@@ -295,5 +287,73 @@ func TestPlatformAuditAndWebhooks(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no platform webhook delivery within 40 seconds")
 		}
+	}
+}
+
+func listenerURL(ln net.Listener) string {
+	var ip string
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && !n.IP.IsLoopback() && n.IP.To4() != nil {
+			ip = n.IP.String()
+			break
+		}
+	}
+	return "http://" + net.JoinHostPort(ip, strconv.Itoa(ln.Addr().(*net.TCPAddr).Port))
+}
+
+func TestSlowWebhookDoesNotDelayOtherTenants(t *testing.T) {
+	if env(t, "AETHER_TEST_WEBHOOKS", "") != "true" {
+		t.Skip("webhooks to private addresses are disabled")
+	}
+	serve := func(h http.HandlerFunc) string {
+		ln, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		go http.Serve(ln, h)
+		return listenerURL(ln)
+	}
+	slow := serve(func(rw http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(30 * time.Second):
+		}
+	})
+	got := make(chan struct{}, 10)
+	fast := serve(func(rw http.ResponseWriter, r *http.Request) { got <- struct{}{} })
+	hook := func(w *world, target string) string {
+		var created struct {
+			Webhook struct{ ID string }
+		}
+		w.admin.must("POST", "/organizations/"+w.orgID+"/webhooks", map[string]any{"url": target, "events": []string{"*"}}, &created, 201)
+		t.Cleanup(func() { w.admin.do("DELETE", "/webhooks/"+created.Webhook.ID, nil, nil) })
+		return created.Webhook.ID
+	}
+	a, b := setupWorld(t), setupWorld(t)
+	slowHook := hook(a, slow)
+	for range 40 {
+		a.admin.must("POST", "/webhooks/"+slowHook+"/test", nil, nil, 202)
+	}
+	fastHook := hook(b, fast)
+	time.Sleep(16 * time.Second)
+	b.admin.must("POST", "/webhooks/"+fastHook+"/test", nil, nil, 202)
+	subject := "scheduled beside webhooks " + randomSuffix()
+	b.alice.must("POST", "/mailboxes/"+b.aliceMailbox+"/send", map[string]any{
+		"to": []map[string]string{{"address": "bob@" + b.domain}}, "subject": subject, "text": "x",
+		"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+	}, nil, 202)
+	select {
+	case <-got:
+	case <-time.After(40 * time.Second):
+		t.Fatal("another tenant's webhook delivery waited behind a slow endpoint")
+	}
+	deadline := time.Now().Add(40 * time.Second)
+	for findInAPI(b.bob, b.bobMailbox, "INBOX", subject) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("a scheduled message waited behind webhook delivery")
+		}
+		time.Sleep(time.Second)
 	}
 }
