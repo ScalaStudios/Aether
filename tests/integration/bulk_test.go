@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -160,5 +161,27 @@ func TestBulkImportAndAPIKeyScopes(t *testing.T) {
 	}
 	if code := readKey.do("POST", "/organizations/"+org.ID+"/bulk", mbReq, nil); code != 403 {
 		t.Fatalf("read-only key on bulk = %d, want 403", code)
+	}
+}
+
+func TestBulkDryRunReportsPlatformAdminAccounts(t *testing.T) {
+	w := setupWorld(t)
+	ctx := context.Background()
+	db := testDB(t)
+	root := "root" + randomSuffix() + "@" + w.domain
+	if _, err := db.Exec(ctx, `INSERT INTO users (email, display_name, is_platform_admin) VALUES ($1, 'Root', true)`, root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Exec(ctx, `DELETE FROM users WHERE email = $1`, root) })
+	var created struct{ Token string }
+	w.admin.must("POST", "/organizations/"+w.orgID+"/api-keys", map[string]any{"name": "bulk", "scopes": []string{"mailboxes:write"}}, &created, 201)
+	key := &apiClient{t: t, base: w.admin.base, http: &http.Client{Timeout: 30 * time.Second}, bearer: created.Token}
+	ops := []map[string]any{{"type": "mailbox", "address": root, "displayName": "Root"}}
+	for _, dryRun := range []bool{true, false} {
+		var out bulkResponseBody
+		key.must("POST", "/organizations/"+w.orgID+"/bulk", map[string]any{"dryRun": dryRun, "operations": ops}, &out, 200)
+		if len(out.Results) != 1 || out.Results[0].Status != "failed" || out.Results[0].Error == nil || out.Results[0].Error.Code != "self_membership" {
+			t.Fatalf("dryRun=%v: %+v", dryRun, out.Results)
+		}
 	}
 }

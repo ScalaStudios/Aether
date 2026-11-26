@@ -211,7 +211,7 @@ func mailboxConflictError(code, address string) *fieldError {
 	return nil
 }
 
-func (s *Server) checkMailboxDryRun(ctx context.Context, domainID, address, kind, password string) (*fieldError, error) {
+func (s *Server) checkMailboxDryRun(ctx context.Context, p *principal, domainID, address, kind, password string) (*fieldError, error) {
 	var verified, taken bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM domains WHERE id = $2 AND verified_at IS NOT NULL), EXISTS (SELECT 1 FROM aliases WHERE address = $1) OR EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, address, domainID).Scan(&verified, &taken); err != nil {
 		return nil, err
@@ -222,8 +222,13 @@ func (s *Server) checkMailboxDryRun(ctx context.Context, domainID, address, kind
 	if taken {
 		return mailboxConflictError("address_taken", address), nil
 	}
-	var exists bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)`, address).Scan(&exists); err != nil || !exists {
+	var userID string
+	var isPlatformAdmin bool
+	err := s.db.QueryRow(ctx, `SELECT id, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &isPlatformAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	if kind != "user" {
@@ -231,6 +236,9 @@ func (s *Server) checkMailboxDryRun(ctx context.Context, domainID, address, kind
 	}
 	if password != "" {
 		return mailboxConflictError("account_exists", address), nil
+	}
+	if p.grantsOwnMembership(userID, isPlatformAdmin) {
+		return mailboxConflictError(selfMembershipCode, address), nil
 	}
 	return nil, nil
 }
