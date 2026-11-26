@@ -4,8 +4,11 @@ package integration
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"net"
+	"net/mail"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,4 +104,56 @@ func TestForwardingPolicy(t *testing.T) {
 
 	w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{"to": []map[string]string{{"address": bob}}, "subject": "Report " + tag, "text": "inside only"}, nil, 202)
 	waitFor(t, "the internal forward to reach alice while outside forwarding is blocked", func() bool { return findInAPI(w.alice, w.aliceMailbox, "INBOX", "Report "+tag) != 0 })
+}
+
+func dkimDomains(t *testing.T, raw []byte) []string {
+	t.Helper()
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parse message: %v", err)
+	}
+	var domains []string
+	for _, sig := range msg.Header["Dkim-Signature"] {
+		for _, tag := range strings.Split(sig, ";") {
+			if d, ok := strings.CutPrefix(strings.Join(strings.Fields(tag), ""), "d="); ok {
+				domains = append(domains, strings.ToLower(d))
+			}
+		}
+	}
+	return domains
+}
+
+func TestForwardedCopiesKeepOnlyTheOriginalSignature(t *testing.T) {
+	w := setupWorld(t)
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	tag := "fwdsign-" + randomSuffix()
+	w.bob.must("PUT", "/mailboxes/"+w.bobMailbox+"/rules", []map[string]any{{
+		"name": "To alice", "enabled": true, "match": "all", "conditions": []map[string]string{{"field": "subject", "contains": tag}},
+		"actions": map[string]any{"forwardTo": []string{alice}},
+	}}, nil, 200)
+	c, err := imapLogin(t, alice, w.aliceAppPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Logout()
+
+	control := "control " + randomSuffix()
+	w.bob.must("POST", "/mailboxes/"+w.bobMailbox+"/send", map[string]any{"to": []map[string]string{{"address": alice}}, "subject": control, "text": "x"}, nil, 202)
+	var raw []byte
+	waitFor(t, "bob's own message to reach alice", func() bool { raw = imapFindSubject(t, c, "INBOX", control); return raw != nil })
+	if !slices.Contains(dkimDomains(t, raw), w.domain) {
+		t.Fatalf("submitted mail carries no signature for %s:\n%s", w.domain, raw)
+	}
+
+	smtpAddr := env(t, "AETHER_TEST_SMTP", "postfix:25")
+	for _, from := range []string{"CEO <ceo@" + w.domain + ">", bob} {
+		subject := tag + " " + randomSuffix()
+		if err := submit(t, smtpAddr, "", "", "sender@external.example", []string{bob}, rfc822(from, bob, subject, "x"), false); err != nil {
+			t.Fatalf("inbound delivery from %s: %v", from, err)
+		}
+		waitFor(t, "the forwarded copy of mail from "+from, func() bool { raw = imapFindSubject(t, c, "INBOX", subject); return raw != nil })
+		if slices.Contains(dkimDomains(t, raw), w.domain) {
+			t.Fatalf("forwarded outside mail from %s was signed for %s:\n%s", from, w.domain, raw)
+		}
+	}
 }

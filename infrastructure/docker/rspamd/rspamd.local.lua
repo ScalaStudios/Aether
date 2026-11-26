@@ -394,6 +394,18 @@ rspamd_config:register_symbol({
 
 local lua_dkim_tools = require 'lua_dkim_tools'
 local sign_using_redis = lua_dkim_tools.sign_using_redis
+local prepare_dkim_signing = lua_dkim_tools.prepare_dkim_signing
+
+lua_dkim_tools.prepare_dkim_signing = function(N, task, settings)
+  if N == 'dkim_signing' and task:get_user() == 'aether-sieve-relay' then
+    local envelope = first_addr(task:get_from('smtp')):lower()
+    local header = task:get_from('mime') or {}
+    if task:get_header('X-Sieve-Redirected-From') or (envelope ~= '' and (#header ~= 1 or (header[1].addr or ''):lower() ~= envelope)) then
+      return false, {}
+    end
+  end
+  return prepare_dkim_signing(N, task, settings)
+end
 
 local function copy_table(src)
   local out = {}
