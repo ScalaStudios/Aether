@@ -34,6 +34,15 @@ func TestCustomCSSKeepsLoadsOnThisServer(t *testing.T) {
 		`a { background: image-set("https://evil.test/a.png" 1x) }`,
 		`a { background: image("https://evil.test/a.png") }`,
 		`a { cursor: url(javascript:alert(1)), auto }`,
+		`a { background: url(///evil.test/a) }`,
+		`a { background: url("////evil.test/a") }`,
+		`a { background: URL(///EVIL.test/a) }`,
+		`a { background: url(\\\\\\evil.test/a) }`,
+		`a { background: url(/\\/evil.test/a) }`,
+		`a { background: url(\2f\2f\2f evil.test/a) }`,
+		`a { background: url(\2F \2F \2F evil.test/a) }`,
+		`/* url( */ a { background: url(//evil.test/a) }`,
+		`q::before { content: "url(/" } a { background: url(//evil.test/a) }`,
 	}
 	for _, css := range refused {
 		if customCSSProblem(css) == "" {

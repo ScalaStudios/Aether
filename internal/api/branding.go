@@ -217,7 +217,8 @@ func customCSSProblem(css string) string {
 	if strings.Contains(plain, "image-set(") || strings.Contains(plain, "image(") || strings.Contains(plain, "src(") {
 		return "Custom CSS can't use image(), image-set() or src(). Use url() with a path on this server."
 	}
-	for _, m := range cssURL.FindAllStringSubmatch(plain, -1) {
+	for rest := plain; strings.Contains(rest, "url("); rest = rest[strings.Index(rest, "url(")+4:] {
+		m := cssURL.FindStringSubmatch(rest[strings.Index(rest, "url("):])
 		target := strings.Map(func(r rune) rune {
 			switch r {
 			case ' ', '\t', '\n', '\r', '\f':
@@ -227,7 +228,7 @@ func customCSSProblem(css string) string {
 			}
 			return r
 		}, m[1]+m[2]+m[3])
-		if u, err := url.Parse(target); err != nil || u.Host != "" || (u.Scheme != "" && u.Scheme != "data") {
+		if u, err := url.Parse(target); err != nil || u.Host != "" || strings.HasPrefix(target, "//") || (u.Scheme != "" && u.Scheme != "data") {
 			return "Custom CSS can only load files from this server, such as url(/api/v1/branding/…), or data: URLs."
 		}
 	}
