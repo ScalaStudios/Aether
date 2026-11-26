@@ -21,6 +21,39 @@ type listedEvent struct {
 	Reminder    *int      `json:"reminderMinutes"`
 }
 
+func TestWeeklyEventKeepsLocalTimeAcrossDST(t *testing.T) {
+	w := setupWorld(t)
+	loc, err := time.LoadLocation("Europe/Amsterdam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 19, 9, 0, 0, 0, loc)
+	var event listedEvent
+	w.alice.must("POST", "/calendar/events", map[string]any{"title": "Weekly sync", "start": start, "end": start.Add(30 * time.Minute), "repeat": "weekly", "timeZone": "Europe/Amsterdam"}, &event, 201)
+	q := url.Values{"start": {"2026-10-18T00:00:00Z"}, "end": {"2026-11-10T00:00:00Z"}}
+	check := func(stage string) {
+		var occurrences []listedEvent
+		w.alice.must("GET", "/calendar/events?"+q.Encode(), nil, &occurrences, 200)
+		count := 0
+		for _, o := range occurrences {
+			if o.ID != event.ID {
+				continue
+			}
+			count++
+			if local := o.Start.In(loc); local.Hour() != 9 || local.Minute() != 0 {
+				t.Errorf("%s: occurrence at %s, want 09:00 local", stage, local)
+			}
+		}
+		if count != 4 {
+			t.Fatalf("%s: got %d occurrences, want 4", stage, count)
+		}
+	}
+	check("created")
+	w.alice.must("PUT", "/calendar/events/"+event.ID, map[string]any{"title": "Weekly sync (renamed)", "start": start.UTC(), "end": start.Add(30 * time.Minute).UTC(), "repeat": "weekly", "timeZone": "UTC"}, nil, 200)
+	check("renamed")
+	w.alice.must("DELETE", "/calendar/events/"+event.ID, nil, nil, 204)
+}
+
 func TestEditingEventTitleKeepsExceptionsTimezoneAndAlarms(t *testing.T) {
 	w := setupWorld(t)
 	suffix := randomSuffix()

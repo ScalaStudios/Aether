@@ -690,6 +690,7 @@ type eventInput struct {
 	Attendees   []string  `json:"attendees"`
 	CalendarID  string    `json:"calendarId"`
 	Reminder    *int      `json:"reminderMinutes"`
+	TimeZone    string    `json:"timeZone"`
 }
 
 func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -721,6 +722,14 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	zone := time.UTC
+	if in.TimeZone != "" {
+		loc, ok := validTimezone(in.TimeZone)
+		if !ok {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_event", "Choose a time zone like Europe/London or America/New_York.")
+			return
+		}
+		zone = loc
+	}
 	if in.CalendarID == "" {
 		in.CalendarID = "personal"
 	}

@@ -165,6 +165,7 @@ export function EventDialog({
         attendees: v.attendees.map((a) => a.address),
         calendarId: v.calendarId,
         reminderMinutes: v.reminder === "off" ? null : Number(v.reminder),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }
       type Saved = CalendarEvent & { bookings?: BookingOutcome[] }
       return event

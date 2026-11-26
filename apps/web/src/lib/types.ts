@@ -1345,6 +1345,7 @@ export type CalendarEventInput = Omit<CalendarEvent, "id" | "repeat" | "seriesSt
   attendees: string[]
   calendarId: string
   reminderMinutes: number | null
+  timeZone: string
 }
 
 export interface FolderNotification {

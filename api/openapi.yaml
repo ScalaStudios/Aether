@@ -6647,6 +6647,7 @@ components:
           description: Saving sends invitations to these addresses from your own mailbox; removed attendees get a cancellation
         calendarId: { type: string, default: personal, description: The calendar to create the event in, or that holds the event being updated }
         reminderMinutes: { type: integer, nullable: true, minimum: 0, maximum: 10080, description: Minutes before the start, 0 at the start, or null to clear the reminder. Omitted leaves the event without one. }
+        timeZone: { type: string, example: Europe/Amsterdam, description: IANA time zone the start and end are stored in, so a repeating event keeps its local time. Omitted stores UTC. An event that already has a time zone keeps it. }
     MailRule:
       type: object
       required: [name, enabled, match, conditions, actions]
