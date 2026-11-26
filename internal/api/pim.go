@@ -720,6 +720,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		writeError(w, http.StatusUnprocessableEntity, "invalid_event", "A reminder can be at the start of the event or up to 7 days before.")
 		return
 	}
+	zone := time.UTC
 	if in.CalendarID == "" {
 		in.CalendarID = "personal"
 	}
@@ -731,6 +732,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	name := r.PathValue("id")
 	uid := secrets.Token(16)
 	var prev *ical.Component
+	var stored *ical.Calendar
 	var ifMatch webdav.ConditionalMatch
 	status := http.StatusCreated
 	if name == "" {
@@ -752,7 +754,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		}
 		ifMatch, status = webdav.ConditionalMatch(`"`+etag+`"`), http.StatusOK
 		if cal, err := ical.NewDecoder(strings.NewReader(data)).Decode(); err == nil {
-			prev = masterEvent(cal)
+			stored, prev = cal, masterEvent(cal)
 		}
 	}
 	organizer, err := s.organizerMailbox(ctx, p.User)
@@ -777,28 +779,81 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			return
 		}
 	}
+	doc := ical.NewCalendar()
+	doc.Props.SetText(ical.PropVersion, "2.0")
+	doc.Props.SetText(ical.PropProductID, "-//Scala Studios//Aether//EN")
 	event := ical.NewEvent()
-	event.Props.SetText(ical.PropUID, uid)
-	event.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
-	if in.AllDay {
-		event.Props.SetDate(ical.PropDateTimeStart, in.Start)
-		event.Props.SetDate(ical.PropDateTimeEnd, in.End)
+	var before calendarEvent
+	if prev != nil && prev.Props.Get(ical.PropRecurrenceID) == nil {
+		doc, event = stored, &ical.Event{Component: prev}
+		before, _, _ = eventFromComponent(name, prev)
+		if start := prev.Props.Get(ical.PropDateTimeStart); start != nil {
+			if loc, ok := validTimezone(start.Params.Get(ical.ParamTimezoneID)); ok {
+				zone = loc
+			}
+		}
 	} else {
-		event.Props.SetDateTime(ical.PropDateTimeStart, in.Start.UTC())
-		event.Props.SetDateTime(ical.PropDateTimeEnd, in.End.UTC())
+		event.Props.SetText(ical.PropUID, uid)
+		doc.Children = append(doc.Children, event.Component)
+	}
+	same := func(a, b time.Time) bool {
+		if in.AllDay {
+			return a.Format("20060102") == b.Format("20060102")
+		}
+		return a.Equal(b)
+	}
+	existing := before.ID != ""
+	reanchor := existing && (in.AllDay != before.AllDay || !same(in.Start, before.Start))
+	event.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
+	if !existing || reanchor || !same(in.End, before.End) {
+		event.Props.Del(ical.PropDuration)
+		if in.AllDay {
+			event.Props.SetDate(ical.PropDateTimeStart, in.Start)
+			event.Props.SetDate(ical.PropDateTimeEnd, in.End)
+		} else {
+			event.Props.SetDateTime(ical.PropDateTimeStart, in.Start.In(zone))
+			event.Props.SetDateTime(ical.PropDateTimeEnd, in.End.In(zone))
+		}
 	}
 	event.Props.SetText(ical.PropSummary, in.Title)
+	event.Props.Del(ical.PropLocation)
 	if in.Location != "" {
 		event.Props.SetText(ical.PropLocation, in.Location)
 	}
+	event.Props.Del(ical.PropDescription)
 	if in.Description != "" {
 		event.Props.SetText(ical.PropDescription, in.Description)
 	}
-	if in.Repeat != "" {
+	switch {
+	case in.Repeat == before.Repeat, in.Repeat == "" && before.Repeat == "custom":
+	case in.Repeat == "":
+		event.Props.Del(ical.PropRecurrenceRule)
+		reanchor = existing
+	default:
 		event.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: repeatRules[in.Repeat]})
+		reanchor = existing
 	}
-	if in.Reminder != nil {
-		setReminder(event.Component, *in.Reminder, in.Title)
+	if reanchor {
+		event.Props.Del(ical.PropExceptionDates)
+		children := []*ical.Component{}
+		for _, c := range doc.Children {
+			if c.Name != ical.CompEvent || c.Props.Get(ical.PropRecurrenceID) == nil {
+				children = append(children, c)
+			}
+		}
+		doc.Children = children
+	}
+	if (in.Reminder == nil) != (before.Reminder == nil) || in.Reminder != nil && *in.Reminder != *before.Reminder {
+		children := []*ical.Component{}
+		for _, c := range event.Children {
+			if c.Name != ical.CompAlarm {
+				children = append(children, c)
+			}
+		}
+		event.Children = children
+		if in.Reminder != nil {
+			setReminder(event.Component, *in.Reminder, in.Title)
+		}
 	}
 	sequence := 0
 	if prev != nil {
@@ -815,6 +870,8 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 				previous[a.Address] = strings.ToUpper(a.Status)
 			}
 		}
+		event.Props.Del(ical.PropOrganizer)
+		event.Props.Del(ical.PropAttendee)
 		if len(attendees) > 0 {
 			event.Props.Set(organizerProp(mailpkg.Address{Name: organizer.DisplayName, Address: strings.ToLower(organizer.Address)}))
 		}
@@ -844,10 +901,6 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			removed = append(removed, mailpkg.Address{Address: address})
 		}
 	}
-	doc := ical.NewCalendar()
-	doc.Props.SetText(ical.PropVersion, "2.0")
-	doc.Props.SetText(ical.PropProductID, "-//Scala Studios//Aether//EN")
-	doc.Children = append(doc.Children, event.Component)
 	f, err := calendarFields(doc)
 	if err != nil {
 		s.davError(w, r, err)

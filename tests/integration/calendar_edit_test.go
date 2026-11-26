@@ -1,0 +1,129 @@
+//go:build integration
+
+package integration
+
+import (
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+)
+
+type listedEvent struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	SeriesStart time.Time `json:"seriesStart"`
+	Repeat      string    `json:"repeat"`
+	Reminder    *int      `json:"reminderMinutes"`
+}
+
+func TestEditingEventTitleKeepsExceptionsTimezoneAndAlarms(t *testing.T) {
+	w := setupWorld(t)
+	suffix := randomSuffix()
+	ics := strings.ReplaceAll(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//Import//EN
+BEGIN:VTIMEZONE
+TZID:Europe/Amsterdam
+BEGIN:STANDARD
+DTSTART:19701025T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:19700329T020000
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:planning-SUFFIX@example.com
+DTSTAMP:20260101T000000Z
+DTSTART;TZID=Europe/Amsterdam:20261019T090000
+DTEND;TZID=Europe/Amsterdam:20261019T100000
+RRULE:FREQ=WEEKLY
+EXDATE;TZID=Europe/Amsterdam:20261102T090000
+SUMMARY:Planning SUFFIX
+BEGIN:VALARM
+ACTION:AUDIO
+TRIGGER:-PT10M
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:planning-SUFFIX@example.com
+DTSTAMP:20260101T000000Z
+RECURRENCE-ID;TZID=Europe/Amsterdam:20261026T090000
+DTSTART;TZID=Europe/Amsterdam:20261026T140000
+DTEND;TZID=Europe/Amsterdam:20261026T150000
+SUMMARY:Planning SUFFIX (moved)
+END:VEVENT
+END:VCALENDAR
+`, "SUFFIX", suffix)
+	ics = strings.ReplaceAll(ics, "\n", "\r\n")
+	req, _ := http.NewRequest("POST", w.alice.base+"/calendar/import", strings.NewReader(ics))
+	req.Header.Set("Content-Type", "text/calendar")
+	req.Header.Set("X-CSRF-Token", w.alice.csrf)
+	resp, err := w.alice.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"imported":1`) {
+		t.Fatalf("import: %d %s", resp.StatusCode, body)
+	}
+
+	q := url.Values{"start": {"2026-10-18T00:00:00Z"}, "end": {"2026-11-17T00:00:00Z"}}
+	var occurrences []listedEvent
+	w.alice.must("GET", "/calendar/events?"+q.Encode(), nil, &occurrences, 200)
+	var master *listedEvent
+	for i, o := range occurrences {
+		if o.Title == "Planning "+suffix {
+			master = &occurrences[i]
+		}
+	}
+	if master == nil || master.Repeat != "weekly" {
+		t.Fatalf("imported series not listed as weekly: %+v", occurrences)
+	}
+	w.alice.must("PUT", "/calendar/events/"+master.ID, map[string]any{
+		"title":           "Planning " + suffix + " (renamed)",
+		"start":           master.SeriesStart,
+		"end":             master.SeriesStart.Add(master.End.Sub(master.Start)),
+		"repeat":          "weekly",
+		"reminderMinutes": master.Reminder,
+	}, nil, 200)
+
+	export := string(w.alice.raw("GET", "/calendar/export"))
+	start := strings.Index(export, "UID:planning-"+suffix)
+	if start < 0 {
+		t.Fatalf("export lost the series:\n%s", export)
+	}
+	for _, want := range []string{
+		"SUMMARY:Planning " + suffix + " (renamed)",
+		"SUMMARY:Planning " + suffix + " (moved)",
+		"RECURRENCE-ID;TZID=Europe/Amsterdam:20261026T090000",
+		"EXDATE;TZID=Europe/Amsterdam:20261102T090000",
+		"DTSTART;TZID=Europe/Amsterdam:20261019T090000",
+		"BEGIN:VTIMEZONE",
+		"ACTION:AUDIO",
+	} {
+		if !strings.Contains(export, want) {
+			t.Errorf("export is missing %q:\n%s", want, export)
+		}
+	}
+
+	w.alice.must("GET", "/calendar/events?"+q.Encode(), nil, &occurrences, 200)
+	titles := map[string]int{}
+	for _, o := range occurrences {
+		titles[o.Title]++
+	}
+	if titles["Planning "+suffix+" (renamed)"] != 3 || titles["Planning "+suffix+" (moved)"] != 1 {
+		t.Fatalf("after the edit the series expands to %v", titles)
+	}
+}
