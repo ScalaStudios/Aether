@@ -448,6 +448,9 @@ func TestMailMilestone(t *testing.T) {
 		if err := submit(t, submissionAddr, alice, w.aliceAppPassword, alice, []string{bob}, rfc822("CEO <ceo@"+w.domain+">", bob, "header spoof", "x"), false); err == nil || !strings.Contains(err.Error(), "From header") {
 			t.Fatalf("forged header From was not rejected: %v", err)
 		}
+		if err := submit(t, submissionAddr, alice, w.aliceAppPassword, alice, []string{bob}, "From: "+alice+"\r\n"+rfc822("CEO <ceo@"+w.domain+">", bob, "second from", "x"), false); err == nil || !strings.Contains(err.Error(), "From header") {
+			t.Fatalf("a second From header was not rejected: %v", err)
+		}
 	})
 
 	t.Run("protocol credentials are scoped and revocable", func(t *testing.T) {
