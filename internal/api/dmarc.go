@@ -8,7 +8,9 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +27,7 @@ const (
 	maxReportRecords     = 10000
 	maxRecordAuthResults = 100
 	maxReportParts       = 10
+	maxReportTime        = 253402300799
 )
 
 type dmarcFeedback struct {
@@ -209,6 +212,10 @@ func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
 }
 
 func (s *Server) storeDMARCReport(ctx context.Context, fb *dmarcFeedback, recipientDomainIDs []string) error {
+	if begin, end := fb.Metadata.DateRange.Begin, fb.Metadata.DateRange.End; begin < 0 || end < begin || end > maxReportTime {
+		s.log.Info("ignored a DMARC report with an invalid date range", "reporter", fb.Metadata.OrgName, "begin", begin, "end", end)
+		return nil
+	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		var reportID string
 		err := tx.QueryRow(ctx, `
@@ -229,6 +236,9 @@ func (s *Server) storeDMARCReport(ctx context.Context, fb *dmarcFeedback, recipi
 			if i == maxReportRecords {
 				break
 			}
+			if !validDMARCRecord(rec) {
+				continue
+			}
 			rows = append(rows, []any{reportID, rec.Row.SourceIP, rec.Row.Count, truncate(rec.Row.Evaluated.Disposition, 20),
 				rec.Row.Evaluated.DKIM == "pass", rec.Row.Evaluated.SPF == "pass", truncate(rec.Identifiers.HeaderFrom, 255)})
 		}
@@ -236,6 +246,11 @@ func (s *Server) storeDMARCReport(ctx context.Context, fb *dmarcFeedback, recipi
 			[]string{"report_id", "source_ip", "count", "disposition", "dkim_aligned", "spf_aligned", "header_from"}, pgx.CopyFromRows(rows))
 		return err
 	})
+}
+
+func validDMARCRecord(rec dmarcRecord) bool {
+	ip, err := netip.ParseAddr(rec.Row.SourceIP)
+	return err == nil && ip.Zone() == "" && rec.Row.Count >= 0 && rec.Row.Count <= math.MaxInt32
 }
 
 type reportBackend struct{ s *Server }

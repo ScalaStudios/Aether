@@ -71,3 +71,23 @@ func TestReportRecipientDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestValidDMARCRecordAndTruncate(t *testing.T) {
+	for ip, count := range map[string]int{"198.51.100.7": 3, "2001:db8::1": 0} {
+		var rec dmarcRecord
+		rec.Row.SourceIP, rec.Row.Count = ip, count
+		if !validDMARCRecord(rec) {
+			t.Errorf("%s %d rejected", ip, count)
+		}
+	}
+	for ip, count := range map[string]int{"not-an-ip": 1, "fe80::1%eth0": 1, "192.0.2.1": 3_000_000_000, "192.0.2.2": -1} {
+		var rec dmarcRecord
+		rec.Row.SourceIP, rec.Row.Count = ip, count
+		if validDMARCRecord(rec) {
+			t.Errorf("%s %d accepted", ip, count)
+		}
+	}
+	if got := truncate("aé", 2); got != "a" {
+		t.Errorf("truncate split a rune: %q", got)
+	}
+}

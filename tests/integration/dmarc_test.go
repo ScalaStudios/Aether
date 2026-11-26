@@ -42,7 +42,9 @@ func TestDMARCAggregateReports(t *testing.T) {
 <date_range><begin>%d</begin><end>%d</end></date_range></report_metadata><policy_published><domain>%s</domain><p>quarantine</p></policy_published>
 <record><row><source_ip>198.51.100.7</source_ip><count>9</count><policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>fail</spf></policy_evaluated></row><identifiers><header_from>%s</header_from></identifiers></record>
 <record><row><source_ip>203.0.113.9</source_ip><count>2</count><policy_evaluated><disposition>reject</disposition><dkim>fail</dkim><spf>fail</spf></policy_evaluated></row><identifiers><header_from>%s</header_from></identifiers></record>
-</feedback>`, randomSuffix(), now-86400, now-60, w.domain, w.domain, w.domain)
+<record><row><source_ip>not-an-ip</source_ip><count>1</count><policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated></row><identifiers><header_from>%s</header_from></identifiers></record>
+<record><row><source_ip>192.0.2.9</source_ip><count>3000000000</count><policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated></row><identifiers><header_from>%s</header_from></identifiers></record>
+</feedback>`, randomSuffix(), now-86400, now-60, w.domain, w.domain, w.domain, w.domain, w.domain)
 	var gz bytes.Buffer
 	gw := gzip.NewWriter(&gz)
 	gw.Write([]byte(xml))
