@@ -395,14 +395,10 @@ func (s *Server) checkAliasDryRun(ctx context.Context, address string) (*fieldEr
 }
 
 func (s *Server) createAliasRecord(ctx context.Context, a *alias) (*fieldError, error) {
-	var exists bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, a.Address).Scan(&exists); err != nil {
-		return nil, err
-	}
-	if exists {
+	err := s.saveAlias(ctx, a, true, false)
+	if errors.Is(err, errAddressIsMailbox) {
 		return &fieldError{http.StatusConflict, "address_taken", a.Address + " is already a mailbox."}, nil
 	}
-	err := s.saveAlias(ctx, a, true, false)
 	var le *limitError
 	if errors.As(err, &le) {
 		return &fieldError{http.StatusConflict, le.code, le.message}, nil
@@ -416,12 +412,26 @@ func (s *Server) createAliasRecord(ctx context.Context, a *alias) (*fieldError, 
 	return nil, nil
 }
 
+var errAddressIsMailbox = errors.New("address is a mailbox")
+
 func (s *Server) saveAlias(ctx context.Context, a *alias, create, kindChanged bool) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if create {
+		if err := lockAddress(ctx, tx, a.Address); err != nil {
+			return err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, a.Address).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return errAddressIsMailbox
+		}
+	}
 	if create || kindChanged {
 		if err := s.checkAliasLimit(ctx, tx, a.OrgID, a.Kind); err != nil {
 			return err

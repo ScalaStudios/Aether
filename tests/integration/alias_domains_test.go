@@ -5,11 +5,13 @@ package integration
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -231,5 +233,32 @@ func TestAliasDomainModeratedGroupListAndDMARC(t *testing.T) {
 	waitFor(t, "the dmarc-reports mailbox to receive direct mail", func() bool { return findInAPI(reportsUser, reports.ID, "INBOX", sentinel) != 0 })
 	if findInAPI(reportsUser, reports.ID, "INBOX", reportSubject) != 0 {
 		t.Fatal("the alias domain DMARC report also reached the target domain's dmarc-reports mailbox")
+	}
+}
+
+func TestMailboxAndAliasNeverShareAddress(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	org := "/organizations/" + w.orgID
+	for i := 0; i < 20; i++ {
+		local := "race" + randomSuffix()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			w.admin.do("POST", org+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": local, "password": "race-integration-pw"}, nil)
+		}()
+		go func() {
+			defer wg.Done()
+			w.admin.do("POST", org+"/aliases", map[string]any{"domainId": w.domainID, "localPart": local, "destinations": []string{"alice@" + w.domain}}, nil)
+		}()
+		wg.Wait()
+		var both bool
+		if err := db.QueryRow(context.Background(), `SELECT EXISTS (SELECT 1 FROM mailboxes WHERE address = $1) AND EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, local+"@"+w.domain).Scan(&both); err != nil {
+			t.Fatal(err)
+		}
+		if both {
+			t.Fatalf("round %d: %s is both a mailbox and an alias", i, local)
+		}
 	}
 }

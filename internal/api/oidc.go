@@ -498,6 +498,9 @@ func (s *Server) applyGroupMappings(ctx context.Context, tx pgx.Tx, userID strin
 var errSharedAddress = errors.New("address belongs to a shared mailbox")
 
 func (s *Server) linkMailboxForIdentity(ctx context.Context, tx pgx.Tx, userID, email string, provision bool) error {
+	if err := lockAddress(ctx, tx, email); err != nil {
+		return err
+	}
 	var mailboxID, orgID, kind string
 	var owner *string
 	err := tx.QueryRow(ctx, `SELECT id, org_id, owner_user_id, kind FROM mailboxes WHERE address = $1`, email).Scan(&mailboxID, &orgID, &owner, &kind)

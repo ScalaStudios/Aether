@@ -233,11 +233,19 @@ func (s *Server) checkMailboxDryRun(ctx context.Context, domainID, address, kind
 	return nil, nil
 }
 
+func lockAddress(ctx context.Context, tx pgx.Tx, address string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('address:' || lower($1)))`, address)
+	return err
+}
+
 func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName string, in mailboxCreateInput) (*mailbox, *fieldError, error) {
 	address := in.LocalPart + "@" + domainName
 	var m mailbox
 	var code string
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockAddress(ctx, tx, address); err != nil {
+			return err
+		}
 		quotaBytes, err := s.reserveMailbox(ctx, tx, orgID, in.DomainID, in.QuotaBytes)
 		if err != nil {
 			return err
