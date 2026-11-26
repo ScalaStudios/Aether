@@ -97,17 +97,29 @@ func ParseRaw(raw []byte) (*Message, error) {
 	if walkErr != nil && out.Text == "" && out.HTML == "" {
 		return nil, walkErr
 	}
+	budget := maxInlinedImageBytes
 	for _, img := range inline {
-		ref := "cid:" + img.cid
-		if !strings.Contains(out.HTML, ref) {
+		if !inlineCID(&out.HTML, img.cid, img.mediaType, img.body, &budget) {
 			out.Attachments = append(out.Attachments, img.attachment)
-			continue
 		}
-		out.HTML = strings.ReplaceAll(out.HTML, ref, "data:"+img.mediaType+";base64,"+base64.StdEncoding.EncodeToString(img.body))
 	}
 	if out.HTML != "" {
 		out.HTML = SanitizePreviewHTML(out.HTML)
 	}
 	out.HasAttachments = len(out.Attachments) > 0
 	return out, nil
+}
+
+const maxInlinedImageBytes = 10 << 20
+
+func inlineCID(html *string, cid, mediaType string, body []byte, budget *int) bool {
+	ref := "cid:" + cid
+	n := strings.Count(*html, ref)
+	uri := "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(body)
+	if n == 0 || n*len(uri) > *budget {
+		return false
+	}
+	*budget -= n * len(uri)
+	*html = strings.ReplaceAll(*html, ref, uri)
+	return true
 }

@@ -790,17 +790,19 @@ func (c *Client) Get(address, folder string, uid uint32) (*Message, error) {
 			}
 			*p.dst = decodeCharset(body, p.part.Params["charset"])
 		}
+		budget := maxInlinedImageBytes
 		for _, p := range inline {
-			cid := "cid:" + strings.Trim(p.part.ID, "<>")
-			if !strings.Contains(out.HTML, cid) || p.part.Size > maxInlineImage {
-				out.Attachments = append(out.Attachments, Attachment{Part: partString(p.path), Filename: firstNonEmpty(p.part.Filename(), "image-"+partString(p.path)), ContentType: p.part.MediaType(), Size: int64(p.part.Size)})
-				continue
+			cid := strings.Trim(p.part.ID, "<>")
+			if strings.Contains(out.HTML, "cid:"+cid) && p.part.Size <= maxInlineImage {
+				body, err := fetchPart(ic, uidSet, p.path)
+				if err != nil {
+					return err
+				}
+				if inlineCID(&out.HTML, cid, p.part.MediaType(), body, &budget) {
+					continue
+				}
 			}
-			body, err := fetchPart(ic, uidSet, p.path)
-			if err != nil {
-				return err
-			}
-			out.HTML = strings.ReplaceAll(out.HTML, cid, "data:"+p.part.MediaType()+";base64,"+base64.StdEncoding.EncodeToString(body))
+			out.Attachments = append(out.Attachments, Attachment{Part: partString(p.path), Filename: firstNonEmpty(p.part.Filename(), "image-"+partString(p.path)), ContentType: p.part.MediaType(), Size: int64(p.part.Size)})
 		}
 		if out.HTML != "" {
 			out.HTML = SanitizeMessageHTML(out.HTML)

@@ -1,6 +1,8 @@
 package mail
 
 import (
+	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -49,5 +51,22 @@ func TestParseRawKeepsUnparseableFromReadable(t *testing.T) {
 	}
 	if len(m.From) != 1 || m.From[0].Address != "not an address" || m.Text != "plain body\r\n" {
 		t.Fatalf("got from %+v text %q", m.From, m.Text)
+	}
+}
+
+func TestParseRawBoundsRepeatedInlineImages(t *testing.T) {
+	img := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xab}, 8<<10))
+	raw := "From: a@example.test\r\nTo: b@example.test\r\nSubject: s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/html\r\n\r\n<p>" + strings.Repeat(`<img src="cid:a">`, 2000) + "</p>\r\n" +
+		"--b\r\nContent-Type: image/png\r\nContent-Id: <a>\r\nContent-Transfer-Encoding: base64\r\n\r\n" + img + "\r\n--b--\r\n"
+	m, err := ParseRaw([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.HTML) > 10<<20+len(raw) {
+		t.Fatalf("html grew to %d bytes", len(m.HTML))
+	}
+	if len(m.Attachments) != 1 || m.Attachments[0].ContentType != "image/png" {
+		t.Fatalf("image not listed as attachment: %+v", m.Attachments)
 	}
 }
