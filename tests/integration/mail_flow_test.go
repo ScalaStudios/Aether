@@ -36,7 +36,7 @@ func TestMailFlowRules(t *testing.T) {
 	w.admin.must("POST", rules, map[string]any{
 		"name": "Approve payments", "mode": "enforce",
 		"conditions": []map[string]any{{"field": "subject", "values": []string{"payment request"}}},
-		"actions":    map[string]any{"approvers": []string{alice}},
+		"actions":    map[string]any{"approvers": []string{alice, env(t, "AETHER_TEST_ADMIN_EMAIL", "")}},
 	}, &approval, 201)
 	if code := w.admin.do("POST", rules, map[string]any{"name": "bad", "mode": "enforce", "actions": map[string]any{"approvers": []string{"nobody@" + w.domain}}}, nil); code != 422 {
 		t.Fatalf("approver outside the organization: %d, want 422", code)
@@ -88,6 +88,8 @@ func TestMailFlowRules(t *testing.T) {
 		t.Fatal("a rule in test mode sent a copy")
 	}
 
+	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": alice, "role": "owner"}, nil, 204)
+	w.admin.must("DELETE", "/organizations/"+w.orgID+"/members/"+memberID(t, w, env(t, "AETHER_TEST_ADMIN_EMAIL", "")), nil, nil, 204)
 	held := "payment request " + randomSuffix()
 	if err := submit(t, smtpAddr, "", "", "billing@vendor.example", []string{bob}, rfc822("billing@vendor.example", bob, held, "please pay"), false); err != nil {
 		t.Fatalf("held delivery: %v", err)
@@ -109,6 +111,9 @@ func TestMailFlowRules(t *testing.T) {
 	}
 	if code := w.bob.do("POST", "/mail-flow/held/"+waiting[0].ID+"/approve", nil, nil); code != 404 {
 		t.Fatalf("non-approver approved: %d", code)
+	}
+	if code := w.admin.do("POST", "/mail-flow/held/"+waiting[0].ID+"/approve", nil, nil); code != 404 {
+		t.Fatalf("platform administrator named as approver after leaving the organization approved: %d", code)
 	}
 	w.alice.must("POST", "/mail-flow/held/"+waiting[0].ID+"/approve", nil, nil, 204)
 	waitFor(t, "the approved message", func() bool { return imapFindSubject(t, ic, "INBOX", held) != nil })

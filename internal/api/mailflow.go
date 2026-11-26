@@ -333,7 +333,7 @@ func (s *Server) decideHeld(w http.ResponseWriter, r *http.Request, p *principal
 		if err != nil {
 			return err
 		}
-		if !p.memberAdmin(orgID) && (p.apiKey != nil || p.orgRole(orgID) == "" || !slices.Contains(approvers, strings.ToLower(p.User.Email))) {
+		if !p.memberAdmin(orgID) && (p.apiKey != nil || p.grants[orgID].Role == "" || !slices.Contains(approvers, strings.ToLower(p.User.Email))) {
 			return pgx.ErrNoRows
 		}
 		status := "rejected"
