@@ -140,6 +140,22 @@ func TestCalendarSharing(t *testing.T) {
 	if code := w.bob.do("DELETE", "/calendar/events/"+meeting.ID+"?calendar="+shared.ID, nil, nil); code != 403 {
 		t.Fatalf("an editor deleting the owner's meeting would leave guests uninformed, got %d", code)
 	}
+	if err := dav.RemoveAll(ctx, davPath+meeting.ID); err == nil {
+		t.Fatal("an editor deleting the owner's meeting over CalDAV should be refused")
+	}
+	if code := w.bob.do("PUT", "/calendar/events/"+meeting.ID, event("Moved", shared.ID), nil); code != 403 {
+		t.Fatalf("an editor changing the owner's meeting should be refused, got %d", code)
+	}
+	w.alice.must("GET", rangeQuery, nil, &aliceEvents, 200)
+	planning := 0
+	for _, e := range aliceEvents {
+		if e.Title == "Planning" {
+			planning++
+		}
+	}
+	if len(aliceEvents) != 4 || planning != 1 {
+		t.Fatalf("the owner's meeting should be unchanged: %+v", aliceEvents)
+	}
 	w.bob.must("POST", "/calendar/events", event("Scratch", shared.ID), &idea, 201)
 	w.bob.must("DELETE", "/calendar/events/"+idea.ID+"?calendar="+shared.ID, nil, nil, 204)
 

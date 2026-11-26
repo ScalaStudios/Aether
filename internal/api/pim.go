@@ -762,6 +762,10 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 	}
 	var attendees, removed []mailpkg.Address
 	invited := prev != nil && eventOrganizer(prev).Address != "" && (organizer == nil || eventOrganizer(prev).Address != strings.ToLower(organizer.Address))
+	if invited && calendar.Access != "owner" {
+		writeError(w, http.StatusForbidden, "meeting", "This is a meeting with other people. Only the calendar's owner can change it.")
+		return
+	}
 	if !invited && (len(in.Attendees) > 0 || prev != nil && len(eventAttendees(prev)) > 0) {
 		if organizer == nil {
 			writeError(w, http.StatusUnprocessableEntity, "no_mailbox", "You need a mailbox of your own to send invitations.")
@@ -904,14 +908,11 @@ func (s *Server) deleteEvent(w http.ResponseWriter, r *http.Request, p *principa
 		s.davError(w, r, err)
 		return
 	}
-	var data string
-	if calendar.Access != "owner" {
-		err = s.db.QueryRow(ctx, `SELECT data FROM dav_objects WHERE collection_id = $1 AND name = $2`, calendar.ID, name).Scan(&data)
-		if cal, decodeErr := ical.NewDecoder(strings.NewReader(data)).Decode(); err == nil && decodeErr == nil && masterEvent(cal) != nil && eventOrganizer(masterEvent(cal)).Address != "" {
-			writeError(w, http.StatusForbidden, "meeting", "This is a meeting with other people. Only the calendar's owner can cancel it.")
-			return
-		}
+	if err := s.checkSharedMeeting(ctx, calendar, name); err != nil {
+		s.davError(w, r, err)
+		return
 	}
+	var data string
 	err = s.db.QueryRow(ctx, `DELETE FROM dav_objects WHERE collection_id = $1 AND name = $2 RETURNING data`, calendar.ID, name).Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)

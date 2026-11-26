@@ -588,6 +588,9 @@ func (b *calendarBackend) PutCalendarObject(ctx context.Context, p string, cal *
 	if err != nil {
 		return nil, err
 	}
+	if err := b.s.checkSharedMeeting(ctx, c, dp.name); err != nil {
+		return nil, err
+	}
 	f, err := calendarFields(cal)
 	if err != nil {
 		return nil, err
@@ -612,7 +615,28 @@ func (b *calendarBackend) DeleteCalendarObject(ctx context.Context, p string) er
 	if err != nil {
 		return err
 	}
+	if err := b.s.checkSharedMeeting(ctx, c, dp.name); err != nil {
+		return err
+	}
 	return b.s.deleteDAVObject(ctx, c.ID, dp.name)
+}
+
+func (s *Server) checkSharedMeeting(ctx context.Context, c *collectionRow, name string) error {
+	if c.Access == "owner" {
+		return nil
+	}
+	var data string
+	err := s.db.QueryRow(ctx, `SELECT data FROM dav_objects WHERE collection_id = $1 AND name = $2`, c.ID, name).Scan(&data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if cal, err := ical.NewDecoder(strings.NewReader(data)).Decode(); err == nil && masterEvent(cal) != nil && eventOrganizer(masterEvent(cal)).Address != "" {
+		return webdav.NewHTTPError(http.StatusForbidden, errors.New("this is a meeting with other people, only the calendar's owner can change or cancel it"))
+	}
+	return nil
 }
 
 type contactsBackend struct{ s *Server }

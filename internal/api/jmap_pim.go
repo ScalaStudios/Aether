@@ -643,6 +643,9 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 		if existing.Access == "read" {
 			return "", itemError("forbidden", "This calendar is shared with you read-only.")
 		}
+		if err := s.checkSharedMeeting(ctx, &collectionRow{ID: existing.Collection, Access: existing.Access}, existing.Name); err != nil {
+			return "", itemError("forbidden", "Only the calendar's owner can change a meeting with other people.")
+		}
 		cal, _ = ical.NewDecoder(strings.NewReader(existing.Data)).Decode()
 		for _, child := range cal.Children {
 			if child.Name == ical.CompEvent && child.Props.Get(ical.PropRecurrenceID) == nil {
@@ -830,6 +833,9 @@ func (s *Server) deleteJMAPEvent(ctx context.Context, userID, id string) map[str
 		}
 		if ev.Access == "read" {
 			return itemError("forbidden", "This calendar is shared with you read-only.")
+		}
+		if err := s.checkSharedMeeting(ctx, &collectionRow{ID: ev.Collection, Access: ev.Access}, ev.Name); err != nil {
+			return itemError("forbidden", "Only the calendar's owner can cancel a meeting with other people.")
 		}
 		if err := s.deleteDAVObject(ctx, ev.Collection, ev.Name); err != nil {
 			return itemError("serverFail", "The event could not be deleted.")
