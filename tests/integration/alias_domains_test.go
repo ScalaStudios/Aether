@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emersion/go-smtp"
 )
 
 func TestAliasDomains(t *testing.T) {
@@ -212,6 +215,13 @@ func TestAliasDomainModeratedGroupListAndDMARC(t *testing.T) {
 		w.admin.must("GET", "/domains/"+ad.ID+"/dmarc", nil, &summary, 200)
 		return summary.Reports == 1
 	})
+	for _, internal := range []string{"reports@aether-reports.internal", "reports+" + ad.ID + "@aether-reports.internal", "list-" + list.ID + "@aether-reports.internal"} {
+		err := submit(t, smtpAddr, "", "", "sender@external.example", []string{internal}, rfc822("sender@external.example", internal, "internal", "x"), false)
+		var smtpErr *smtp.SMTPError
+		if !errors.As(err, &smtpErr) || smtpErr.Code < 500 {
+			t.Fatalf("outside mail to the internal address %s was not refused permanently: %v", internal, err)
+		}
+	}
 	reportsUser := newClient(t)
 	reportsUser.login("dmarc-reports@"+w.domain, "dmarc-integration-pw")
 	sentinel := "after report " + randomSuffix()

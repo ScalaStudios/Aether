@@ -1,1 +1,2 @@
 /\.aether-coexistence\.invalid\.?$/ REJECT 5.7.1 Reserved recipient domain
+/@aether-reports\.internal\.?$/ REJECT 5.1.1 Recipient address unavailable
