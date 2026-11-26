@@ -3,8 +3,11 @@
 package integration
 
 import (
+	"context"
 	"net/url"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type scimUser struct {
@@ -140,5 +143,110 @@ func TestSCIMSkipsPersonalAliasAddress(t *testing.T) {
 		if m.Address == email {
 			t.Fatal("provisioning created a mailbox behind a personal alias")
 		}
+	}
+}
+
+func scimClient(t *testing.T, w *world, f *fakeIssuer, autoProvision bool) (string, string, *apiClient) {
+	t.Helper()
+	slug := "halo-" + randomSuffix()
+	var provider idOnly
+	w.admin.must("POST", "/admin/identity-providers", map[string]any{
+		"slug": slug, "name": "Halo", "kind": "halo", "issuer": f.issuer, "clientId": f.clientID, "clientSecret": f.secret, "autoProvision": autoProvision,
+	}, &provider, 201)
+	t.Cleanup(func() { w.admin.do("DELETE", "/admin/identity-providers/"+provider.ID, nil, nil) })
+	var enabled struct {
+		Token string `json:"token"`
+	}
+	w.admin.must("POST", "/admin/identity-providers/"+provider.ID+"/scim-token", nil, &enabled, 200)
+	halo := newClient(t)
+	halo.bearer = enabled.Token
+	return slug, provider.ID, halo
+}
+
+func scimUserBody(email, externalID string, active bool) map[string]any {
+	return map[string]any{"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:User"}, "userName": email, "externalId": externalID, "active": active}
+}
+
+func scimActive(active bool) map[string]any {
+	return map[string]any{"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"}, "Operations": []map[string]any{{"op": "replace", "path": "active", "value": active}}}
+}
+
+func TestSCIMOnlyReachesLinkedAccounts(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	ctx := context.Background()
+	slug, providerID, halo := scimClient(t, w, startFakeIssuer(t), false)
+	base := "/scim/" + slug + "/Users/"
+
+	adminID, aliceID := userID(t, w.admin), userID(t, w.alice)
+	var adminEmail string
+	if err := db.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, adminID).Scan(&adminEmail); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []struct{ id, email string }{{adminID, adminEmail}, {aliceID, "alice@" + w.domain}} {
+		var list struct {
+			Resources []scimUser `json:"Resources"`
+		}
+		halo.must("GET", "/scim/"+slug+"/Users?filter="+url.QueryEscape(`userName eq "`+target.email+`"`), nil, &list, 200)
+		if len(list.Resources) != 0 {
+			t.Fatalf("filter found an account this provider is not linked to: %+v", list.Resources)
+		}
+		for _, call := range []struct {
+			method string
+			body   any
+		}{{"GET", nil}, {"PUT", scimUserBody(target.email, "other-"+randomSuffix(), true)}, {"PATCH", scimActive(false)}, {"DELETE", nil}} {
+			if got := halo.do(call.method, base+target.id, call.body, nil); got != 404 {
+				t.Fatalf("%s on an unlinked account returned %d, want 404", call.method, got)
+			}
+		}
+		var status string
+		var links int
+		if err := db.QueryRow(ctx, `SELECT status, (SELECT count(*) FROM user_identities WHERE user_id = $1 AND provider_id = $2) FROM users WHERE id = $1`, target.id, providerID).Scan(&status, &links); err != nil {
+			t.Fatal(err)
+		}
+		if status != "active" || links != 0 {
+			t.Fatalf("unlinked account changed: status %s, links %d", status, links)
+		}
+	}
+
+	if got := halo.do("POST", "/scim/"+slug+"/Users", scimUserBody("nolink"+randomSuffix()+"@"+w.domain, "", true), nil); got != 400 {
+		t.Fatalf("create without externalId returned %d, want 400", got)
+	}
+
+	first, subject := "first"+randomSuffix()+"@"+w.domain, "halo-"+randomSuffix()
+	var created scimUser
+	halo.must("POST", "/scim/"+slug+"/Users", scimUserBody(first, subject, true), &created, 201)
+	second := "second" + randomSuffix() + "@" + w.domain
+	if got := halo.do("POST", "/scim/"+slug+"/Users", scimUserBody(second, subject, true), nil); got != 409 {
+		t.Fatalf("create with an externalId linked to another user returned %d, want 409", got)
+	}
+	var exists bool
+	if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)`, second).Scan(&exists); err != nil || exists {
+		t.Fatalf("conflicting create left an account behind: %v %v", exists, err)
+	}
+
+	moved := "halo-" + randomSuffix()
+	halo.must("PUT", base+created.ID, scimUserBody(first, moved, true), nil, 200)
+	rows, err := db.Query(ctx, `SELECT subject FROM user_identities WHERE provider_id = $1 AND user_id = $2`, providerID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjects, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(subjects) != 1 || subjects[0] != moved {
+		t.Fatalf("identities after externalId change: %v %v", subjects, err)
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE users SET is_platform_admin = true WHERE id = $1`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := halo.do("GET", base+created.ID, nil, nil); got != 404 {
+		t.Fatalf("GET on a linked platform admin returned %d, want 404", got)
+	}
+	var list struct {
+		Resources []scimUser `json:"Resources"`
+	}
+	halo.must("GET", "/scim/"+slug+"/Users?filter="+url.QueryEscape(`userName eq "`+first+`"`), nil, &list, 200)
+	if len(list.Resources) != 0 {
+		t.Fatalf("filter found a linked platform admin: %+v", list.Resources)
 	}
 }

@@ -105,6 +105,8 @@ func (s *Server) scimResource(p *providerRow, u scimRow) scimUser {
 	return out
 }
 
+const scimReach = `EXISTS (SELECT 1 FROM user_identities i WHERE i.provider_id = $1 AND i.user_id = u.id) AND NOT u.is_platform_admin`
+
 const scimRowColumns = `u.id, u.email, u.display_name, u.status, coalesce((SELECT subject FROM user_identities WHERE provider_id = $1 AND user_id = u.id LIMIT 1), '')`
 
 func scanSCIMRow(row pgx.Row) (scimRow, error) {
@@ -130,9 +132,9 @@ func (s *Server) scimListUsers(w http.ResponseWriter, r *http.Request) {
 			scimError(w, http.StatusBadRequest, "invalidFilter", "The userName in the filter is not a valid string.")
 			return
 		}
-		rows, err = s.db.Query(r.Context(), `SELECT `+scimRowColumns+` FROM users u WHERE u.email = $2`, p.ID, strings.ToLower(userName))
+		rows, err = s.db.Query(r.Context(), `SELECT `+scimRowColumns+` FROM users u WHERE u.email = $2 AND `+scimReach, p.ID, strings.ToLower(userName))
 	} else {
-		rows, err = s.db.Query(r.Context(), `SELECT `+scimRowColumns+` FROM users u WHERE EXISTS (SELECT 1 FROM user_identities i WHERE i.provider_id = $1 AND i.user_id = u.id) ORDER BY u.email LIMIT $2`, p.ID, scimMaxResults)
+		rows, err = s.db.Query(r.Context(), `SELECT `+scimRowColumns+` FROM users u WHERE `+scimReach+` ORDER BY u.email LIMIT $2`, p.ID, scimMaxResults)
 	}
 	if err != nil {
 		s.internalError(w, r, err)
@@ -156,7 +158,7 @@ func (s *Server) scimUserFromPath(w http.ResponseWriter, r *http.Request, p *pro
 		scimError(w, http.StatusNotFound, "", "No such user.")
 		return scimRow{}, false
 	}
-	u, err := scanSCIMRow(s.db.QueryRow(r.Context(), `SELECT `+scimRowColumns+` FROM users u WHERE u.id = $2`, p.ID, id))
+	u, err := scanSCIMRow(s.db.QueryRow(r.Context(), `SELECT `+scimRowColumns+` FROM users u WHERE u.id = $2 AND `+scimReach, p.ID, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		scimError(w, http.StatusNotFound, "", "No such user.")
 		return scimRow{}, false
@@ -210,6 +212,10 @@ func (s *Server) scimCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if in.ExternalID == "" {
+		scimError(w, http.StatusBadRequest, "invalidValue", "externalId is required so the account stays linked to this provider.")
+		return
+	}
 	var userID string
 	err := pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
 		var exists bool
@@ -231,7 +237,7 @@ func (s *Server) scimCreateUser(w http.ResponseWriter, r *http.Request) {
 		return s.scimLink(r.Context(), tx, p, userID, email, in.ExternalID)
 	})
 	if errors.Is(err, errSCIMConflict) {
-		scimError(w, http.StatusConflict, "uniqueness", "A user with this userName already exists.")
+		scimError(w, http.StatusConflict, "uniqueness", "A user with this userName or externalId already exists.")
 		return
 	}
 	if errors.Is(err, errSharedAddress) {
@@ -258,8 +264,20 @@ var errSCIMConflict = errors.New("scim conflict")
 
 func (s *Server) scimLink(ctx context.Context, tx pgx.Tx, p *providerRow, userID, email, externalID string) error {
 	if externalID != "" {
-		if _, err := tx.Exec(ctx, `INSERT INTO user_identities (provider_id, subject, user_id) VALUES ($1, $2, $3) ON CONFLICT (provider_id, subject) DO NOTHING`, p.ID, externalID, userID); err != nil {
+		var owner string
+		err := tx.QueryRow(ctx, `SELECT user_id FROM user_identities WHERE provider_id = $1 AND subject = $2`, p.ID, externalID).Scan(&owner)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			if _, err := tx.Exec(ctx, `DELETE FROM user_identities WHERE provider_id = $1 AND user_id = $2`, p.ID, userID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO user_identities (provider_id, subject, user_id) VALUES ($1, $2, $3)`, p.ID, externalID, userID); err != nil {
+				return err
+			}
+		case err != nil:
 			return err
+		case owner != userID:
+			return errSCIMConflict
 		}
 	}
 	return s.linkMailboxForIdentity(ctx, tx, userID, email, true)
@@ -290,6 +308,10 @@ func (s *Server) scimReplaceUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return ignoreLimit(s.scimLink(r.Context(), tx, p, u.ID, email, in.ExternalID))
 	})
+	if errors.Is(err, errSCIMConflict) {
+		scimError(w, http.StatusConflict, "uniqueness", "This externalId is linked to another user.")
+		return
+	}
 	if errors.Is(err, errSharedAddress) {
 		scimError(w, http.StatusBadRequest, "invalidValue", "This address belongs to a shared mailbox and cannot sign in.")
 		return
