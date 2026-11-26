@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: ./scripts/setup.sh dev
-      - run: AETHER_IMAP_ADDR=toxiproxy:1143 AETHER_DOVECOT_API_URL=http://toxiproxy:18089 docker compose --profile tika up -d --build --wait --wait-timeout 120 postgres valkey rspamd dovecot postfix toxiproxy tika api mail-events
+      - run: AETHER_IMAP_ADDR=toxiproxy:1143 AETHER_DOVECOT_API_URL=http://toxiproxy:18089 docker compose --profile tika up -d --build --wait --wait-timeout 120 postgres valkey rspamd dovecot postfix toxiproxy tika api mail-events mail-trace
       - run: echo "$AETHER_TEST_ADMIN_PASSWORD" | docker compose exec -T api aether bootstrap-admin --email "$AETHER_TEST_ADMIN_EMAIL" --password-stdin
       - run: docker compose --profile test up -d --wait toxiproxy api
         env:
