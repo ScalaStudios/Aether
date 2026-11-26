@@ -65,6 +65,14 @@ func newClient(t *testing.T) *apiClient {
 
 func (c *apiClient) do(method, path string, body any, out any) int {
 	c.t.Helper()
+	code, err := c.send(method, path, body, out)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return code
+}
+
+func (c *apiClient) send(method, path string, body any, out any) (int, error) {
 	var r io.Reader
 	if body != nil {
 		buf, _ := json.Marshal(body)
@@ -80,16 +88,16 @@ func (c *apiClient) do(method, path string, body any, out any) int {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.t.Fatalf("%s %s: %v", method, path, err)
+		return 0, fmt.Errorf("%s %s: %v", method, path, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if out != nil && resp.StatusCode < 300 && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			c.t.Fatalf("%s %s: decode %q: %v", method, path, raw, err)
+			return resp.StatusCode, fmt.Errorf("%s %s: decode %q: %v", method, path, raw, err)
 		}
 	}
-	return resp.StatusCode
+	return resp.StatusCode, nil
 }
 
 func (c *apiClient) raw(method, path string) []byte {
