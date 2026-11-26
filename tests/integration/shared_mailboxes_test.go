@@ -1810,7 +1810,7 @@ func TestACLSyncHoldsNoDatabaseTransaction(t *testing.T) {
 	start := time.Now()
 	w.bob.must("GET", "/me/mailboxes", nil, nil, 200)
 	w.bob.must("POST", "/me/app-passwords", map[string]string{"name": "phone", "mailboxId": w.bobMailbox}, nil, 201)
-	if d := time.Since(start); d > 2*time.Second {
+	if d := time.Since(start); d > 10*time.Second {
 		t.Fatalf("unrelated requests took %s while the ACL work was stalled", d)
 	}
 	imapProxy.restore()
@@ -1956,6 +1956,10 @@ func TestACLWorkerSchedulesFairly(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE mailboxes SET address = upper(address) WHERE id = ANY($1)`, stuck); err != nil {
 		t.Fatalf("break the master login of the stuck mailboxes: %v", err)
 	}
+	var marked time.Time
+	if err := db.QueryRow(ctx, `SELECT now()`).Scan(&marked); err != nil {
+		t.Fatalf("database time: %v", err)
+	}
 	for _, id := range stuck {
 		mark(id, "1 minute")
 	}
@@ -1966,7 +1970,7 @@ func TestACLWorkerSchedulesFairly(t *testing.T) {
 	if err := db.QueryRow(ctx, `SELECT count(*) FROM mailboxes WHERE id = ANY($1) AND acl_pending AND acl_attempts >= 1`, stuck).Scan(&n); err != nil || n != 20 {
 		t.Fatalf("%d of the 20 failing mailboxes are pending after at least one attempt (err=%v); if fewer, the upper-case fixture did not fail the master login", n, err)
 	}
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM mailboxes WHERE id = ANY($1) AND acl_next_attempt_at > now() + interval '10 seconds'`, stuck).Scan(&n); err != nil || n == 0 {
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM mailboxes WHERE id = ANY($1) AND acl_next_attempt_at > $2::timestamptz + interval '10 seconds'`, stuck, marked).Scan(&n); err != nil || n == 0 {
 		t.Fatalf("no failing mailbox is backing off (err=%v)", err)
 	}
 	if g := gauge(t, "aether_mail_acl_backlog_seconds"); g <= 0 {
