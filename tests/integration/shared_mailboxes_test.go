@@ -460,7 +460,7 @@ func TestSharedMailboxScheduledSendChecksRights(t *testing.T) {
 	subject := "scheduled from support " + randomSuffix()
 	w.alice.must("POST", "/mailboxes/"+shared.ID+"/send", map[string]any{
 		"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "sent later",
-		"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+		"sendAt": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 	}, nil, 202)
 	w.admin.must("DELETE", "/mailboxes/"+shared.ID+"/delegates/"+member.UserID, nil, nil, 204)
 	setDelegate(t, w.admin, shared.ID, map[string]any{"email": bob, "access": "read"})
@@ -982,7 +982,7 @@ func TestSharedMailboxScheduledSendModes(t *testing.T) {
 		t.Helper()
 		w.alice.must("POST", send, map[string]any{
 			"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "later",
-			"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+			"sendAt": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 		}, nil, 202)
 	}
 	type item struct {
@@ -1067,7 +1067,7 @@ func TestScheduledSendNeverWritesForReadMembers(t *testing.T) {
 		t.Helper()
 		w.alice.must("POST", send, map[string]any{
 			"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "re", "inReplyTo": ticket.MessageID, "draftUid": draftUID,
-			"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+			"sendAt": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 		}, nil, 202)
 		waitFor(t, "bob to receive "+subject, func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 })
 		waitFor(t, "the copy of "+subject+" in the shared Sent folder", func() bool { return findInAPI(w.alice, shared.ID, "Sent", subject) != 0 })
@@ -1086,7 +1086,7 @@ func TestScheduledSendNeverWritesForReadMembers(t *testing.T) {
 	downgraded := "scheduled then downgraded " + randomSuffix()
 	w.alice.must("POST", send, map[string]any{
 		"to": []map[string]string{{"address": bob}}, "subject": downgraded, "text": "re", "inReplyTo": ticket.MessageID,
-		"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+		"sendAt": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 	}, nil, 202)
 	setDelegate(t, w.admin, shared.ID, map[string]any{"email": alice, "access": "read"})
 	waitFor(t, "bob to receive "+downgraded, func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", downgraded) != 0 })
@@ -1110,7 +1110,7 @@ func TestScheduledMessageWithoutSenderFailsClosed(t *testing.T) {
 	var item idOnly
 	w.alice.must("POST", "/mailboxes/"+shared.ID+"/send", map[string]any{
 		"to": []map[string]string{{"address": bob}}, "subject": subject, "text": "later",
-		"sendAt": time.Now().Add(6 * time.Second).UTC().Format(time.RFC3339),
+		"sendAt": time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339),
 	}, &item, 202)
 	tag, err := db.Exec(context.Background(), `UPDATE scheduled_messages SET sender_user_id = NULL WHERE id = $1`, item.ID)
 	if err != nil || tag.RowsAffected() != 1 {

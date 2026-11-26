@@ -206,7 +206,7 @@ func imapLogin(t *testing.T, user, pass string) (*imapclient.Client, error) {
 
 func waitFor(t *testing.T, what string, fn func() bool) {
 	t.Helper()
-	waitUpTo(t, 30*time.Second, what, fn)
+	waitUpTo(t, time.Minute, what, fn)
 }
 
 func waitUpTo(t *testing.T, limit time.Duration, what string, fn func() bool) {
