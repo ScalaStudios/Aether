@@ -54,3 +54,20 @@ func TestParseDMARCMessageCapsReportParts(t *testing.T) {
 		t.Fatalf("stored %d reports, err %v", stored, err)
 	}
 }
+
+func TestReportRecipientDomain(t *testing.T) {
+	id := "0b4a3c2d-1e2f-4a5b-8c7d-9e0f1a2b3c4d"
+	cases := map[string]string{
+		"reports+" + id + "@aether-reports.internal":       id,
+		"Reports+" + id + "+other@aether-reports.internal": id,
+		"reports@aether-reports.internal":                  "",
+		"reports+not-a-uuid@aether-reports.internal":       "",
+		"list-" + id + "@aether-reports.internal":          "",
+		"reports+" + id + "@example.com":                   "",
+	}
+	for rcpt, want := range cases {
+		if got, ok := reportRecipientDomain(rcpt); ok != (want != "") || (ok && got != want) {
+			t.Errorf("reportRecipientDomain(%q) = %q, %v", rcpt, got, ok)
+		}
+	}
+}

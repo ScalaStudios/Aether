@@ -208,15 +208,16 @@ func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
 	return &fb, nil
 }
 
-func (s *Server) storeDMARCReport(ctx context.Context, fb *dmarcFeedback) error {
+func (s *Server) storeDMARCReport(ctx context.Context, fb *dmarcFeedback, recipientDomainIDs []string) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		var reportID string
 		err := tx.QueryRow(ctx, `
 			INSERT INTO dmarc_reports (domain_id, reporter, report_id, begins_at, ends_at, policy)
 			SELECT id, $2, $3, to_timestamp($4), to_timestamp($5), $6 FROM domains WHERE name = $1 AND verified_at IS NOT NULL
+			  AND org_id IN (SELECT org_id FROM domains WHERE id = ANY($7::uuid[]))
 			ON CONFLICT (domain_id, reporter, report_id) DO NOTHING RETURNING id`,
 			strings.ToLower(strings.TrimSuffix(fb.Policy.Domain, ".")), truncate(fb.Metadata.OrgName, 200), truncate(fb.Metadata.ReportID, 200),
-			fb.Metadata.DateRange.Begin, fb.Metadata.DateRange.End, truncate(fb.Policy.P, 20)).Scan(&reportID)
+			fb.Metadata.DateRange.Begin, fb.Metadata.DateRange.End, truncate(fb.Policy.P, 20), recipientDomainIDs).Scan(&reportID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -287,12 +288,25 @@ func (r *reportSession) LMTPData(body io.Reader, status smtp.StatusCollector) er
 	return nil
 }
 
+func reportRecipientDomain(rcpt string) (string, bool) {
+	local, domain, _ := strings.Cut(strings.ToLower(rcpt), "@")
+	id, ok := strings.CutPrefix(local, "reports+")
+	id, _, _ = strings.Cut(id, "+")
+	return id, ok && domain == "aether-reports.internal" && uuidPattern.MatchString(id)
+}
+
 func (r *reportSession) Data(body io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	var domainIDs []string
+	for _, rcpt := range r.rcpts {
+		if id, ok := reportRecipientDomain(rcpt); ok {
+			domainIDs = append(domainIDs, id)
+		}
+	}
 	var storeErr error
 	err := parseDMARCMessage(io.LimitReader(body, maxReportMessage), func(fb *dmarcFeedback) error {
-		if storeErr = r.s.storeDMARCReport(ctx, fb); storeErr != nil {
+		if storeErr = r.s.storeDMARCReport(ctx, fb, domainIDs); storeErr != nil {
 			r.s.log.Error("storing DMARC report failed", "reporter", fb.Metadata.OrgName, "err", storeErr)
 		}
 		return storeErr
