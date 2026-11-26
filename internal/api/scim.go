@@ -345,13 +345,6 @@ func (s *Server) scimSetActive(ctx context.Context, p *providerRow, userID strin
 		_, err := s.setUserStatus(ctx, userID, "suspended", by)
 		return err
 	}
-	var suspendedBy string
-	if err := s.db.QueryRow(ctx, `SELECT suspended_by FROM users WHERE id = $1`, userID).Scan(&suspendedBy); err != nil {
-		return err
-	}
-	if suspendedBy != by {
-		return nil
-	}
 	_, err := s.setUserStatus(ctx, userID, "active", by)
 	return err
 }
