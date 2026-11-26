@@ -292,7 +292,8 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	var userID string
-	err = s.db.QueryRow(r.Context(), `SELECT id FROM users WHERE email = $1`, strings.ToLower(strings.TrimSpace(in.Email))).Scan(&userID)
+	var targetIsPlatformAdmin bool
+	err = s.db.QueryRow(r.Context(), `SELECT id, is_platform_admin FROM users WHERE email = $1`, strings.ToLower(strings.TrimSpace(in.Email))).Scan(&userID, &targetIsPlatformAdmin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnprocessableEntity, "unknown_user", "No account uses this email address. Create a mailbox for it or let the person sign in through your identity provider first.")
 		return
@@ -312,6 +313,10 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		return
 	}
 	complianceChanged := in.Compliance != nil && *in.Compliance != compliance
+	if p.grantsOwnMembership(userID, targetIsPlatformAdmin) && (raisesGrant(currentGrant, targetGrant) || (complianceChanged && *in.Compliance)) {
+		selfMembershipError(w)
+		return
+	}
 	if complianceChanged && p.orgRole(orgID) != roleOwner {
 		forbidden(w)
 		return

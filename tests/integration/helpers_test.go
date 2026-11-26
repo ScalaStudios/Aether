@@ -245,3 +245,15 @@ func imapFindSubject(t *testing.T, c *imapclient.Client, folder, subject string)
 	}
 	return msgs[0].FindBodySection(section)
 }
+
+func ownerSetsAdminRole(t *testing.T, w *world, membership map[string]any) *apiClient {
+	t.Helper()
+	local := "owner" + randomSuffix()
+	w.admin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": local, "password": local + "-integration-pw"}, nil, 201)
+	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": local + "@" + w.domain, "role": "owner"}, nil, 204)
+	owner := newClient(t)
+	owner.login(local+"@"+w.domain, local+"-integration-pw")
+	membership["email"] = env(t, "AETHER_TEST_ADMIN_EMAIL", "")
+	owner.must("POST", "/organizations/"+w.orgID+"/members", membership, nil, 204)
+	return owner
+}

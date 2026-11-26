@@ -189,3 +189,32 @@ func TestResolveMappedRoles(t *testing.T) {
 		t.Fatalf("expected org-wide custom role to win over scoped mapping, got %+v", gotCustom)
 	}
 }
+
+func TestRaisesGrant(t *testing.T) {
+	member := buildOrgGrant(roleMember, nil, "", nil, nil)
+	admin := buildOrgGrant(roleAdmin, nil, "", nil, nil)
+	owner := buildOrgGrant(roleOwner, nil, "", nil, nil)
+	helpdesk := buildOrgGrant(roleHelpdesk, nil, "", nil, nil)
+	domainAdmin := buildOrgGrant(roleDomainAdmin, nil, "", nil, []string{"d1"})
+	wider := buildOrgGrant(roleDomainAdmin, nil, "", nil, []string{"d1", "d2"})
+	for _, c := range []struct {
+		name    string
+		current *orgGrant
+		next    orgGrant
+		want    bool
+	}{
+		{"joining", nil, member, true},
+		{"member to admin", &member, admin, true},
+		{"admin to owner", &admin, owner, true},
+		{"domain admin to helpdesk", &domainAdmin, helpdesk, true},
+		{"more domains", &domainAdmin, wider, true},
+		{"owner to admin", &owner, admin, false},
+		{"admin to member", &admin, member, false},
+		{"same role", &member, member, false},
+		{"fewer domains", &wider, domainAdmin, false},
+	} {
+		if got := raisesGrant(c.current, c.next); got != c.want {
+			t.Errorf("%s: raisesGrant = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

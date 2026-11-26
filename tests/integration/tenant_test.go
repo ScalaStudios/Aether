@@ -315,3 +315,48 @@ func TestOrganizationKeepsAnOwner(t *testing.T) {
 		w.admin.must("POST", members, map[string]string{"email": bob, "role": "owner"}, nil, 204)
 	}
 }
+
+func TestPlatformAdminCannotGiveThemselvesARole(t *testing.T) {
+	w := setupWorld(t)
+	admin := env(t, "AETHER_TEST_ADMIN_EMAIL", "")
+	members := "/organizations/" + w.orgID + "/members"
+	refused := func(c *apiClient, body map[string]any, what string) {
+		t.Helper()
+		body["email"] = admin
+		if code := errorCode(t, c, "POST", members, body, 403); code != "self_membership" {
+			t.Fatalf("%s: %q, want self_membership", what, code)
+		}
+	}
+	role := func() string {
+		var list []struct {
+			Email, Role string
+		}
+		w.admin.must("GET", members, nil, &list, 200)
+		for _, m := range list {
+			if m.Email == admin {
+				return m.Role
+			}
+		}
+		return ""
+	}
+
+	refused(w.admin, map[string]any{"role": "member"}, "adding themselves")
+	refused(w.admin, map[string]any{"role": "owner", "compliance": true}, "adding themselves as owner")
+	var created struct{ Token string }
+	w.admin.must("POST", "/organizations/"+w.orgID+"/api-keys", map[string]any{"name": "members", "scopes": []string{"members:write"}}, &created, 201)
+	key := &apiClient{t: t, base: w.admin.base, http: w.admin.http, bearer: created.Token}
+	refused(key, map[string]any{"role": "admin"}, "adding them with their own API key")
+	if r := role(); r != "" {
+		t.Fatalf("platform administrator became %q", r)
+	}
+
+	owner := ownerSetsAdminRole(t, w, map[string]any{"role": "member"})
+	refused(w.admin, map[string]any{"role": "admin"}, "raising their own role")
+	refused(w.admin, map[string]any{"role": "member", "compliance": true}, "granting themselves compliance")
+	w.admin.must("POST", members, map[string]any{"email": admin, "role": "member"}, nil, 204)
+	owner.must("POST", members, map[string]any{"email": admin, "role": "admin"}, nil, 204)
+	if r := role(); r != "admin" {
+		t.Fatalf("after promotion by an owner the platform administrator is %q", r)
+	}
+	w.admin.must("POST", members, map[string]any{"email": admin, "role": "member"}, nil, 204)
+}

@@ -277,6 +277,45 @@ func (p *principal) memberAdmin(orgID string) bool {
 	return role == roleOwner || role == roleAdmin
 }
 
+func (p *principal) grantsOwnMembership(userID string, targetIsPlatformAdmin bool) bool {
+	if p.apiKey != nil {
+		return targetIsPlatformAdmin
+	}
+	return p.User.IsPlatformAdmin && userID == p.User.ID
+}
+
+func raisesGrant(current *orgGrant, next orgGrant) bool {
+	if current == nil || roleRank(next.Role) > roleRank(current.Role) {
+		return true
+	}
+	for perm := range next.Perms {
+		if !current.Perms[perm] {
+			return true
+		}
+	}
+	if !current.DomainScoped {
+		return false
+	}
+	if !next.DomainScoped {
+		return true
+	}
+	for _, id := range next.DomainIDs {
+		if !slices.Contains(current.DomainIDs, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func selfMembershipError(w http.ResponseWriter) {
+	writeError(w, http.StatusForbidden, selfMembershipCode, selfMembershipMessage)
+}
+
+const (
+	selfMembershipCode    = "self_membership"
+	selfMembershipMessage = "Platform administrators cannot give themselves a role in an organization. Ask an owner or administrator of the organization."
+)
+
 func (p *principal) orgRole(orgID string) string {
 	g, ok := p.orgGrant(orgID)
 	if !ok {

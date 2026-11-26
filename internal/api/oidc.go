@@ -411,6 +411,10 @@ func resolveMappedRoles(groups []string, mappings []groupMapping) []resolvedMapp
 }
 
 func (s *Server) applyGroupMappings(ctx context.Context, tx pgx.Tx, userID string, groups []string, mappings []groupMapping) error {
+	var platformAdmin bool
+	if err := tx.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id = $1`, userID).Scan(&platformAdmin); err != nil || platformAdmin {
+		return err
+	}
 	for _, rm := range resolveMappedRoles(groups, mappings) {
 		if rm.Role == roleOwner {
 			if err := lockOrganization(ctx, tx, rm.OrgID); err != nil {

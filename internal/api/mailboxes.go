@@ -205,6 +205,8 @@ func mailboxConflictError(code, address string) *fieldError {
 		return &fieldError{http.StatusConflict, code, "An account already signs in with this address. Convert that person's mailbox to shared instead, or choose another address."}
 	case "address_taken":
 		return &fieldError{http.StatusConflict, "address_taken", address + " is already in use by a mailbox or alias."}
+	case selfMembershipCode:
+		return &fieldError{http.StatusForbidden, code, selfMembershipMessage}
 	}
 	return nil
 }
@@ -238,7 +240,7 @@ func lockAddress(ctx context.Context, tx pgx.Tx, address string) error {
 	return err
 }
 
-func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName string, in mailboxCreateInput) (*mailbox, *fieldError, error) {
+func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, domainName string, in mailboxCreateInput) (*mailbox, *fieldError, error) {
 	address := in.LocalPart + "@" + domainName
 	var m mailbox
 	var code string
@@ -268,7 +270,8 @@ func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName stri
 			return nil
 		}
 		var userID string
-		err = tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, address).Scan(&userID)
+		var isPlatformAdmin bool
+		err = tx.QueryRow(ctx, `SELECT id, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &isPlatformAdmin)
 		if in.Kind != "user" {
 			if err == nil {
 				code = "address_is_account"
@@ -281,6 +284,9 @@ func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName stri
 			err = tx.QueryRow(ctx, `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id`, address, in.DisplayName, passwordHash).Scan(&userID)
 		} else if err == nil && in.Password != "" {
 			code = "account_exists"
+			return nil
+		} else if err == nil && p.grantsOwnMembership(userID, isPlatformAdmin) {
+			code = selfMembershipCode
 			return nil
 		}
 		if err != nil {
@@ -365,7 +371,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		forbidden(w)
 		return
 	}
-	m, ie, err := s.createMailboxRecord(r.Context(), orgID, domainName, req)
+	m, ie, err := s.createMailboxRecord(r.Context(), p, orgID, domainName, req)
 	if ie != nil {
 		writeError(w, ie.Status, ie.Code, ie.Message)
 		return

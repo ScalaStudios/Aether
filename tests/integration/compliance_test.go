@@ -61,7 +61,7 @@ func TestComplianceSearchHoldExport(t *testing.T) {
 	if code := errorCode(t, w.alice, "POST", "/organizations/"+w.orgID+"/members", map[string]any{"email": alice, "role": "member", "compliance": true}, 403); code != "forbidden" {
 		t.Fatalf("a member granted the compliance role: %s", code)
 	}
-	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]any{"email": env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "role": "owner", "compliance": true}, nil, 204)
+	ownerSetsAdminRole(t, w, map[string]any{"role": "owner", "compliance": true})
 
 	subject := "Quarterly ledger " + randomSuffix()
 	if err := submit(t, smtpAddr, "", "", "auditor@external.example", []string{alice}, rfc822("auditor@external.example", alice, subject, "confidential figures"), false); err != nil {
@@ -154,7 +154,7 @@ func TestJournaling(t *testing.T) {
 	smtpAddr := env(t, "AETHER_TEST_SMTP", "postfix:25")
 	submissionAddr := env(t, "AETHER_TEST_SUBMISSION", "postfix:587")
 	alice, bob := "alice@"+w.domain, "bob@"+w.domain
-	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]any{"email": env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "role": "owner", "compliance": true}, nil, 204)
+	ownerSetsAdminRole(t, w, map[string]any{"role": "owner", "compliance": true})
 	var vault idOnly
 	w.admin.must("POST", "/organizations/"+w.orgID+"/mailboxes", map[string]any{"domainId": w.domainID, "localPart": "vault", "password": "vault-integration-pw"}, &vault, 201)
 	archive := newClient(t)
@@ -206,7 +206,7 @@ func TestScopedHoldKeepsMatchingMail(t *testing.T) {
 	topic := "Atlas " + suffix
 	matchOld, otherOld := topic+" old", "lunch "+suffix+" old"
 	matchNew, otherNew, draft := topic+" new", "lunch "+suffix+" new", topic+" draft"
-	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]any{"email": env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "role": "owner", "compliance": true}, nil, 204)
+	ownerSetsAdminRole(t, w, map[string]any{"role": "owner", "compliance": true})
 
 	retentionDone := func(what string) {
 		waitUpTo(t, 2*time.Minute, what, func() bool {
@@ -367,7 +367,7 @@ func TestAttachmentScopedHolds(t *testing.T) {
 	topic := "Atlas " + suffix
 	contract, photo := "contract only "+suffix, "photo only "+suffix
 	topicInvoice, topicPhoto, otherInvoice, plain := topic+" invoice", topic+" photo", "other invoice "+suffix, "plain "+suffix
-	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]any{"email": env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "role": "owner", "compliance": true}, nil, 204)
+	ownerSetsAdminRole(t, w, map[string]any{"role": "owner", "compliance": true})
 	retentionDone := func(what string) {
 		waitUpTo(t, 2*time.Minute, what, func() bool {
 			var done bool

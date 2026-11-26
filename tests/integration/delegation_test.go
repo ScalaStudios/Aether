@@ -264,7 +264,7 @@ func TestPlatformAdminCannotReachMail(t *testing.T) {
 		"actions": map[string]any{"forwardTo": []string{"someone@elsewhere.test"}},
 	}}
 
-	w.admin.must("POST", members, map[string]string{"email": admin, "role": "member"}, nil, 204)
+	ownerSetsAdminRole(t, w, map[string]any{"role": "member"})
 	w.admin.must("POST", bob+"/delegates", map[string]any{"email": admin}, nil, 403)
 	w.admin.must("PUT", bob+"/rules", forward, nil, 403)
 	w.admin.must("PUT", bob+"/rules", []map[string]any{}, nil, 200)

@@ -48,6 +48,7 @@ When an actor with `members:write` assigns or modifies a member's role:
 - Only platform administrators and organization owners can grant or change the `owner` role.
 - Only owners and full administrators can grant or change the `admin` role.
 - A custom-role holder with `members:write` can only grant roles whose effective permissions are a subset of their own permissions, and if domain-scoped, can only assign domains within their own domain scope.
+- Platform administrators cannot give themselves a role in an organization. They cannot add themselves as a member, raise their own role or turn on their own compliance right, through the members API, an API key, mailbox creation (including bulk import) or identity provider group mappings; the API answers `403 self_membership`. Lowering their own role or leaving is allowed. An owner or administrator of the organization who is a different person can still add or promote them.
 
 ## Domain scoping
 

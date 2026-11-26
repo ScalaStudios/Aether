@@ -14,7 +14,7 @@ func TestMailFlowRules(t *testing.T) {
 	submissionAddr := env(t, "AETHER_TEST_SUBMISSION", "postfix:587")
 	alice, bob := "alice@"+w.domain, "bob@"+w.domain
 	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": alice, "role": "member"}, nil, 204)
-	w.admin.must("POST", "/organizations/"+w.orgID+"/members", map[string]string{"email": env(t, "AETHER_TEST_ADMIN_EMAIL", ""), "role": "owner"}, nil, 204)
+	ownerSetsAdminRole(t, w, map[string]any{"role": "owner"})
 	rules := "/organizations/" + w.orgID + "/mail-flow/rules"
 
 	var footer, blocked, watch, approval idOnly
