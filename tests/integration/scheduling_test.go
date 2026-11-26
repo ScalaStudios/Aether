@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -239,4 +240,34 @@ func TestUndoSend(t *testing.T) {
 		t.Fatalf("immediate send = %+v", sent)
 	}
 	waitFor(t, "the immediate message", func() bool { return findInAPI(w.bob, w.bobMailbox, "INBOX", immediate) != 0 })
+}
+
+func TestInterruptedScheduledSendIsNotRepeated(t *testing.T) {
+	w := setupWorld(t)
+	subject := "interrupted " + randomSuffix()
+	var item struct {
+		ID string `json:"id"`
+	}
+	w.alice.must("POST", "/mailboxes/"+w.aliceMailbox+"/send", map[string]any{
+		"to": []map[string]string{{"address": "bob@" + w.domain}}, "subject": subject, "text": "x",
+		"sendAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	}, &item, 202)
+	if _, err := testDB(t).Exec(context.Background(), `UPDATE scheduled_messages SET send_at = now(), claimed_at = now() - interval '2 hours' WHERE id = $1`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		ID    string  `json:"id"`
+		Error *string `json:"error"`
+	}
+	waitFor(t, "the interrupted send to be flagged", func() bool {
+		w.alice.must("GET", "/mailboxes/"+w.aliceMailbox+"/scheduled", nil, &list, 200)
+		return len(list) == 1 && list[0].Error != nil
+	})
+	if !strings.Contains(*list[0].Error, "Sent") {
+		t.Fatalf("interrupted send error = %q", *list[0].Error)
+	}
+	if findInAPI(w.bob, w.bobMailbox, "INBOX", subject) != 0 {
+		t.Fatal("an interrupted scheduled send was sent again")
+	}
+	w.alice.must("DELETE", "/mailboxes/"+w.aliceMailbox+"/scheduled/"+item.ID, nil, nil, 200)
 }

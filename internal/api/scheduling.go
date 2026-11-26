@@ -125,7 +125,7 @@ func (s *Server) cancelScheduled(w http.ResponseWriter, r *http.Request, p *prin
 	defer tx.Rollback(r.Context())
 	var raw []byte
 	var bcc []string
-	err = tx.QueryRow(r.Context(), `DELETE FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 AND protected_reply_id IS NULL
+	err = tx.QueryRow(r.Context(), `DELETE FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 AND protected_reply_id IS NULL AND claimed_at IS NULL
 		AND ($3 OR sender_user_id = $4) RETURNING raw, bcc`, id, m.ID, m.Access != "read", p.User.ID).Scan(&raw, &bcc)
 	if errors.Is(err, pgx.ErrNoRows) && m.Access == "read" {
 		var other bool
@@ -280,7 +280,7 @@ func (s *Server) undoDelay(ctx context.Context, userID string) (time.Duration, e
 
 func (s *Server) nextSendAt(ctx context.Context) (time.Time, bool) {
 	var at time.Time
-	err := s.db.QueryRow(ctx, `SELECT send_at FROM scheduled_messages WHERE error IS NULL AND send_at > now() ORDER BY send_at LIMIT 1`).Scan(&at)
+	err := s.db.QueryRow(ctx, `SELECT send_at FROM scheduled_messages WHERE error IS NULL AND claimed_at IS NULL AND send_at > now() ORDER BY send_at LIMIT 1`).Scan(&at)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			s.log.Error("loading the next scheduled send failed", "err", err)
@@ -316,6 +316,7 @@ func (s *Server) RunScheduler(ctx context.Context) {
 			SELECT id FROM protected_messages WHERE expires_at <= now() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)`); err != nil && ctx.Err() == nil {
 			s.log.Error("expiring protected messages failed", "err", err)
 		}
+		s.flagInterruptedSends(ctx)
 		for s.sendNextScheduled(ctx) {
 		}
 		s.wakeSnoozed(ctx)
@@ -377,7 +378,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		       s.protected_reply_id IS NOT NULL
 		FROM scheduled_messages s JOIN mailboxes m ON m.id = s.mailbox_id JOIN domains d ON d.id = m.domain_id LEFT JOIN users u ON u.id = s.sender_user_id
 		LEFT JOIN LATERAL (`+sendableAddresses("s.sender_user_id")+`) i ON i.address = coalesce(s.from_address, m.address)
-		WHERE s.error IS NULL AND s.send_at <= now()
+		WHERE s.error IS NULL AND s.claimed_at IS NULL AND s.send_at <= now()
 		  AND (s.protected_reply_id IS NULL OR EXISTS (
 		    SELECT 1 FROM protected_messages p WHERE p.id = s.protected_reply_id AND p.expires_at > now()))
 		ORDER BY s.send_at LIMIT 1 FOR UPDATE OF s SKIP LOCKED`).
@@ -408,30 +409,37 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 			return tx.Commit(ctx) == nil
 		}
 	}
+	if _, err := tx.Exec(ctx, `UPDATE scheduled_messages SET claimed_at = now() WHERE id = $1`, id); err != nil {
+		return false
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false
+	}
+	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	if err := s.mail.Send(address, fromAddress, recipients, raw); err != nil {
 		mailSends.WithLabelValues("rejected").Inc()
 		s.recordAlertEvent(ctx, "delivery_failures", address)
 		s.log.Warn("scheduled send failed", "mailbox", mailboxID, "attempt", attempts+1, "err", err)
 		if attempts+1 >= maxSendAttempts {
-			tx.Exec(ctx, `UPDATE scheduled_messages SET attempts = attempts + 1, error = $2 WHERE id = $1`, id, "The mail server did not accept the message: "+err.Error())
+			_, err = s.db.Exec(done, `UPDATE scheduled_messages SET claimed_at = NULL, attempts = attempts + 1, error = $2 WHERE id = $1`, id, "The mail server did not accept the message: "+err.Error())
 		} else {
-			tx.Exec(ctx, `UPDATE scheduled_messages SET attempts = attempts + 1, send_at = now() + make_interval(mins => 5 * (attempts + 1)) WHERE id = $1`, id)
+			_, err = s.db.Exec(done, `UPDATE scheduled_messages SET claimed_at = NULL, attempts = attempts + 1, send_at = now() + make_interval(mins => 5 * (attempts + 1)) WHERE id = $1`, id)
 		}
-		return tx.Commit(ctx) == nil
+		if err != nil {
+			s.log.Error("releasing a failed scheduled send failed", "id", id, "err", err)
+		}
+		return true
 	}
 	mailSends.WithLabelValues("accepted").Inc()
-	if _, err := tx.Exec(ctx, `DELETE FROM scheduled_messages WHERE id = $1`, id); err != nil {
-		s.log.Error("scheduled message sent but not removed", "id", id, "err", err)
-		return false
-	}
-	if err := tx.Commit(ctx); err != nil {
-		s.log.Error("scheduled message sent but not removed", "id", id, "err", err)
-		return false
-	}
 	if !protectedReply {
 		if err := s.mail.SaveSent(sentAddress, raw); err != nil {
 			s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
 		}
+	}
+	if _, err := s.db.Exec(done, `DELETE FROM scheduled_messages WHERE id = $1`, id); err != nil {
+		s.log.Error("scheduled message sent but not removed", "id", id, "err", err)
+		return false
 	}
 	if senderID != nil {
 		s.recordScheduledSend(ctx, mailboxID, *senderID, mode, subject, raw, len(recipients))
@@ -440,6 +448,24 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 		s.mail.MarkAnswered(address, inReplyTo)
 	}
 	return true
+}
+
+func (s *Server) flagInterruptedSends(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `UPDATE scheduled_messages SET claimed_at = NULL,
+		error = 'Sending was interrupted, so this message may already have gone out. Check Sent before sending it again.'
+		WHERE claimed_at < now() - interval '1 hour' RETURNING id`)
+	if err != nil {
+		s.log.Error("checking interrupted scheduled sends failed", "err", err)
+		return
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		s.log.Error("checking interrupted scheduled sends failed", "err", err)
+		return
+	}
+	for _, id := range ids {
+		s.log.Error("scheduled send was interrupted and may have been delivered", "id", id)
+	}
 }
 
 func (s *Server) wakeSnoozed(ctx context.Context) {

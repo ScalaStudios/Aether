@@ -293,7 +293,7 @@ Each address has its own From name and signatures, kept per mailbox in `mailbox_
 
 A reply starts from the address the message was delivered to, when the person may send from it, and otherwise from the first address in To, Cc or Bcc they may send from. Postfix delivers to Dovecot over the `mailbox-lmtp` transport, an `lmtp` service with `flags=O` and a recipient limit of one, so each copy carries an `X-Original-To` header with the address it was sent to before alias expansion. That finds the alias even when the sender put it in Bcc.
 
-Sent copies go to the Sent folder of the mailbox the message was sent from. A list can instead name a shared mailbox of its organization (`sentMailboxId`), so that everyone who sends as the list sees one history. A scheduled message keeps its From address and is checked again when it goes out; if its sender can no longer use that address, it is not sent and shows an error.
+Sent copies go to the Sent folder of the mailbox the message was sent from. A list can instead name a shared mailbox of its organization (`sentMailboxId`), so that everyone who sends as the list sees one history. A scheduled message keeps its From address and is checked again when it goes out; if its sender can no longer use that address, it is not sent and shows an error. A send that is interrupted after it starts is never retried, because the message may already have gone out; after an hour it shows an error asking the sender to check Sent.
 
 ## Sending limits and restricted senders
 
