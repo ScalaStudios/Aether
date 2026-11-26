@@ -63,7 +63,11 @@ spec:
     - from:
         {{- include "aether.allowFrom" (list "dovecot") | nindent 8 }}
       ports: [{ port: 8080 }]
-    - ports: [{ port: 9090 }]
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports: [{ port: 9090 }]
     - from:
         {{- include "aether.allowFrom" (list "postfix") | nindent 8 }}
       ports: [{ port: 2424 }, { port: 10040 }, { port: 10041 }, { port: 10045 }, { port: 10046 }, { port: 10047 }]
