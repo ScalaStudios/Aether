@@ -13,6 +13,7 @@ x-api-env: &api-env
   AETHER_MAIL_DB_PASSWORD: ${AETHER_MAIL_DB_PASSWORD}
   AETHER_MAIL_HOSTNAME: ${AETHER_MAIL_HOSTNAME}
   AETHER_MAIL_TLS_CA_FILE: ${AETHER_MAIL_TLS_CA_FILE:-/tls/fullchain.pem}
+  SSL_CERT_FILE: ${AETHER_TEST_SSL_CERT_FILE:-}
   AETHER_IMAP_ADDR: ${AETHER_IMAP_ADDR:-dovecot:143}
   AETHER_DOVECOT_API_URL: ${AETHER_DOVECOT_API_URL:-http://dovecot:8089}
   AETHER_DOVECOT_MASTER_PASSWORD: ${AETHER_DOVECOT_MASTER_PASSWORD}
@@ -224,6 +225,10 @@ services:
     profiles: ["test"]
     image: ghcr.io/shopify/toxiproxy:2.12.0
     command: ["-host", "0.0.0.0", "-config", "/toxiproxy.json"]
+    networks:
+      default:
+        aliases:
+          - ${AETHER_MAIL_HOSTNAME}
     volumes:
       - ./tests/integration/testdata/toxiproxy.json:/toxiproxy.json:ro
     depends_on:
