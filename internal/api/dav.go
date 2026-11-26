@@ -91,6 +91,7 @@ func (s *Server) serveDAV(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.WithValue(r.Context(), davUserKey{}, userID)
 	r = r.WithContext(ctx)
+	r.Body = http.MaxBytesReader(w, r.Body, 2*maxDAVObjectBytes)
 	if err := s.ensureDAVDefaults(ctx, userID); err != nil {
 		s.internalError(w, r, err)
 		return
