@@ -103,7 +103,8 @@ func (s *Server) runScheduledImport(ctx context.Context, conn *pgx.Conn, id, mai
 		watched := make(chan struct{})
 		go func() {
 			defer close(watched)
-			s.watchImportSchedule(runCtx, cancel, conn, id)
+			s.watchImportAccess(runCtx, func(error) { cancel() }, conn, `SELECT j.credential IS NOT NULL AND `+importPermitted+`
+				FROM mail_import_schedules j JOIN mailboxes m ON m.id = j.mailbox_id JOIN domains d ON d.id = m.domain_id WHERE j.id = $1`, id)
 		}()
 		s.runImport(runCtx, job.ID, address, s.importSource(in.importInput), limits.MessageBytes, s.importSync(id, in), true)
 		cancel()
@@ -114,7 +115,7 @@ func (s *Server) runScheduledImport(ctx context.Context, conn *pgx.Conn, id, mai
 	return err
 }
 
-func (s *Server) watchImportSchedule(ctx context.Context, cancel context.CancelFunc, conn *pgx.Conn, id string) {
+func (s *Server) watchImportAccess(ctx context.Context, cancel context.CancelCauseFunc, conn *pgx.Conn, query, id string) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -125,11 +126,14 @@ func (s *Server) watchImportSchedule(ctx context.Context, cancel context.CancelF
 		}
 		var active bool
 		checkCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		err := conn.QueryRow(checkCtx, `SELECT j.credential IS NOT NULL AND `+importPermitted+`
-		FROM mail_import_schedules j JOIN mailboxes m ON m.id = j.mailbox_id JOIN domains d ON d.id = m.domain_id WHERE j.id = $1`, id).Scan(&active)
+		err := conn.QueryRow(checkCtx, query, id).Scan(&active)
 		finish()
-		if err != nil || !active {
-			cancel()
+		if err != nil {
+			cancel(nil)
+			return
+		}
+		if !active {
+			cancel(errImportAccess)
 			return
 		}
 	}

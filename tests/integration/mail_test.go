@@ -978,3 +978,22 @@ func TestRecurringImportDeadlineInterruptsIMAP(t *testing.T) {
 		t.Fatalf("expired schedule retained credentials: %v", err)
 	}
 }
+
+func TestImportStopsWhenTheStarterLosesAccess(t *testing.T) {
+	proxy := dovecotProxy(t, "imap")
+	w := setupWorld(t)
+	alice := "alice@" + w.domain
+	setDelegate(t, w.admin, w.bobMailbox, map[string]any{"email": alice, "access": "full"})
+	path := "/mailboxes/" + w.bobMailbox + "/imports"
+	proxy.hold(0)
+	w.alice.must("POST", path, map[string]any{
+		"host": env(t, "AETHER_TEST_MAIL_HOSTNAME", "mail.aether.test"), "port": 143, "security": "starttls",
+		"username": alice, "password": w.aliceAppPassword,
+	}, nil, 202)
+	setDelegate(t, w.admin, w.bobMailbox, map[string]any{"email": alice, "access": "read"})
+	waitUpTo(t, 20*time.Second, "the import to stop", func() bool {
+		var runs []importTestRun
+		w.bob.must("GET", path, nil, &runs, 200)
+		return len(runs) == 1 && runs[0].Status == "cancelled" && strings.Contains(runs[0].Error, "no longer has access")
+	})
+}

@@ -138,7 +138,16 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, p *principa
 	go func() {
 		defer cancel()
 		defer closeImportLock(conn)
-		s.runImport(ctx, job.ID, m.Address, src, limits.MessageBytes, nil, false)
+		runCtx, stop := context.WithCancelCause(ctx)
+		watched := make(chan struct{})
+		go func() {
+			defer close(watched)
+			s.watchImportAccess(runCtx, stop, conn, `SELECT `+importPermitted+` FROM mail_imports j
+				JOIN mailboxes m ON m.id = j.mailbox_id JOIN domains d ON d.id = m.domain_id WHERE j.id = $1`, job.ID)
+		}()
+		s.runImport(runCtx, job.ID, m.Address, src, limits.MessageBytes, nil, false)
+		stop(nil)
+		<-watched
 	}()
 	s.audit(r.Context(), r, p, &m.OrgID, "mail_import.start", "mailbox", m.ID, map[string]any{"host": in.Host})
 	writeJSON(w, http.StatusAccepted, job)
@@ -216,6 +225,8 @@ func insertImportRun(ctx context.Context, conn *pgx.Conn, mailboxID string, user
 	return job, err
 }
 
+var errImportAccess = errors.New("import access revoked")
+
 func (s *Server) runImport(ctx context.Context, id, address string, src mail.ImportSource, maxBytes int64, sync *mail.ImportSync, recurring bool) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -235,6 +246,8 @@ func (s *Server) runImport(ctx context.Context, id, address string, src mail.Imp
 	}, sync)
 	status, message := "done", ""
 	switch {
+	case errors.Is(context.Cause(ctx), errImportAccess):
+		status, message = "cancelled", "The import stopped because the person who started it no longer has access to this mailbox."
 	case errors.Is(err, context.Canceled):
 		status = "cancelled"
 	case errors.Is(err, context.DeadlineExceeded):
