@@ -389,12 +389,14 @@ func copyFolder(ctx context.Context, from *imapclient.Client, budget *importBudg
 
 func collectLimited(data *imapclient.FetchMessageData, budget *importBudget, maxBytes int64) (*imapclient.FetchMessageBuffer, error) {
 	m := &imapclient.FetchMessageBuffer{SeqNum: data.SeqNum}
+	credited := false
 	for item := data.Next(); item != nil; item = data.Next() {
 		switch item := item.(type) {
 		case imapclient.FetchItemDataBodySection:
-			if item.Literal == nil || len(m.BodySection) > 0 {
+			if item.Literal == nil || credited {
 				continue
 			}
+			credited = true
 			budget.credit(item.Literal.Size())
 			if item.Literal.Size() > maxBytes {
 				continue

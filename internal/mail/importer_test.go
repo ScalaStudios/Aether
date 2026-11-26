@@ -327,12 +327,17 @@ func TestImportFailsOnOversizedSourceResponses(t *testing.T) {
 			})
 		},
 	}
+	cases["repeated body sections over the message limit"] = cases["repeated body sections"]
 	for name, respond := range cases {
 		t.Run(name, func(t *testing.T) {
 			var sent atomic.Int64
 			from, budget := fakeSource(t, func(w io.Writer, tag, cmd string) { respond(w, tag, cmd, &sent) })
 			to := memIMAP(t)
-			err := importFolders(context.Background(), from, budget, to, "source", 16<<20, func(ImportProgress) {}, nil)
+			maxBytes := int64(16 << 20)
+			if strings.HasSuffix(name, "over the message limit") {
+				maxBytes = 1 << 20
+			}
+			err := importFolders(context.Background(), from, budget, to, "source", maxBytes, func(ImportProgress) {}, nil)
 			if !errors.Is(budget.failed(err), ErrImportResponseTooLarge) {
 				t.Fatalf("import returned %.200v, want %v", err, ErrImportResponseTooLarge)
 			}
