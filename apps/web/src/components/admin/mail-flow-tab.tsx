@@ -26,7 +26,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useSession } from "@/hooks/use-session"
 import { api } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
-import { platformOnly } from "@/lib/permissions"
+import { grantHint, platformOnly } from "@/lib/permissions"
+import { membersQuery } from "@/lib/queries"
 import type { FlowCondition, FlowField, FlowMatch, FlowRule, FlowScope } from "@/lib/types"
 
 const fields: Record<FlowField, string> = {
@@ -211,13 +212,14 @@ function summary(rule: FlowRule) {
 export function MailFlowTab({ orgId }: { orgId: string }) {
   const session = useSession().data
   const locked = platformOnly(session, orgId)
+  const how = grantHint(session, useQuery({ ...membersQuery(orgId), enabled: locked }).data)
   return (
     <div className="flex flex-col gap-10">
-      <RuleList orgId={orgId} lockedFor={locked ? session?.user.email.toLowerCase() : undefined} />
+      <RuleList orgId={orgId} lockedFor={locked ? session?.user.email.toLowerCase() : undefined} how={how} />
       {locked ? (
         <section className="flex flex-col gap-6">
           <SectionHeader title="Messages held by mail flow rules" />
-          <LockNote>Platform administrators need the owner or administrator role in this organization to read and decide on held messages. Ask one of its owners or administrators to grant you the role.</LockNote>
+          <LockNote>Platform administrators need the owner or administrator role in this organization to read and decide on held messages. {how}</LockNote>
         </section>
       ) : (
         <FlowApprovals queryKey={["held", orgId]} path={`/organizations/${orgId}/mail-flow/held`} />
@@ -227,7 +229,7 @@ export function MailFlowTab({ orgId }: { orgId: string }) {
   )
 }
 
-function RuleList({ orgId, lockedFor }: { orgId: string; lockedFor?: string }) {
+function RuleList({ orgId, lockedFor, how }: { orgId: string; lockedFor?: string; how: string }) {
   const qc = useQueryClient()
   const key = ["mail-flow-rules", orgId]
   const base = `/organizations/${orgId}/mail-flow`
@@ -342,7 +344,7 @@ function RuleList({ orgId, lockedFor }: { orgId: string; lockedFor?: string }) {
         pending={save.isPending}
         onSubmit={form.handleSubmit((v) => {
           const refused = lockedFor && !v.reject ? flowTargets.filter((name) => (name === "approvers" ? v.approvers.some((a) => a.address.toLowerCase() === lockedFor) : v[name].length > 0)) : []
-          for (const name of refused) form.setError(name, { message: `Remove ${name === "approvers" ? "your own address" : "these addresses"}, or ask an owner or administrator of this organization to grant you the role first.` })
+          for (const name of refused) form.setError(name, { message: `Remove ${name === "approvers" ? "your own address" : "these addresses"}, or get the owner or administrator role first.` })
           if (!refused.length) save.mutate(v)
         })}
       >
@@ -412,7 +414,7 @@ function RuleList({ orgId, lockedFor }: { orgId: string; lockedFor?: string }) {
                   />
                 </div>
               )}
-              {lockedFor && <LockNote>Sending copies, redirecting mail and approving held messages yourself need the owner or administrator role in this organization. Ask one of its owners or administrators to grant you the role.</LockNote>}
+              {lockedFor && <LockNote>Sending copies, redirecting mail and approving held messages yourself need the owner or administrator role in this organization. {how}</LockNote>}
               {flowTargets.map((name) => (
                 <Controller
                   key={name}

@@ -32,6 +32,7 @@ import {
   BUILT_IN_ROLES,
   canEditTargetMember,
   canSupportTarget,
+  grantHint,
   hasPerm,
   orgMembership,
   ROLE_DESCRIPTIONS,
@@ -199,7 +200,7 @@ export function MembersTab({ orgId }: { orgId: string }) {
       } else if (error instanceof ApiError && error.code === "invalid_domains") {
         form.setError("domainIds", { message: error.message })
       } else if (error instanceof ApiError && error.code === "self_membership") {
-        form.setError("email", { message: error.message })
+        form.setError("email", { message: `Platform administrators cannot give themselves a role in this organization. ${grantHint(session, members.data)}` })
       } else {
         toast.error(errorMessage(error))
       }

@@ -66,6 +66,13 @@ export function platformOnly(session: Session | undefined, orgId: string, ...rol
   return !!session?.user.isPlatformAdmin && !(role && ["owner", "admin", ...roles].includes(role))
 }
 
+export function grantHint(session: Session | undefined, members: Member[] | undefined): string {
+  if (!members) return ""
+  const self = session?.user.id
+  if (members.some((m) => m.userId !== self && (m.role === "owner" || m.role === "admin"))) return "Ask an owner or administrator of the organization to grant you the role."
+  return `The organization has no ${members.some((m) => m.userId === self && m.role === "owner") ? "other " : ""}owner yet. Add someone else as owner under Members, and they can grant you the role.`
+}
+
 export function isDomainScoped(session: Session | undefined, orgId: string): boolean {
   if (!session || session.user.isPlatformAdmin) return false
   const m = orgMembership(session, orgId)

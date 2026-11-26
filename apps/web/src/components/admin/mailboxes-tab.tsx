@@ -41,8 +41,8 @@ import { api, ApiError, errorMessage, limitMessage } from "@/lib/api"
 import { downloadCsv, exportMailboxesCsv } from "@/lib/csv"
 import { formatBytes, formatDateTime, megabytes, plural } from "@/lib/format"
 import { storageTier } from "@/lib/mail"
-import { canReadDelegates, hasPerm, platformOnly } from "@/lib/permissions"
-import { domainDefaultsQuery, domainsQuery, featuresQuery, limitsQuery, mailboxesQuery, myMailboxesQuery, organizationsQuery } from "@/lib/queries"
+import { canReadDelegates, grantHint, hasPerm, platformOnly } from "@/lib/permissions"
+import { domainDefaultsQuery, domainsQuery, featuresQuery, limitsQuery, mailboxesQuery, membersQuery, myMailboxesQuery, organizationsQuery } from "@/lib/queries"
 import type { Delegate, DelegateAccess, ImportCounts, Mailbox, MailboxAppPassword, Organization, OrganizationLimits, Protocol, QuotaDefault, QuotaWarnings } from "@/lib/types"
 
 const MB = 1024 * 1024
@@ -116,7 +116,7 @@ const rights = ({ email, access, sendAs, sendOnBehalf }: DelegateValues): Delega
 
 const rightsLabel = (d: DelegateValues) => [d.access === "read" ? "read only" : "full access", d.sendAs && "send as", d.sendOnBehalf && "send on behalf"].filter(Boolean).join(", ")
 
-function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbox | null; canManage: boolean; onOpenChange: (open: boolean) => void }) {
+function DelegatesDialog({ mailbox, canManage, how, onOpenChange }: { mailbox: Mailbox | null; canManage: boolean; how: string; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient()
   const session = useSession().data
   const self = mailbox && platformOnly(session, mailbox.orgId, "domain_admin", "custom") ? session?.user : undefined
@@ -203,7 +203,7 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
         cancelLabel="Done"
         pending={add.isPending}
         onSubmit={form.handleSubmit((v) =>
-          v.email.toLowerCase() === self?.email.toLowerCase() ? form.setError("email", { message: "You need the owner or administrator role here to add yourself. Ask an owner or administrator of this organization to grant it." }) : add.mutate(v)
+          v.email.toLowerCase() === self?.email.toLowerCase() ? form.setError("email", { message: `You need the owner or administrator role in this organization to add yourself. ${how}` }) : add.mutate(v)
         )}
       >
         <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">{shared ? "No members yet." : "No delegates yet."}</p>}>
@@ -634,6 +634,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
   const personal = (m: Mailbox) => m.ownerUserId === session?.user.id || !!mine?.some((x) => x.id === m.id)
   const exportLocked = (m: Mailbox) => platformOnly(session, orgId) && !personal(m)
   const settingsLocked = (m: Mailbox) => platformOnly(session, orgId, "domain_admin", "helpdesk", "custom") && !personal(m)
+  const how = grantHint(session, useQuery({ ...membersQuery(orgId), enabled: platformOnly(session, orgId) }).data)
 
   const mailboxes = useQuery({ ...mailboxesQuery(orgId), select: (all) => all.filter((m) => m.kind !== "resource") })
   const domains = useQuery(domainsQuery(orgId))
@@ -977,7 +978,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                           <DropdownMenuContent align="end" className="w-auto min-w-64">
                             {exportLocked(m) && (
                               <>
-                                <LockNote className="max-w-72 px-3 py-2">Dimmed actions need the owner or administrator role here. Ask an owner or administrator to grant it.</LockNote>
+                                <LockNote className="max-w-80 px-3 py-2">Dimmed actions need the owner or administrator role. {how}</LockNote>
                                 <DropdownMenuSeparator />
                               </>
                             )}
@@ -1141,7 +1142,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
         </Field>
       </FormDialog>
 
-      <DelegatesDialog mailbox={delegating} canManage={canManageDelegates} onOpenChange={(open) => !open && setDelegating(null)} />
+      <DelegatesDialog mailbox={delegating} canManage={canManageDelegates} how={how} onOpenChange={(open) => !open && setDelegating(null)} />
       <AppPasswordsDialog mailbox={appPasswordsFor} canRevoke={canRevokeAppPasswords} onOpenChange={(open) => !open && setAppPasswordsFor(null)} />
       {editingWarnings && warnings.data && <QuotaWarningsDialog orgId={orgId} warnings={warnings.data} onClose={() => setEditingWarnings(false)} />}
 
@@ -1186,7 +1187,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
             <SheetTitle>Mail rules and automatic replies</SheetTitle>
             <SheetDescription>{managing?.address}</SheetDescription>
           </SheetHeader>
-          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} outsideForwardingOff={features?.externalForwarding === false} forwardingLocked={settingsLocked(managing)} />}</div>
+          <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">{managing && <MailboxRules key={managing.id} mailboxId={managing.id} outsideForwardingOff={features?.externalForwarding === false} forwardingLocked={settingsLocked(managing)} grantHint={how} />}</div>
         </SheetContent>
       </Sheet>
 

@@ -173,17 +173,17 @@ export function MailRules() {
   )
 }
 
-export function MailboxRules({ mailboxId, outsideForwardingOff, forwardingLocked }: { mailboxId: string; outsideForwardingOff?: boolean; forwardingLocked?: boolean }) {
+export function MailboxRules({ mailboxId, outsideForwardingOff, forwardingLocked, grantHint }: { mailboxId: string; outsideForwardingOff?: boolean; forwardingLocked?: boolean; grantHint?: string }) {
   return (
     <>
-      <RuleList mailboxId={mailboxId} outsideForwardingOff={outsideForwardingOff} forwardingLocked={forwardingLocked} />
+      <RuleList mailboxId={mailboxId} outsideForwardingOff={outsideForwardingOff} forwardingLocked={forwardingLocked} grantHint={grantHint} />
       <TaggedMailCard mailboxId={mailboxId} />
       <AutoReplyCard mailboxId={mailboxId} />
     </>
   )
 }
 
-function RuleList({ mailboxId, outsideForwardingOff, forwardingLocked }: { mailboxId: string; outsideForwardingOff?: boolean; forwardingLocked?: boolean }) {
+function RuleList({ mailboxId, outsideForwardingOff, forwardingLocked, grantHint }: { mailboxId: string; outsideForwardingOff?: boolean; forwardingLocked?: boolean; grantHint?: string }) {
   const qc = useQueryClient()
   const key = ["rules", mailboxId]
   const rules = useQuery({ queryKey: key, queryFn: () => api<MailRule[]>(`/mailboxes/${mailboxId}/rules`) })
@@ -226,7 +226,7 @@ function RuleList({ mailboxId, outsideForwardingOff, forwardingLocked }: { mailb
     if (editing === null) return
     const known = list.flatMap((r) => r.actions.forwardTo ?? []).map((a) => a.toLowerCase())
     if (forwardingLocked && v.forwardTo.some((a) => !known.includes(a.address.toLowerCase()))) {
-      form.setError("forwardTo", { message: "Use only addresses this mailbox already forwards to, or ask an owner or administrator of this organization to grant you the role first." })
+      form.setError("forwardTo", { message: "Use only addresses this mailbox already forwards to, or get the owner or administrator role first." })
       return
     }
     const next = [...list]
@@ -459,7 +459,7 @@ function RuleList({ mailboxId, outsideForwardingOff, forwardingLocked }: { mailb
             <span>Messages this rule deletes can’t be recovered. To keep a way back, move them to Trash instead.</span>
           </div>
         )}
-        {forwardingLocked && <LockNote>Platform administrators need the owner or administrator role in this organization to forward this mailbox to a new address. Ask one of its owners or administrators to grant you the role.</LockNote>}
+        {forwardingLocked && <LockNote>Platform administrators need the owner or administrator role in this organization to forward this mailbox to a new address. {grantHint}</LockNote>}
         <Controller
           control={form.control}
           name="forwardTo"
