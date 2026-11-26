@@ -843,14 +843,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		reanchor = existing
 	}
 	if reanchor {
-		event.Props.Del(ical.PropExceptionDates)
-		children := []*ical.Component{}
-		for _, c := range doc.Children {
-			if c.Name != ical.CompEvent || c.Props.Get(ical.PropRecurrenceID) == nil {
-				children = append(children, c)
-			}
-		}
-		doc.Children = children
+		dropExceptions(doc, event.Component)
 	}
 	if (in.Reminder == nil) != (before.Reminder == nil) || in.Reminder != nil && *in.Reminder != *before.Reminder {
 		children := []*ical.Component{}
@@ -949,6 +942,17 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 		calendarEvent
 		Bookings []bookingOutcome `json:"bookings,omitempty"`
 	}{out, bookings})
+}
+
+func dropExceptions(doc *ical.Calendar, master *ical.Component) {
+	master.Props.Del(ical.PropExceptionDates)
+	children := []*ical.Component{}
+	for _, c := range doc.Children {
+		if c.Name != ical.CompEvent || c.Props.Get(ical.PropRecurrenceID) == nil {
+			children = append(children, c)
+		}
+	}
+	doc.Children = children
 }
 
 func (s *Server) deleteEvent(w http.ResponseWriter, r *http.Request, p *principal) {

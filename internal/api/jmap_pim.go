@@ -684,7 +684,7 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 	if patch["description"] == nil && hasKey(patch, "description") {
 		comp.Props.Del(ical.PropDescription)
 	}
-	if uerr := applyEventSchedule(comp, patch); uerr != nil {
+	if uerr := rescheduleEvent(cal, comp, patch); uerr != nil {
 		return "", uerr
 	}
 	if loc, ok := patch["locations"].(map[string]any); ok {
@@ -756,6 +756,28 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 		_ = s.deleteDAVObject(ctx, existing.Collection, existing.Name)
 	}
 	return eventID(uid), nil
+}
+
+func rescheduleEvent(cal *ical.Calendar, comp *ical.Component, patch map[string]any) map[string]any {
+	schedule := func() string {
+		start, _ := (&ical.Event{Component: comp}).DateTimeStart(time.UTC)
+		out := start.UTC().Format(time.RFC3339)
+		if p := comp.Props.Get(ical.PropDateTimeStart); p != nil && p.ValueType() == ical.ValueDate {
+			out += " date"
+		}
+		if p := comp.Props.Get(ical.PropRecurrenceRule); p != nil {
+			out += " " + p.Value
+		}
+		return out
+	}
+	before := schedule()
+	if uerr := applyEventSchedule(comp, patch); uerr != nil {
+		return uerr
+	}
+	if schedule() != before {
+		dropExceptions(cal, comp)
+	}
+	return nil
 }
 
 func applyEventSchedule(comp *ical.Component, patch map[string]any) map[string]any {
