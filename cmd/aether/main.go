@@ -346,7 +346,7 @@ func bootstrapAdmin(args []string) error {
 	}
 	tag, err := pool.Exec(ctx, `
 		INSERT INTO users (email, display_name, password_hash, is_platform_admin) VALUES ($1, $2, $3, true)
-		ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_platform_admin = true, status = 'active', updated_at = now()`,
+		ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_platform_admin = true, status = 'active', suspended_by = '', updated_at = now()`,
 		address, *name, auth.HashPassword(password))
 	if err != nil {
 		return err
