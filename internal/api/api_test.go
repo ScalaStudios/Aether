@@ -211,7 +211,11 @@ func TestParseDMARCReportAttachments(t *testing.T) {
 		msg := "From: noreply-dmarc-support@google.com\r\nTo: dmarc-reports@example.com\r\nSubject: Report domain: example.com\r\nMIME-Version: 1.0\r\n" +
 			"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nThis is a report.\r\n" +
 			"--b\r\nContent-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(attachment) + "\r\n--b--\r\n"
-		reports, err := parseDMARCMessage(strings.NewReader(msg))
+		var reports []*dmarcFeedback
+		err := parseDMARCMessage(strings.NewReader(msg), func(fb *dmarcFeedback) error {
+			reports = append(reports, fb)
+			return nil
+		})
 		if err != nil || len(reports) != 1 {
 			t.Fatalf("%s: %v %d", name, err, len(reports))
 		}
@@ -220,7 +224,7 @@ func TestParseDMARCReportAttachments(t *testing.T) {
 			t.Fatalf("%s: unexpected report %+v", name, fb)
 		}
 	}
-	if _, err := parseDMARCMessage(strings.NewReader("From: a@b.c\r\nSubject: hi\r\n\r\nhello\r\n")); err == nil {
+	if err := parseDMARCMessage(strings.NewReader("From: a@b.c\r\nSubject: hi\r\n\r\nhello\r\n"), func(*dmarcFeedback) error { return nil }); err == nil {
 		t.Fatal("a plain message was accepted as a report")
 	}
 }

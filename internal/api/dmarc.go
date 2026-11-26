@@ -20,9 +20,11 @@ import (
 )
 
 const (
-	maxReportMessage = 20 << 20
-	maxReportXML     = 50 << 20
-	maxReportRecords = 10000
+	maxReportMessage     = 20 << 20
+	maxReportXML         = 50 << 20
+	maxReportRecords     = 10000
+	maxRecordAuthResults = 100
+	maxReportParts       = 10
 )
 
 type dmarcFeedback struct {
@@ -63,8 +65,8 @@ type dmarcRecord struct {
 		HeaderFrom string `xml:"header_from"`
 	} `xml:"identifiers"`
 	Auth struct {
-		DKIM []dmarcAuth `xml:"dkim"`
-		SPF  []dmarcAuth `xml:"spf"`
+		DKIM dmarcAuthList `xml:"dkim"`
+		SPF  dmarcAuthList `xml:"spf"`
 	} `xml:"auth_results"`
 }
 
@@ -77,32 +79,49 @@ type dmarcAuth struct {
 	Result string `xml:"result"`
 }
 
-func parseDMARCMessage(r io.Reader) ([]*dmarcFeedback, error) {
+type dmarcAuthList []dmarcAuth
+
+func (l *dmarcAuthList) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	if len(*l) == maxRecordAuthResults {
+		return errors.New("record has too many authentication results")
+	}
+	var a dmarcAuth
+	if err := d.DecodeElement(&a, &start); err != nil {
+		return err
+	}
+	*l = append(*l, a)
+	return nil
+}
+
+func parseDMARCMessage(r io.Reader, store func(*dmarcFeedback) error) error {
 	mr, err := mail.CreateReader(r)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var out []*dmarcFeedback
-	for {
+	found := false
+	for range maxReportParts {
 		part, err := mr.NextPart()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return out, err
+			return err
 		}
 		body, err := io.ReadAll(io.LimitReader(part.Body, maxReportMessage))
 		if err != nil {
-			return out, err
+			return err
 		}
 		if fb, err := decodeDMARCReport(body); err == nil {
-			out = append(out, fb)
+			found = true
+			if err := store(fb); err != nil {
+				return err
+			}
 		}
 	}
-	if len(out) == 0 {
-		return nil, errors.New("no DMARC aggregate report found in the message")
+	if !found {
+		return errors.New("no DMARC aggregate report found in the message")
 	}
-	return out, nil
+	return nil
 }
 
 func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
@@ -140,9 +159,48 @@ func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
 		}
 		xmlData = bytes.NewReader(trimmed)
 	}
+	dec := xml.NewDecoder(io.LimitReader(xmlData, maxReportXML))
 	var fb dmarcFeedback
-	if err := xml.NewDecoder(io.LimitReader(xmlData, maxReportXML)).Decode(&fb); err != nil {
-		return nil, err
+	root := false
+	for len(fb.Records) < maxReportRecords {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) && root {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if !root {
+			if start.Name.Local != "feedback" {
+				return nil, errors.New("not a report")
+			}
+			root = true
+			continue
+		}
+		var v any
+		switch start.Name.Local {
+		case "version":
+			v = &fb.Version
+		case "report_metadata":
+			v = &fb.Metadata
+		case "policy_published":
+			v = &fb.Policy
+		case "record":
+			fb.Records = append(fb.Records, dmarcRecord{})
+			v = &fb.Records[len(fb.Records)-1]
+		default:
+			err = dec.Skip()
+		}
+		if v != nil {
+			err = dec.DecodeElement(v, &start)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	if fb.Metadata.ReportID == "" || fb.Policy.Domain == "" {
 		return nil, errors.New("report is missing its ID or domain")
@@ -232,17 +290,19 @@ func (r *reportSession) LMTPData(body io.Reader, status smtp.StatusCollector) er
 func (r *reportSession) Data(body io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	reports, err := parseDMARCMessage(io.LimitReader(body, maxReportMessage))
+	var storeErr error
+	err := parseDMARCMessage(io.LimitReader(body, maxReportMessage), func(fb *dmarcFeedback) error {
+		if storeErr = r.s.storeDMARCReport(ctx, fb); storeErr != nil {
+			r.s.log.Error("storing DMARC report failed", "reporter", fb.Metadata.OrgName, "err", storeErr)
+		}
+		return storeErr
+	})
+	if storeErr != nil {
+		return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Try again later"}
+	}
 	if err != nil {
 		r.s.log.Info("ignored a message sent to the DMARC report address", "err", err)
 		io.Copy(io.Discard, body)
-		return nil
-	}
-	for _, fb := range reports {
-		if err := r.s.storeDMARCReport(ctx, fb); err != nil {
-			r.s.log.Error("storing DMARC report failed", "reporter", fb.Metadata.OrgName, "err", err)
-			return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Try again later"}
-		}
 	}
 	return nil
 }
