@@ -221,7 +221,7 @@ func (s *Server) calendarAudience(ctx context.Context, collection, owner string)
 		SELECT DISTINCT u.id FROM users u
 		WHERE u.status = 'active' AND (
 			u.id = $1
-			OR EXISTS (SELECT 1 FROM calendar_shares s WHERE s.collection_id = $2 AND s.user_id = u.id)
+			OR EXISTS (SELECT 1 FROM calendar_shares s JOIN organization_members a ON a.user_id = u.id JOIN organization_members b ON b.org_id = a.org_id AND b.user_id = $1 WHERE s.collection_id = $2 AND s.user_id = u.id)
 			OR EXISTS (
 				SELECT 1 FROM calendar_shares s
 				JOIN organization_members m ON m.org_id = s.org_id AND m.user_id = u.id

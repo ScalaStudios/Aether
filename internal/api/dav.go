@@ -210,7 +210,7 @@ const accessibleCollections = `
 	UNION ALL
 	SELECT c.id, 'shared-' || c.id, c.name, c.description, c.color, c.updated_at, max(s.access), c.created_at
 	FROM calendar_shares s JOIN dav_collections c ON c.id = s.collection_id
-	WHERE c.kind = $2 AND c.user_id <> $1 AND (s.user_id = $1 OR s.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1))
+	WHERE c.kind = $2 AND c.user_id <> $1 AND (s.user_id = $1 AND EXISTS (SELECT 1 FROM organization_members a JOIN organization_members b ON a.org_id = b.org_id WHERE a.user_id = $1 AND b.user_id = c.user_id) OR s.org_id IN (SELECT org_id FROM organization_members WHERE user_id = $1))
 	GROUP BY c.id`
 
 func (s *Server) davCollections(ctx context.Context, kind string) ([]collectionRow, error) {

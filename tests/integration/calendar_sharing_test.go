@@ -162,3 +162,65 @@ func TestCalendarSharing(t *testing.T) {
 		t.Fatalf("deleting the main calendar should be refused, got %d", code)
 	}
 }
+
+func TestCalendarShareEndsWithMembership(t *testing.T) {
+	w := setupWorld(t)
+	bob := "bob@" + w.domain
+	var team calendarView
+	w.alice.must("POST", "/calendar/calendars", map[string]string{"name": "Team " + randomSuffix()}, &team, 201)
+	w.alice.must("POST", "/calendar/calendars/"+team.ID+"/shares", map[string]string{"email": bob, "access": "write"}, nil, 204)
+	shared := func() string {
+		var list []calendarView
+		w.bob.must("GET", "/calendar/calendars", nil, &list, 200)
+		for _, c := range list {
+			if c.Name == team.Name {
+				return c.ID
+			}
+		}
+		return ""
+	}
+	sharedID := shared()
+	if sharedID == "" {
+		t.Fatal("bob does not see the shared calendar")
+	}
+	var bobMe struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	w.bob.must("GET", "/session", nil, &bobMe, 200)
+	bobPass := createAppPassword(t, w.bob, w.bobMailbox)
+	dav, err := caldav.NewClient(webdav.HTTPClientWithBasicAuth(http.DefaultClient, bob, bobPass), env(t, "AETHER_TEST_API", "http://api:8080")+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(name string) error {
+		doc := ical.NewCalendar()
+		doc.Props.SetText(ical.PropVersion, "2.0")
+		doc.Props.SetText(ical.PropProductID, "-//Aether//integration//EN")
+		ev := ical.NewEvent()
+		ev.Props.SetText(ical.PropUID, "dav-"+randomSuffix())
+		ev.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
+		ev.Props.SetDateTime(ical.PropDateTimeStart, time.Now().Add(time.Hour).UTC())
+		ev.Props.SetDateTime(ical.PropDateTimeEnd, time.Now().Add(2*time.Hour).UTC())
+		ev.Props.SetText(ical.PropSummary, name)
+		doc.Children = append(doc.Children, ev.Component)
+		_, err := dav.PutCalendarObject(context.Background(), "/dav/"+bobMe.User.ID+"/calendars/"+sharedID+"/"+name+".ics", doc)
+		return err
+	}
+	if err := put("before"); err != nil {
+		t.Fatalf("CalDAV write with edit access: %v", err)
+	}
+
+	var other idOnly
+	suffix := randomSuffix()
+	w.admin.must("POST", "/organizations", map[string]string{"name": "Other " + suffix, "slug": "other-" + suffix}, &other, 201)
+	w.admin.must("POST", "/organizations/"+other.ID+"/members", map[string]string{"email": bob, "role": "member"}, nil, 204)
+	w.admin.must("DELETE", "/organizations/"+w.orgID+"/members/"+bobMe.User.ID, nil, nil, 204)
+	if shared() != "" {
+		t.Fatal("bob still sees the calendar after leaving the organization")
+	}
+	if err := put("after"); err == nil {
+		t.Fatal("CalDAV write to the share should fail after leaving the organization")
+	}
+}
