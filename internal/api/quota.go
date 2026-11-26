@@ -125,7 +125,7 @@ func (s *Server) checkQuotas(ctx context.Context) error {
 	if len(measured) == 0 {
 		return usageErr
 	}
-	if _, err := s.db.Exec(ctx, `UPDATE mailboxes m SET used_bytes = u.used FROM unnest($1::uuid[], $2::bigint[]) AS u(id, used) WHERE m.id = u.id`, measured, used); err != nil {
+	if _, err := s.db.Exec(ctx, `UPDATE mailboxes m SET used_bytes = u.used FROM unnest($1::uuid[], $2::bigint[]) AS u(id, used) WHERE m.id = u.id AND m.used_bytes <> u.used`, measured, used); err != nil {
 		return err
 	}
 	rows, err = s.db.Query(ctx, `
