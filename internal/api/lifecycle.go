@@ -19,36 +19,43 @@ import (
 func (s *Server) setUserStatus(ctx context.Context, userID, status, by string) (bool, error) {
 	var changed bool
 	var ids []string
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE users SET status = $2, suspended_by = CASE WHEN $2 = 'active' THEN '' ELSE $3 END, updated_at = now() WHERE id = $1 AND status <> $2 AND suspended_by <> 'mailbox-conversion'`, userID, status, by)
-		if err != nil {
-			return err
-		}
-		changed = tag.RowsAffected() > 0
-		if !changed {
-			return nil
-		}
-		if ids, err = userMailboxIDs(ctx, tx, userID); err != nil {
-			return err
-		}
-		if err := s.revokeMailAccess(ctx, tx, userID, ids); err != nil {
-			return err
-		}
-		if status == "active" {
-			return nil
-		}
-		_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) (err error) {
+		changed, ids, err = s.applyUserStatus(ctx, tx, userID, status, by)
 		return err
 	})
 	if err == nil && changed {
-		for _, id := range ids {
-			if err := s.syncMailboxACL(ctx, id); err != nil {
-				s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", id, "err", err)
-			}
-		}
-		wake(s.kickWake)
+		s.afterUserStatus(ctx, ids)
 	}
 	return changed, err
+}
+
+func (s *Server) applyUserStatus(ctx context.Context, tx pgx.Tx, userID, status, by string) (bool, []string, error) {
+	tag, err := tx.Exec(ctx, `UPDATE users SET status = $2, suspended_by = CASE WHEN $2 = 'active' THEN '' ELSE $3 END, updated_at = now() WHERE id = $1 AND status <> $2 AND suspended_by <> 'mailbox-conversion'`, userID, status, by)
+	if err != nil || tag.RowsAffected() == 0 {
+		return false, nil, err
+	}
+	ids, err := userMailboxIDs(ctx, tx, userID)
+	if err != nil {
+		return false, nil, err
+	}
+	if err := s.revokeMailAccess(ctx, tx, userID, ids); err != nil {
+		return false, nil, err
+	}
+	if status != "active" {
+		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
+			return false, nil, err
+		}
+	}
+	return true, ids, nil
+}
+
+func (s *Server) afterUserStatus(ctx context.Context, ids []string) {
+	for _, id := range ids {
+		if err := s.syncMailboxACL(ctx, id); err != nil {
+			s.log.Warn("mailbox ACL sync failed; retrying", "mailbox", id, "err", err)
+		}
+	}
+	wake(s.kickWake)
 }
 
 func (s *Server) updateUserStatus(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -172,35 +179,44 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `INSERT INTO provider_webhook_events (provider_id, event_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, providerID, event.ID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	var userID, current, suspendedBy string
-	err = s.db.QueryRow(r.Context(), `SELECT u.id, u.status, u.suspended_by FROM user_identities i JOIN users u ON u.id = i.user_id WHERE i.provider_id = $1 AND i.subject = $2`, providerID, event.Data.TargetID).Scan(&userID, &current, &suspendedBy)
-	if errors.Is(err, pgx.ErrNoRows) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
+	var userID string
+	var duplicate, changed bool
+	var ids []string
 	by := "provider:" + providerID
-	switch {
-	case status == "":
-		_, err = s.db.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, userID)
-	case status == "active" && suspendedBy != by:
-	default:
-		_, err = s.setUserStatus(r.Context(), userID, status, by)
-	}
+	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(r.Context(), `INSERT INTO provider_webhook_events (provider_id, event_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, providerID, event.ID)
+		if err != nil {
+			return err
+		}
+		if duplicate = tag.RowsAffected() == 0; duplicate {
+			return nil
+		}
+		var current, suspendedBy string
+		err = tx.QueryRow(r.Context(), `SELECT u.id, u.status, u.suspended_by FROM user_identities i JOIN users u ON u.id = i.user_id WHERE i.provider_id = $1 AND i.subject = $2`, providerID, event.Data.TargetID).Scan(&userID, &current, &suspendedBy)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		switch {
+		case status == "":
+			_, err = tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, userID)
+		case status == "active" && suspendedBy != by:
+		default:
+			changed, ids, err = s.applyUserStatus(r.Context(), tx, userID, status, by)
+		}
+		return err
+	})
 	if err != nil {
 		s.internalError(w, r, err)
+		return
+	}
+	if changed {
+		s.afterUserStatus(r.Context(), ids)
+	}
+	if duplicate || userID == "" {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	webhookEvents.WithLabelValues("applied").Inc()

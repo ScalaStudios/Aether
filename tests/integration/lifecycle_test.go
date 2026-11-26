@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -128,5 +129,51 @@ func TestProviderWebhookSuspendsAndRestores(t *testing.T) {
 	signedEvent(t, hook, secret, "user.restore", f.subject)
 	if _, err := imapLogin(t, f.email, pass); err == nil {
 		t.Fatal("provider restore lifted a suspension an administrator made")
+	}
+}
+
+func TestProviderWebhookRetryAppliesFailedSuspension(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	ctx := context.Background()
+	f := startFakeIssuer(t)
+	slug, secret := "halo-"+randomSuffix(), "whsec-"+randomSuffix()
+	var provider idOnly
+	w.admin.must("POST", "/admin/identity-providers", map[string]any{
+		"slug": slug, "name": "Halo", "kind": "halo", "issuer": f.issuer, "clientId": f.clientID, "clientSecret": f.secret,
+		"autoProvision": true, "webhookSecret": secret,
+	}, &provider, 201)
+	defer w.admin.do("DELETE", "/admin/identity-providers/"+provider.ID, nil, nil)
+	hook := env(t, "AETHER_TEST_API", "http://api:8080") + "/api/v1/hooks/identity-providers/" + slug
+	f.subject, f.email = "usr_"+randomSuffix(), "hana"+randomSuffix()+"@"+w.domain
+	oidcLogin(t, f, slug)
+	var id string
+	if err := db.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, f.email).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	name := "it_fail_" + randomSuffix()
+	if _, err := db.Exec(ctx, `CREATE FUNCTION `+name+`() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$`); err != nil {
+		t.Fatal(err)
+	}
+	drop := func() { db.Exec(ctx, `DROP FUNCTION IF EXISTS `+name+`() CASCADE`) }
+	t.Cleanup(drop)
+	if _, err := db.Exec(ctx, `CREATE TRIGGER `+name+` BEFORE UPDATE ON users FOR EACH ROW WHEN (OLD.id = '`+id+`') EXECUTE FUNCTION `+name+`()`); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"id": "evt_" + randomSuffix(), "type": "user.suspend", "time": time.Now(), "data": map[string]string{"targetType": "user", "targetId": f.subject}})
+	if got := postSigned(t, hook, secret, body); got != 500 {
+		t.Fatalf("suspend with a failing update returned %d, want 500", got)
+	}
+	drop()
+	if got := postSigned(t, hook, secret, body); got != 204 {
+		t.Fatalf("redelivered suspend returned %d", got)
+	}
+	var status string
+	if err := db.QueryRow(ctx, `SELECT status FROM users WHERE id = $1`, id).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "suspended" {
+		t.Fatalf("redelivered suspend left the account %s", status)
 	}
 }
