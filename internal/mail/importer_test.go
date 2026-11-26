@@ -1,10 +1,16 @@
 package mail
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,7 +113,7 @@ func TestImportCopiesFoldersAndSkipsDuplicates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := copyFolder(context.Background(), from, to, folder.Mailbox, target, 1<<20, &p, func(ImportProgress) {}, nil); err != nil {
+		if err := copyFolder(context.Background(), from, nil, to, folder.Mailbox, target, 1<<20, &p, func(ImportProgress) {}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -144,7 +150,7 @@ func TestImportNeverTouchesSharedFolders(t *testing.T) {
 	appendMessage(t, to, support, "known@example.com")
 
 	var p ImportProgress
-	if err := importFolders(context.Background(), from, to, "source", 1<<20, func(last ImportProgress) { p = last }, nil); err != nil {
+	if err := importFolders(context.Background(), from, nil, to, "source", 1<<20, func(last ImportProgress) { p = last }, nil); err != nil {
 		t.Fatal(err)
 	}
 	if p.FoldersDone != 4 || p.FoldersTotal != 4 || p.Copied != 1 || p.Skipped != 0 {
@@ -171,7 +177,7 @@ func TestImportSkipsMessagesOverTheSizeLimit(t *testing.T) {
 	appendMessage(t, from, "INBOX", "two@example.com")
 
 	var p ImportProgress
-	if err := copyFolder(context.Background(), from, to, "INBOX", "INBOX", 1024, &p, func(ImportProgress) {}, nil); err != nil {
+	if err := copyFolder(context.Background(), from, nil, to, "INBOX", "INBOX", 1024, &p, func(ImportProgress) {}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if p.Copied != 2 || p.Skipped != 1 {
@@ -191,7 +197,7 @@ func TestCollectLimitedDropsBodiesOverTheLimit(t *testing.T) {
 	body := &imap.FetchItemBodySection{Peek: true}
 	for _, limit := range []int64{1024, 1 << 20} {
 		cmd := from.Fetch(imap.SeqSet{{Start: 1, Stop: 0}}, &imap.FetchOptions{UID: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}})
-		m, err := collectLimited(cmd.Next(), limit)
+		m, err := collectLimited(cmd.Next(), nil, limit)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,7 +226,7 @@ func TestImportFailureReleasesTheSourceFetch(t *testing.T) {
 			to.Close()
 		}
 	}
-	if err := copyFolder(context.Background(), from, to, "INBOX", "INBOX", 1<<20, &p, closeTarget, nil); err == nil {
+	if err := copyFolder(context.Background(), from, nil, to, "INBOX", "INBOX", 1<<20, &p, closeTarget, nil); err == nil {
 		t.Fatal("copy into a closed destination succeeded")
 	}
 	closed := make(chan error, 1)
@@ -229,5 +235,158 @@ func TestImportFailureReleasesTheSourceFetch(t *testing.T) {
 	case <-closed:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the source connection is still waiting on an unread fetch")
+	}
+}
+
+func fakeSource(t *testing.T, respond func(w io.Writer, tag, cmd string)) (*imapclient.Client, *importBudget) {
+	t.Helper()
+	client, server := net.Pipe()
+	go func() {
+		defer server.Close()
+		io.WriteString(server, "* OK [CAPABILITY IMAP4rev1] ready\r\n")
+		r := bufio.NewReader(server)
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			tag, cmd, _ := strings.Cut(strings.TrimSpace(line), " ")
+			respond(server, tag, strings.ToUpper(cmd))
+		}
+	}()
+	budget := &importBudget{Conn: client}
+	ic := imapclient.New(budget, nil)
+	t.Cleanup(func() { ic.Close() })
+	return ic, budget
+}
+
+func sendFiller(w io.Writer, n int, sent *atomic.Int64) {
+	chunk := bytes.Repeat([]byte("a"), 64<<10)
+	for ; n > 0; n -= len(chunk) {
+		k, err := w.Write(chunk[:min(n, len(chunk))])
+		sent.Add(int64(k))
+		if err != nil {
+			return
+		}
+	}
+}
+
+func fakeMailbox(w io.Writer, tag, cmd string, heads, body func(io.Writer)) {
+	switch {
+	case strings.HasPrefix(cmd, "EXAMINE"):
+		fmt.Fprintf(w, "* 1 EXISTS\r\n* OK [UIDVALIDITY 7] ok\r\n%s OK [READ-ONLY] done\r\n", tag)
+	case strings.HasPrefix(cmd, "UID SEARCH"):
+		fmt.Fprintf(w, "* SEARCH 1\r\n%s OK done\r\n", tag)
+	case strings.HasPrefix(cmd, "UID FETCH") && strings.Contains(cmd, "BODY"):
+		body(w)
+		fmt.Fprintf(w, "%s OK done\r\n", tag)
+	case strings.HasPrefix(cmd, "UID FETCH"):
+		heads(w)
+		fmt.Fprintf(w, "%s OK done\r\n", tag)
+	default:
+		fmt.Fprintf(w, "%s OK done\r\n", tag)
+	}
+}
+
+func TestImportFailsOnOversizedSourceResponses(t *testing.T) {
+	cases := map[string]func(w io.Writer, tag, cmd string, sent *atomic.Int64){
+		"folder name": func(w io.Writer, tag, cmd string, sent *atomic.Int64) {
+			if !strings.HasPrefix(cmd, "LIST") {
+				fmt.Fprintf(w, "%s OK done\r\n", tag)
+				return
+			}
+			io.WriteString(w, `* LIST () "/" "`)
+			sendFiller(w, 64<<20, sent)
+			fmt.Fprintf(w, "\"\r\n%s OK done\r\n", tag)
+		},
+		"envelope subject": func(w io.Writer, tag, cmd string, sent *atomic.Int64) {
+			if strings.HasPrefix(cmd, "LIST") {
+				fmt.Fprintf(w, "* LIST () \"/\" INBOX\r\n%s OK done\r\n", tag)
+				return
+			}
+			fakeMailbox(w, tag, cmd, func(w io.Writer) {
+				fmt.Fprintf(w, "* 1 FETCH (UID 1 RFC822.SIZE 10 ENVELOPE (NIL {%d}\r\n", 64<<20)
+				sendFiller(w, 64<<20, sent)
+				io.WriteString(w, " NIL NIL NIL NIL NIL NIL NIL NIL))\r\n")
+			}, func(io.Writer) {})
+		},
+		"repeated body sections": func(w io.Writer, tag, cmd string, sent *atomic.Int64) {
+			if strings.HasPrefix(cmd, "LIST") {
+				fmt.Fprintf(w, "* LIST () \"/\" INBOX\r\n%s OK done\r\n", tag)
+				return
+			}
+			fakeMailbox(w, tag, cmd, func(w io.Writer) {
+				io.WriteString(w, "* 1 FETCH (UID 1 RFC822.SIZE 10 ENVELOPE (NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL))\r\n")
+			}, func(w io.Writer) {
+				io.WriteString(w, "* 1 FETCH (UID 1")
+				for range 6 {
+					fmt.Fprintf(w, " BODY[] {%d}\r\n", 8<<20)
+					sendFiller(w, 8<<20, sent)
+				}
+				io.WriteString(w, ")\r\n")
+			})
+		},
+	}
+	for name, respond := range cases {
+		t.Run(name, func(t *testing.T) {
+			var sent atomic.Int64
+			from, budget := fakeSource(t, func(w io.Writer, tag, cmd string) { respond(w, tag, cmd, &sent) })
+			to := memIMAP(t)
+			err := importFolders(context.Background(), from, budget, to, "source", 16<<20, func(ImportProgress) {}, nil)
+			if !errors.Is(budget.failed(err), ErrImportResponseTooLarge) {
+				t.Fatalf("import returned %.200v, want %v", err, ErrImportResponseTooLarge)
+			}
+			if n := sent.Load(); n > importResponseLimit+9<<20 {
+				t.Errorf("the source delivered %d bytes before the import stopped", n)
+			}
+		})
+	}
+}
+
+func TestImportStreamsBodiesLargerThanTheResponseLimit(t *testing.T) {
+	head := "Message-ID: <big@example.com>\r\nSubject: big\r\n\r\n"
+	size := importResponseLimit + 4<<20
+	envelope := `(NIL NIL NIL NIL NIL NIL NIL NIL NIL "<big@example.com>")`
+	var sent atomic.Int64
+	from, budget := fakeSource(t, func(w io.Writer, tag, cmd string) {
+		if strings.HasPrefix(cmd, "LIST") {
+			fmt.Fprintf(w, "* LIST () \"/\" INBOX\r\n%s OK done\r\n", tag)
+			return
+		}
+		fakeMailbox(w, tag, cmd, func(w io.Writer) {
+			fmt.Fprintf(w, "* 1 FETCH (UID 1 RFC822.SIZE %d ENVELOPE %s)\r\n", size, envelope)
+		}, func(w io.Writer) {
+			fmt.Fprintf(w, "* 1 FETCH (UID 1 FLAGS () INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" ENVELOPE %s BODY[] {%d}\r\n%s", envelope, size, head)
+			sendFiller(w, size-len(head), &sent)
+			io.WriteString(w, ")\r\n")
+		})
+	})
+	to := memIMAP(t)
+	if err := importFolders(context.Background(), from, budget, to, "source", 2*importResponseLimit, func(ImportProgress) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := folderMessages(t, to, "INBOX")["big@example.com"]; !ok {
+		t.Fatal("the large message was not copied")
+	}
+}
+
+func TestCheckImportSourceStopsOnAnOversizedGreeting(t *testing.T) {
+	var sent atomic.Int64
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			io.WriteString(server, "* OK ")
+			sendFiller(server, 64<<20, &sent)
+			io.WriteString(server, "\r\n")
+		}()
+		return client, nil
+	}
+	err := CheckImportSource(context.Background(), ImportSource{Host: "source.example", Port: 143, StartTLS: true, Dial: dial})
+	if !errors.Is(err, ErrImportResponseTooLarge) {
+		t.Fatalf("check returned %.200v, want %v", err, ErrImportResponseTooLarge)
+	}
+	if n := sent.Load(); n > importResponseLimit+1<<20 {
+		t.Errorf("the source delivered %d bytes before the check stopped", n)
 	}
 }

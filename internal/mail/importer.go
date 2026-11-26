@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -38,16 +39,57 @@ type ImportProgress struct {
 
 var ErrImportLogin = errors.New("the other server rejected the username or password")
 
+var ErrImportResponseTooLarge = errors.New("the other server sent a response larger than the import allows")
+
+const importResponseLimit = 16 << 20
+
+type importBudget struct {
+	net.Conn
+	used     atomic.Int64
+	exceeded atomic.Bool
+}
+
+func (b *importBudget) Read(p []byte) (int, error) {
+	if b.used.Load() > importResponseLimit {
+		b.exceeded.Store(true)
+		return 0, ErrImportResponseTooLarge
+	}
+	n, err := b.Conn.Read(p)
+	b.used.Add(int64(n))
+	return n, err
+}
+
+func (b *importBudget) reset() {
+	if b != nil {
+		b.used.Store(0)
+	}
+}
+
+func (b *importBudget) credit(n int64) {
+	if b != nil {
+		b.used.Add(-n)
+	}
+}
+
+func (b *importBudget) failed(err error) error {
+	if err != nil && b != nil && b.exceeded.Load() {
+		return ErrImportResponseTooLarge
+	}
+	return err
+}
+
 var skippedSourceFolders = []imap.MailboxAttr{imap.MailboxAttrNoSelect, imap.MailboxAttrAll, imap.MailboxAttrFlagged, imap.MailboxAttrImportant}
 
 const importBatch = 25
 
-func dialSource(ctx context.Context, src ImportSource) (*imapclient.Client, func(), error) {
+func dialSource(ctx context.Context, src ImportSource) (*imapclient.Client, *importBudget, func(), error) {
 	conn, err := src.Dial(ctx, "tcp", net.JoinHostPort(src.Host, strconv.Itoa(src.Port)))
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect to %s: %w", src.Host, err)
+		return nil, nil, nil, fmt.Errorf("connect to %s: %w", src.Host, err)
 	}
-	return importConnection(ctx, conn, &tls.Config{ServerName: src.Host, MinVersion: tls.VersionTLS12}, src.StartTLS)
+	budget := &importBudget{Conn: conn}
+	ic, closeConn, err := importConnection(ctx, budget, &tls.Config{ServerName: src.Host, MinVersion: tls.VersionTLS12}, src.StartTLS)
+	return ic, budget, closeConn, budget.failed(err)
 }
 
 func importConnection(ctx context.Context, conn net.Conn, cfg *tls.Config, startTLS bool) (*imapclient.Client, func(), error) {
@@ -75,12 +117,12 @@ func CheckImportSource(ctx context.Context, src ImportSource) (err error) {
 			err = ctx.Err()
 		}
 	}()
-	ic, closeConn, err := dialSource(ctx, src)
+	ic, budget, closeConn, err := dialSource(ctx, src)
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	return importLogin(ic, src)
+	return budget.failed(importLogin(ic, src))
 }
 
 func importLogin(ic *imapclient.Client, src ImportSource) error {
@@ -98,13 +140,13 @@ func (c *Client) Import(ctx context.Context, address string, src ImportSource, m
 			err = ctx.Err()
 		}
 	}()
-	from, closeSource, err := dialSource(ctx, src)
+	from, budget, closeSource, err := dialSource(ctx, src)
 	if err != nil {
 		return err
 	}
 	defer closeSource()
 	if err := importLogin(from, src); err != nil {
-		return err
+		return budget.failed(err)
 	}
 	dialer := net.Dialer{Timeout: 30 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", c.imapAddr)
@@ -119,10 +161,10 @@ func (c *Client) Import(ctx context.Context, address string, src ImportSource, m
 	if _, err := c.login(to, address); err != nil {
 		return err
 	}
-	return importFolders(ctx, from, to, src.Host, maxBytes, progress, sync)
+	return budget.failed(importFolders(ctx, from, budget, to, src.Host, maxBytes, progress, sync))
 }
 
-func importFolders(ctx context.Context, from, to *imapclient.Client, host string, maxBytes int64, progress func(ImportProgress), sync *ImportSync) error {
+func importFolders(ctx context.Context, from *imapclient.Client, budget *importBudget, to *imapclient.Client, host string, maxBytes int64, progress func(ImportProgress), sync *ImportSync) error {
 	sources, err := from.List("", "*", &imap.ListOptions{ReturnSpecialUse: true}).Collect()
 	if err != nil {
 		return fmt.Errorf("list folders on %s: %w", host, err)
@@ -148,7 +190,7 @@ func importFolders(ctx context.Context, from, to *imapclient.Client, host string
 			return err
 		}
 		if target != "" {
-			if err := copyFolder(ctx, from, to, folder.Mailbox, target, maxBytes, &p, progress, sync); err != nil {
+			if err := copyFolder(ctx, from, budget, to, folder.Mailbox, target, maxBytes, &p, progress, sync); err != nil {
 				return fmt.Errorf("copy %s: %w", folder.Mailbox, err)
 			}
 		}
@@ -193,7 +235,8 @@ func importTarget(to *imapclient.Client, folder *imap.ListData, targets []*imap.
 	return name, nil
 }
 
-func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target string, maxBytes int64, p *ImportProgress, progress func(ImportProgress), sync *ImportSync) error {
+func copyFolder(ctx context.Context, from *imapclient.Client, budget *importBudget, to *imapclient.Client, source, target string, maxBytes int64, p *ImportProgress, progress func(ImportProgress), sync *ImportSync) error {
+	budget.reset()
 	sourceData, err := from.Select(source, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
 		return err
@@ -254,6 +297,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		budget.reset()
 		batch := uids[start:min(start+importBatch, len(uids))]
 		heads, err := from.Fetch(imap.UIDSetNum(batch...), &imap.FetchOptions{UID: true, Envelope: true, RFC822Size: true, Flags: sync != nil}).Collect()
 		if err != nil {
@@ -281,7 +325,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 			cmd := from.Fetch(imap.UIDSetNum(wanted...), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}})
 			fetching = cmd
 			for data := cmd.Next(); data != nil; data = cmd.Next() {
-				m, err := collectLimited(data, maxBytes)
+				m, err := collectLimited(data, budget, maxBytes)
 				if err != nil {
 					return err
 				}
@@ -318,7 +362,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 						return err
 					}
 				}
-				if id != "" {
+				if id != "" && len(id) <= 998 {
 					seen[id] = true
 				}
 			}
@@ -343,12 +387,16 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 	return nil
 }
 
-func collectLimited(data *imapclient.FetchMessageData, maxBytes int64) (*imapclient.FetchMessageBuffer, error) {
+func collectLimited(data *imapclient.FetchMessageData, budget *importBudget, maxBytes int64) (*imapclient.FetchMessageBuffer, error) {
 	m := &imapclient.FetchMessageBuffer{SeqNum: data.SeqNum}
 	for item := data.Next(); item != nil; item = data.Next() {
 		switch item := item.(type) {
 		case imapclient.FetchItemDataBodySection:
-			if item.Literal == nil || item.Literal.Size() > maxBytes {
+			if item.Literal == nil || len(m.BodySection) > 0 {
+				continue
+			}
+			budget.credit(item.Literal.Size())
+			if item.Literal.Size() > maxBytes {
 				continue
 			}
 			raw, err := io.ReadAll(item.Literal)
