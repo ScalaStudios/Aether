@@ -4,6 +4,7 @@ package integration
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -92,6 +93,32 @@ func TestMeetingInvitations(t *testing.T) {
 	w.alice.must("GET", rangeQuery, nil, &aliceEvents, 200)
 	if len(aliceEvents) != 1 || len(aliceEvents[0].Attendees) != 1 || aliceEvents[0].Attendees[0].Status != "accepted" {
 		t.Fatalf("attendee status not updated for the organizer: %+v", aliceEvents)
+	}
+
+	outsider := "mallory@external.example"
+	forged := strings.Join([]string{
+		"From: " + outsider, "To: " + alice, "Subject: Invitation: Forged " + title, "Date: " + time.Now().Format(time.RFC1123Z),
+		"Message-ID: <" + randomSuffix() + "@integration.test>", "MIME-Version: 1.0", "Content-Type: text/calendar; charset=utf-8; method=REQUEST", "",
+		"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Integration//EN", "METHOD:REQUEST", "BEGIN:VEVENT", "UID:" + strings.TrimSuffix(created.ID, ".ics"), "SEQUENCE:5",
+		"DTSTAMP:" + time.Now().UTC().Format("20060102T150405Z"), "DTSTART:" + start.Add(time.Hour).Format("20060102T150405Z"), "DTEND:" + start.Add(2*time.Hour).Format("20060102T150405Z"),
+		"SUMMARY:Forged", "ORGANIZER:mailto:" + outsider, "ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:" + alice, "END:VEVENT", "END:VCALENDAR", "",
+	}, "\r\n")
+	if err := submit(t, env(t, "AETHER_TEST_SMTP", "postfix:25"), "", "", outsider, []string{alice}, forged, false); err != nil {
+		t.Fatalf("delivering the forged invitation: %v", err)
+	}
+	var forgedUID uint32
+	waitFor(t, "forged invitation in alice's inbox", func() bool {
+		forgedUID = findInAPI(w.alice, w.aliceMailbox, "INBOX", "Invitation: Forged "+title)
+		return forgedUID != 0
+	})
+	for _, response := range []string{"accepted", "declined"} {
+		if code, reason := w.alice.failure("POST", messagePath(w.aliceMailbox, forgedUID)+"/invitation", map[string]string{"response": response}); code != 422 || reason != "invalid_request" {
+			t.Fatalf("responding %s to a request from someone other than the organizer should be rejected, got %d %s", response, code, reason)
+		}
+	}
+	w.alice.must("GET", rangeQuery, nil, &aliceEvents, 200)
+	if len(aliceEvents) != 1 || aliceEvents[0].Title != title || aliceEvents[0].Organizer != alice {
+		t.Fatalf("a request from someone other than the organizer changed the event: %+v", aliceEvents)
 	}
 
 	if code := w.bob.do("POST", messagePath(w.bobMailbox, inviteUID)+"/invitation", map[string]string{"response": "apply"}, nil); code != 422 {

@@ -408,6 +408,12 @@ func (s *Server) respondToInvitation(w http.ResponseWriter, r *http.Request, p *
 			writeError(w, http.StatusUnprocessableEntity, "no_organizer", "This invitation has no organizer to reply to.")
 			return
 		}
+		if stored != nil {
+			if prev := masterEvent(stored.Cal); prev == nil || eventOrganizer(prev).Address != organizer.Address || sender != organizer.Address || eventSequence(prev) > eventSequence(comp) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_request", "This invitation does not come from the organizer of the event in your calendar, or an update has already replaced it.")
+				return
+			}
+		}
 		delete(cal.Props, ical.PropMethod)
 		for _, c := range cal.Children {
 			if c.Name == ical.CompEvent && !setPartStat(c, me.Address, partStat) {
