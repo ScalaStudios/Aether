@@ -105,8 +105,6 @@ rspamd_config:register_symbol({
   end,
 })
 
-local sender_lists_url = (os.getenv('AETHER_API_INTERNAL_URL') or 'http://api:8080') .. '/internal/sender-lists/check'
-
 local function first_addr(list)
   return list and list[1] and list[1].addr or ''
 end
@@ -125,11 +123,16 @@ local sender_lists = rspamd_config:register_symbol({
     if #recipients == 0 then
       return
     end
+    local upstream = api_upstream()
+    if not upstream then
+      rspamd_logger.warnx(task, 'sender list check skipped: the API address could not be resolved')
+      return
+    end
     local ip = task:get_from_ip()
     local dmarc_reject = task:has_symbol('DMARC_POLICY_REJECT')
     rspamd_http.request({
       task = task,
-      url = sender_lists_url,
+      url = 'http://' .. upstream:get_addr():to_string(true) .. '/internal/sender-lists/check',
       method = 'post',
       mime_type = 'application/json',
       timeout = 3,
@@ -144,9 +147,14 @@ local sender_lists = rspamd_config:register_symbol({
       }, 'json-compact'),
       callback = function(err, code, body)
         if err or code ~= 200 then
+          if err then
+            upstream:fail()
+            api_upstreams = nil
+          end
           rspamd_logger.warnx(task, 'sender list check failed: %s %s', err, code)
           return
         end
+        upstream:ok()
         local parser = ucl.parser()
         if not parser:parse_string(body) then
           return
