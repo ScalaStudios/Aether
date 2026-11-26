@@ -121,6 +121,31 @@ func TestMeetingInvitations(t *testing.T) {
 		t.Fatalf("a request from someone other than the organizer changed the event: %+v", aliceEvents)
 	}
 
+	external := "host@external.example"
+	instance := start.Add(24 * time.Hour)
+	single := strings.Join([]string{
+		"From: " + external, "To: " + alice, "Subject: Invitation: Instance " + title, "Date: " + time.Now().Format(time.RFC1123Z),
+		"Message-ID: <" + randomSuffix() + "@integration.test>", "MIME-Version: 1.0", "Content-Type: text/calendar; charset=utf-8; method=REQUEST", "",
+		"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Integration//EN", "METHOD:REQUEST", "BEGIN:VEVENT", "UID:series-" + randomSuffix(),
+		"RECURRENCE-ID:" + instance.Format("20060102T150405Z"), "DTSTAMP:" + time.Now().UTC().Format("20060102T150405Z"),
+		"DTSTART:" + instance.Format("20060102T150405Z"), "DTEND:" + instance.Add(time.Hour).Format("20060102T150405Z"),
+		"SUMMARY:Instance", "ORGANIZER:mailto:" + external, "ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:" + alice, "END:VEVENT", "END:VCALENDAR", "",
+	}, "\r\n")
+	if err := submit(t, env(t, "AETHER_TEST_SMTP", "postfix:25"), "", "", external, []string{alice}, single, false); err != nil {
+		t.Fatalf("delivering the single-instance invitation: %v", err)
+	}
+	var singleUID uint32
+	waitFor(t, "single-instance invitation in alice's inbox", func() bool {
+		singleUID = findInAPI(w.alice, w.aliceMailbox, "INBOX", "Invitation: Instance "+title)
+		return singleUID != 0
+	})
+	w.alice.do("POST", messagePath(w.aliceMailbox, singleUID)+"/invitation", map[string]string{"response": "accepted"}, nil)
+	var instanceEvents []eventView
+	w.alice.must("GET", "/calendar/events?start="+instance.Add(-time.Hour).Format(time.RFC3339)+"&end="+instance.Add(2*time.Hour).Format(time.RFC3339), nil, &instanceEvents, 200)
+	if len(instanceEvents) != 1 || instanceEvents[0].Title != "Instance" {
+		t.Fatalf("an accepted single-instance invitation is missing from the calendar: %+v", instanceEvents)
+	}
+
 	if code := w.bob.do("POST", messagePath(w.bobMailbox, inviteUID)+"/invitation", map[string]string{"response": "apply"}, nil); code != 422 {
 		t.Fatalf("applying to a request should be rejected, got %d", code)
 	}

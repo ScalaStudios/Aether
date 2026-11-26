@@ -59,3 +59,18 @@ func TestCalendarQueryIsBounded(t *testing.T) {
 		t.Fatalf("got %+v, %v", out, err)
 	}
 }
+
+func TestCalendarFieldsTimesFromOverrides(t *testing.T) {
+	data := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:test\r\nBEGIN:VEVENT\r\nUID:o\r\nDTSTAMP:20260101T000000Z\r\nRECURRENCE-ID:20260301T100000Z\r\nDTSTART:20260301T110000Z\r\nDTEND:20260301T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	cal, err := ical.NewDecoder(strings.NewReader(data)).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := calendarFields(cal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.StartsAt == nil || f.EndsAt == nil || !f.StartsAt.Equal(time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC)) || !f.EndsAt.Equal(time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)) {
+		t.Fatalf("override times not extracted: %v %v", f.StartsAt, f.EndsAt)
+	}
+}

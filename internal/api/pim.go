@@ -578,7 +578,7 @@ func eventsIn(ctx context.Context, db queryer, calendars []collectionRow, from, 
 	}
 	rows, err := db.Query(ctx, `
 		SELECT o.collection_id, o.name, o.data FROM dav_objects o
-		WHERE o.collection_id = ANY($1) AND o.component = 'VEVENT' AND (o.recurring OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
+		WHERE o.collection_id = ANY($1) AND o.component = 'VEVENT' AND (o.recurring OR o.starts_at IS NULL OR (o.starts_at < $3 AND coalesce(o.ends_at, o.starts_at + interval '1 day') > $2))`, ids, from, to)
 	if err != nil {
 		return nil, err
 	}

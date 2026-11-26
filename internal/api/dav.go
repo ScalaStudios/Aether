@@ -539,6 +539,13 @@ func calendarFields(cal *ical.Calendar) (objectFields, error) {
 			f.Component = "VTODO"
 		}
 		if comp.Props.Get(ical.PropRecurrenceID) != nil {
+			ev := ical.Event{Component: comp}
+			if start, err := ev.DateTimeStart(time.UTC); err == nil && !start.IsZero() && (f.StartsAt == nil || start.Before(*f.StartsAt)) {
+				f.StartsAt = &start
+			}
+			if end, err := ev.DateTimeEnd(time.UTC); err == nil && !end.IsZero() && (f.EndsAt == nil || end.After(*f.EndsAt)) {
+				f.EndsAt = &end
+			}
 			continue
 		}
 		f.Summary, _ = comp.Props.Text(ical.PropSummary)
