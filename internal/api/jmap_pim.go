@@ -444,8 +444,12 @@ func eventObject(ev jmapStoredEvent) map[string]any {
 			obj["showWithoutTime"] = true
 			obj["duration"] = "P1D"
 		} else {
-			obj["start"] = start.UTC().Format("2006-01-02T15:04:05")
-			obj["timeZone"] = "Etc/UTC"
+			zone, name := time.UTC, "Etc/UTC"
+			if loc, ok := validTimezone(comp.Props.Get(ical.PropDateTimeStart).Params.Get(ical.ParamTimezoneID)); ok {
+				zone, name = loc, loc.String()
+			}
+			obj["start"] = start.In(zone).Format("2006-01-02T15:04:05")
+			obj["timeZone"] = name
 			obj["showWithoutTime"] = false
 			if end, err := evnt.DateTimeEnd(time.UTC); err == nil && end.After(start) {
 				obj["duration"] = formatDuration(end.Sub(start))
@@ -455,8 +459,8 @@ func eventObject(ev jmapStoredEvent) map[string]any {
 	if loc := textProp(comp, ical.PropLocation); loc != "" {
 		obj["locations"] = map[string]any{"1": map[string]any{"@type": "Location", "name": loc}}
 	}
-	if rule := textProp(comp, ical.PropRecurrenceRule); rule != "" {
-		obj["recurrenceRules"] = []any{rruleObject(rule)}
+	if rule := comp.Props.Get(ical.PropRecurrenceRule); rule != nil && rule.Value != "" {
+		obj["recurrenceRules"] = []any{rruleObject(rule.Value)}
 	}
 	if status := textProp(comp, ical.PropStatus); status != "" {
 		obj["status"] = strings.ToLower(status)
@@ -678,39 +682,8 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 	if patch["description"] == nil && hasKey(patch, "description") {
 		comp.Props.Del(ical.PropDescription)
 	}
-	start := time.Time{}
-	allDay := patch["showWithoutTime"] == true
-	if raw, ok := patch["start"].(string); ok {
-		var err error
-		if allDay || len(raw) == 10 {
-			start, err = time.Parse("2006-01-02", raw[:10])
-			allDay = true
-		} else {
-			start, err = time.Parse("2006-01-02T15:04:05", raw)
-			if err != nil {
-				start, err = time.Parse(time.RFC3339, raw)
-			}
-		}
-		if err != nil {
-			return "", itemError("invalidProperties", "start must be a local date or time.", "start")
-		}
-		if allDay {
-			comp.Props.SetDate(ical.PropDateTimeStart, start)
-		} else {
-			comp.Props.SetDateTime(ical.PropDateTimeStart, start.UTC())
-		}
-	}
-	if raw, ok := patch["duration"].(string); ok && !start.IsZero() {
-		d, err := parseDuration(raw)
-		if err != nil || d <= 0 {
-			return "", itemError("invalidProperties", "duration must look like PT1H or P1D.", "duration")
-		}
-		end := start.Add(d)
-		if allDay {
-			comp.Props.SetDate(ical.PropDateTimeEnd, end)
-		} else {
-			comp.Props.SetDateTime(ical.PropDateTimeEnd, end.UTC())
-		}
+	if uerr := applyEventSchedule(comp, patch); uerr != nil {
+		return "", uerr
 	}
 	if loc, ok := patch["locations"].(map[string]any); ok {
 		name := ""
@@ -724,23 +697,6 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 		} else {
 			comp.Props.SetText(ical.PropLocation, name)
 		}
-	}
-	if rules, ok := patch["recurrenceRules"].([]any); ok && len(rules) > 0 {
-		rule, _ := rules[0].(map[string]any)
-		freq := strings.ToUpper(str(rule["frequency"]))
-		switch freq {
-		case "YEARLY", "MONTHLY", "WEEKLY", "DAILY":
-		default:
-			return "", itemError("invalidProperties", "frequency must be yearly, monthly, weekly, or daily.", "recurrenceRules")
-		}
-		rr := "FREQ=" + freq
-		if n, ok := numberInt(rule["interval"]); ok && n > 1 {
-			rr += ";INTERVAL=" + strconv.Itoa(n)
-		}
-		if n, ok := numberInt(rule["count"]); ok && n > 0 {
-			rr += ";COUNT=" + strconv.Itoa(n)
-		}
-		comp.Props.SetText(ical.PropRecurrenceRule, rr)
 	}
 	if status, ok := patch["status"].(string); ok {
 		switch strings.ToLower(status) {
@@ -778,6 +734,7 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 	if !ok || col.Access == "read" {
 		return "", itemError("forbidden", "You cannot change that calendar.")
 	}
+	addTimezones(cal)
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
 		return "", itemError("invalidProperties", "The event could not be saved.")
@@ -797,6 +754,92 @@ func (s *Server) saveEventObject(ctx context.Context, userID, id string, patch m
 		_ = s.deleteDAVObject(ctx, existing.Collection, existing.Name)
 	}
 	return eventID(uid), nil
+}
+
+func applyEventSchedule(comp *ical.Component, patch map[string]any) map[string]any {
+	ev := ical.Event{Component: comp}
+	prevStart, _ := ev.DateTimeStart(time.UTC)
+	prevEnd, _ := ev.DateTimeEnd(time.UTC)
+	zone := time.UTC
+	if p := comp.Props.Get(ical.PropDateTimeStart); p != nil {
+		if loc, ok := validTimezone(p.Params.Get(ical.ParamTimezoneID)); ok {
+			zone = loc
+		}
+	}
+	allDay := patch["showWithoutTime"] == true
+	raw, hasStart := patch["start"].(string)
+	if !hasStart && !prevStart.IsZero() {
+		raw = prevStart.In(zone).Format("2006-01-02T15:04:05")
+		if p := comp.Props.Get(ical.PropDateTimeStart); p.ValueType() == ical.ValueDate {
+			raw = prevStart.Format("2006-01-02")
+		}
+	}
+	if name, ok := patch["timeZone"].(string); ok || hasKey(patch, "timeZone") {
+		zone = time.UTC
+		if name != "" && name != "Etc/UTC" && name != "UTC" {
+			loc, valid := validTimezone(name)
+			if !valid {
+				return itemError("invalidProperties", "timeZone must be a time zone like Europe/London.", "timeZone")
+			}
+			zone = loc
+		}
+	}
+	_, hasDuration := patch["duration"].(string)
+	if raw != "" && (hasStart || hasKey(patch, "timeZone") || hasDuration) {
+		var start time.Time
+		var err error
+		if allDay || len(raw) == 10 {
+			start, err = time.Parse("2006-01-02", raw[:10])
+			allDay = true
+		} else {
+			start, err = time.ParseInLocation("2006-01-02T15:04:05", raw, zone)
+			if err != nil {
+				start, err = time.Parse(time.RFC3339, raw)
+				start = start.In(zone)
+			}
+		}
+		if err != nil {
+			return itemError("invalidProperties", "start must be a local date or time.", "start")
+		}
+		length := prevEnd.Sub(prevStart)
+		if d, ok := patch["duration"].(string); ok {
+			length, err = parseDuration(d)
+			if err != nil || length <= 0 {
+				return itemError("invalidProperties", "duration must look like PT1H or P1D.", "duration")
+			}
+		}
+		comp.Props.Del(ical.PropDuration)
+		if allDay {
+			comp.Props.SetDate(ical.PropDateTimeStart, start)
+		} else {
+			comp.Props.SetDateTime(ical.PropDateTimeStart, start)
+		}
+		if length > 0 {
+			if allDay {
+				comp.Props.SetDate(ical.PropDateTimeEnd, start.Add(length))
+			} else {
+				comp.Props.SetDateTime(ical.PropDateTimeEnd, start.Add(length))
+			}
+		}
+	}
+	if rules, ok := patch["recurrenceRules"].([]any); ok && len(rules) > 0 {
+		rule, _ := rules[0].(map[string]any)
+		freq := strings.ToUpper(str(rule["frequency"]))
+		switch freq {
+		case "YEARLY", "MONTHLY", "WEEKLY", "DAILY":
+		default:
+			return itemError("invalidProperties", "frequency must be yearly, monthly, weekly, or daily.", "recurrenceRules")
+		}
+		rr := "FREQ=" + freq
+		if n, ok := numberInt(rule["interval"]); ok && n > 1 {
+			rr += ";INTERVAL=" + strconv.Itoa(n)
+		}
+		if n, ok := numberInt(rule["count"]); ok && n > 0 {
+			rr += ";COUNT=" + strconv.Itoa(n)
+		}
+		comp.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: rr, Params: ical.Params{}})
+	}
+	return nil
 }
 
 func (s *Server) collectionAccess(ctx context.Context, userID, id string) (collectionRow, bool) {

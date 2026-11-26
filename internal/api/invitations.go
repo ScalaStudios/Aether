@@ -163,6 +163,7 @@ func (s *Server) sendITIP(ctx context.Context, from *ownedMailbox, sender *mailp
 	cal := newCalendar()
 	cal.Props.SetText(ical.PropMethod, method)
 	cal.Children = append(cal.Children, comps...)
+	addTimezones(cal)
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
 		return outcomes, err

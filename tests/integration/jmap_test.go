@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -221,6 +222,52 @@ func TestJMAP(t *testing.T) {
 		t.Fatal("CalDAV did not return the JMAP event")
 	}
 	_, _ = jmapMethod(t, origin, auth, using, "CalendarEvent/set", map[string]any{"accountId": account, "destroy": []string{eventID}})
+
+	amsterdam, err := time.LoadLocation("Europe/Amsterdam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	weeklyTitle := "JMAP weekly " + randomSuffix()
+	_, weekly := jmapMethod(t, origin, auth, using, "CalendarEvent/set", map[string]any{"accountId": account, "create": map[string]any{"w": map[string]any{
+		"title": weeklyTitle, "start": "2026-10-19T09:00:00", "timeZone": "Europe/Amsterdam", "duration": "PT30M", "calendarIds": map[string]bool{personal: true},
+		"recurrenceRules": []any{map[string]any{"@type": "RecurrenceRule", "frequency": "weekly"}},
+	}}})
+	if weekly["notCreated"] != nil && len(weekly["notCreated"].(map[string]any)) > 0 {
+		t.Fatalf("weekly event: %v", weekly["notCreated"])
+	}
+	weeklyID := weekly["created"].(map[string]any)["w"].(map[string]any)["id"].(string)
+	weeklyRange := url.Values{"start": {"2026-10-18T00:00:00Z"}, "end": {"2026-11-10T00:00:00Z"}}
+	checkWeekly := func(stage, title string) {
+		var occurrences []struct {
+			Title string    `json:"title"`
+			Start time.Time `json:"start"`
+		}
+		w.alice.must("GET", "/calendar/events?"+weeklyRange.Encode(), nil, &occurrences, 200)
+		count := 0
+		for _, o := range occurrences {
+			if o.Title != title {
+				continue
+			}
+			count++
+			if local := o.Start.In(amsterdam); local.Hour() != 9 || local.Minute() != 0 {
+				t.Errorf("%s: occurrence at %s, want 09:00 local", stage, local)
+			}
+		}
+		if count != 4 {
+			t.Fatalf("%s: got %d occurrences, want 4", stage, count)
+		}
+	}
+	checkWeekly("created", weeklyTitle)
+	_, updatedWeekly := jmapMethod(t, origin, auth, using, "CalendarEvent/set", map[string]any{"accountId": account, "update": map[string]any{weeklyID: map[string]any{"title": weeklyTitle + " renamed"}}})
+	if updatedWeekly["notUpdated"] != nil && len(updatedWeekly["notUpdated"].(map[string]any)) > 0 {
+		t.Fatalf("weekly update: %v", updatedWeekly["notUpdated"])
+	}
+	checkWeekly("renamed", weeklyTitle+" renamed")
+	_, gotWeekly := jmapMethod(t, origin, auth, using, "CalendarEvent/get", map[string]any{"accountId": account, "ids": []string{weeklyID}})
+	if item := gotWeekly["list"].([]any)[0].(map[string]any); item["timeZone"] != "Europe/Amsterdam" || item["start"] != "2026-10-19T09:00:00" {
+		t.Fatalf("weekly event read back as %v %v", item["start"], item["timeZone"])
+	}
+	_, _ = jmapMethod(t, origin, auth, using, "CalendarEvent/set", map[string]any{"accountId": account, "destroy": []string{weeklyID}})
 
 	_, books := jmapMethod(t, origin, auth, using, "AddressBook/get", map[string]any{"accountId": account})
 	if len(books["list"].([]any)) == 0 {

@@ -54,6 +54,25 @@ func TestWeeklyEventKeepsLocalTimeAcrossDST(t *testing.T) {
 	w.alice.must("DELETE", "/calendar/events/"+event.ID, nil, nil, 204)
 }
 
+func TestEditedEventExportsTimezone(t *testing.T) {
+	w := setupWorld(t)
+	loc, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 19, 9, 0, 0, 0, loc)
+	var event listedEvent
+	w.alice.must("POST", "/calendar/events", map[string]any{"title": "Chicago sync", "start": start, "end": start.Add(time.Hour), "repeat": "weekly", "timeZone": "America/Chicago"}, &event, 201)
+	w.alice.must("PUT", "/calendar/events/"+event.ID, map[string]any{"title": "Chicago sync (renamed)", "start": start, "end": start.Add(time.Hour), "repeat": "weekly"}, nil, 200)
+	export := string(w.alice.raw("GET", "/calendar/export"))
+	for _, want := range []string{"BEGIN:VTIMEZONE\r\nTZID:America/Chicago\r\n", "DTSTART;TZID=America/Chicago:20261019T090000", "TZOFFSETTO:-0600"} {
+		if !strings.Contains(export, want) {
+			t.Errorf("export is missing %q:\n%s", want, export)
+		}
+	}
+	w.alice.must("DELETE", "/calendar/events/"+event.ID, nil, nil, 204)
+}
+
 func TestEditingEventTitleKeepsExceptionsTimezoneAndAlarms(t *testing.T) {
 	w := setupWorld(t)
 	suffix := randomSuffix()

@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/emersion/go-vcard"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav"
@@ -27,14 +31,22 @@ func newCalendar() *ical.Calendar {
 	return cal
 }
 
-func referencedTZIDs(comps []*ical.Component) map[string]bool {
-	ids := map[string]bool{}
+func referencedTZIDs(comps []*ical.Component) map[string]int {
+	ids := map[string]int{}
 	var walk func(c *ical.Component)
 	walk = func(c *ical.Component) {
 		for _, props := range c.Props {
 			for _, p := range props {
-				if tz := p.Params.Get(ical.ParamTimezoneID); tz != "" {
-					ids[tz] = true
+				tz := p.Params.Get(ical.ParamTimezoneID)
+				if tz == "" {
+					continue
+				}
+				year := time.Now().Year()
+				if t, err := p.DateTime(time.UTC); err == nil {
+					year = t.Year()
+				}
+				if seen, ok := ids[tz]; !ok || year < seen {
+					ids[tz] = year
 				}
 			}
 		}
@@ -46,6 +58,80 @@ func referencedTZIDs(comps []*ical.Component) map[string]bool {
 		walk(c)
 	}
 	return ids
+}
+
+func addTimezones(cal *ical.Calendar) {
+	have := map[string]bool{}
+	var comps []*ical.Component
+	for _, c := range cal.Children {
+		if c.Name == ical.CompTimezone {
+			id, _ := c.Props.Text(ical.PropTimezoneID)
+			have[id] = true
+			continue
+		}
+		comps = append(comps, c)
+	}
+	years := referencedTZIDs(comps)
+	var ids []string
+	for id := range years {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		if loc, ok := validTimezone(id); ok && !have[id] {
+			cal.Children = append([]*ical.Component{vtimezone(id, loc, max(years[id]-1, 1970), time.Now().Year()+1)}, cal.Children...)
+		}
+	}
+}
+
+func vtimezone(id string, loc *time.Location, from, to int) *ical.Component {
+	tz := ical.NewComponent(ical.CompTimezone)
+	tz.Props.SetText(ical.PropTimezoneID, id)
+	t := time.Date(min(from, to), 1, 1, 0, 0, 0, 0, loc)
+	for {
+		_, next := t.ZoneBounds()
+		if next.IsZero() || next.Year() > to {
+			break
+		}
+		tz.Children = append(tz.Children, observance(t, next, next.Year() == to))
+		t = next
+	}
+	if len(tz.Children) == 0 {
+		tz.Children = append(tz.Children, observance(t, t, false))
+	}
+	return tz
+}
+
+func observance(before, at time.Time, repeat bool) *ical.Component {
+	_, from := before.Zone()
+	name, to := at.Zone()
+	kind := ical.CompTimezoneStandard
+	if at.IsDST() {
+		kind = ical.CompTimezoneDaylight
+	}
+	c := ical.NewComponent(kind)
+	local := at.In(time.FixedZone("", from))
+	c.Props.Set(&ical.Prop{Name: ical.PropDateTimeStart, Value: local.Format("20060102T150405"), Params: ical.Params{}})
+	if repeat {
+		n := (local.Day()-1)/7 + 1
+		if local.Day()+7 > time.Date(local.Year(), local.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day() {
+			n = -1
+		}
+		rule := fmt.Sprintf("FREQ=YEARLY;BYMONTH=%d;BYDAY=%d%s", local.Month(), n, strings.ToUpper(local.Weekday().String()[:2]))
+		c.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: rule, Params: ical.Params{}})
+	}
+	c.Props.SetText(ical.PropTimezoneName, name)
+	c.Props.Set(&ical.Prop{Name: ical.PropTimezoneOffsetFrom, Value: utcOffset(from), Params: ical.Params{}})
+	c.Props.Set(&ical.Prop{Name: ical.PropTimezoneOffsetTo, Value: utcOffset(to), Params: ical.Params{}})
+	return c
+}
+
+func utcOffset(seconds int) string {
+	sign := "+"
+	if seconds < 0 {
+		sign, seconds = "-", -seconds
+	}
+	return fmt.Sprintf("%s%02d%02d", sign, seconds/3600, seconds/60%60)
 }
 
 func (s *Server) importCalendar(w http.ResponseWriter, r *http.Request, p *principal) {
@@ -205,6 +291,7 @@ func compileCalendar(objects []string) (string, error) {
 	if len(out.Children) == 0 {
 		return "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Scala Studios//Aether//EN\r\nEND:VCALENDAR\r\n", nil
 	}
+	addTimezones(out)
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(out); err != nil {
 		return "", err

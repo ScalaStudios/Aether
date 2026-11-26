@@ -910,6 +910,7 @@ func (s *Server) saveEvent(w http.ResponseWriter, r *http.Request, p *principal)
 			removed = append(removed, mailpkg.Address{Address: address})
 		}
 	}
+	addTimezones(doc)
 	f, err := calendarFields(doc)
 	if err != nil {
 		s.davError(w, r, err)
