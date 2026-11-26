@@ -58,6 +58,11 @@ spec:
             - { name: AETHER_MESSAGE_SIZE_LIMIT, value: {{ .Values.messageSizeLimit | quote }} }
             - { name: AETHER_MAX_LINK_BYTES, value: {{ .Values.maxLinkBytes | quote }} }
             - { name: AETHER_MAX_STORAGE_BYTES, value: {{ .Values.maxStorageBytes | quote }} }
+            {{- $mem := .Values.resources.api.limits.memory | toString }}
+            {{- $mi := ternary (mul (trimSuffix "Gi" $mem | atoi) 1024) (trimSuffix "Mi" $mem | atoi) (hasSuffix "Gi" $mem) }}
+            {{- if gt $mi 0 }}
+            - { name: GOMEMLIMIT, value: {{ printf "%dMiB" (div (mul $mi 9) 10) | quote }} }
+            {{- end }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_DATABASE_URL" "key" "databaseUrl" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_MAIL_DB_PASSWORD" "key" "mailDbPassword" "root" .) | nindent 12 }}
             {{- include "aether.secretEnv" (dict "env" "AETHER_SECRET_KEY" "key" "secretKey" "root" .) | nindent 12 }}
