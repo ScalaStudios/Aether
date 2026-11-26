@@ -40,7 +40,7 @@ jobs:
       - uses: azure/setup-helm@v4
       - run: helm lint infrastructure/helm/aether
       - run: helm template ci infrastructure/helm/aether --set mailTLS.certManager.enabled=true > rendered.yaml
-      - run: docker run --rm -v "$PWD/rendered.yaml:/r.yaml:ro" ghcr.io/yannh/kubeconform:latest-alpine -strict -summary -ignore-missing-schemas /r.yaml
+      - run: docker run --rm -v "$PWD/rendered.yaml:/r.yaml:ro" ghcr.io/yannh/kubeconform:v0.8.0-alpine -strict -summary -ignore-missing-schemas /r.yaml
 
   integration:
     runs-on: ubuntu-latest

@@ -339,7 +339,7 @@ services:
 
   prometheus:
     profiles: ["monitoring"]
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.16.0
     restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
     volumes:
@@ -353,7 +353,7 @@ services:
 
   grafana:
     profiles: ["monitoring"]
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:13.0.2
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${AETHER_GRAFANA_PASSWORD:?run scripts/setup.sh or add AETHER_GRAFANA_PASSWORD to .env}
