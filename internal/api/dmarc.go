@@ -28,6 +28,7 @@ const (
 	maxRecordAuthResults = 20
 	maxReportXMLRun      = 64 << 10
 	maxReportXMLDepth    = 64
+	maxReportElements    = 512
 	maxReportParts       = 10
 	maxReportTime        = 253402300799
 )
@@ -98,40 +99,46 @@ func (l *dmarcAuthList) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 	return nil
 }
 
-type xmlShapeReader struct {
-	r     io.Reader
-	run   int
-	depth int
-	open  bool
-	prev  byte
+type xmlRunReader struct {
+	r   io.Reader
+	run int
 }
 
-func (x *xmlShapeReader) Read(p []byte) (int, error) {
+func (x *xmlRunReader) Read(p []byte) (int, error) {
 	n, err := x.r.Read(p)
 	for _, c := range p[:n] {
-		x.run++
-		switch {
-		case x.open:
-			x.open = false
-			if c == '/' {
-				x.depth--
-			} else if c != '!' && c != '?' {
-				x.depth++
-			}
-		case c == '<':
-			x.open = true
-		case c == '>':
+		if x.run++; c == '<' {
 			x.run = 0
-			if x.prev == '/' {
-				x.depth--
-			}
-		}
-		x.prev = c
-		if x.run > maxReportXMLRun || x.depth > maxReportXMLDepth {
-			return 0, errors.New("report XML has an oversized tag or text, or is nested too deeply")
+		} else if x.run > maxReportXMLRun {
+			return 0, errors.New("report XML has an oversized tag or text")
 		}
 	}
 	return n, err
+}
+
+type xmlDepthReader struct {
+	d        *xml.Decoder
+	depth    int
+	elements int
+}
+
+func (x *xmlDepthReader) Token() (xml.Token, error) {
+	tok, err := x.d.RawToken()
+	switch tok.(type) {
+	case xml.StartElement:
+		if x.depth++; x.depth > maxReportXMLDepth {
+			return nil, errors.New("report XML is nested too deeply")
+		}
+		if x.depth == 2 {
+			x.elements = 0
+		}
+		if x.elements++; x.elements > maxReportElements {
+			return nil, errors.New("report XML has an element with too many children")
+		}
+	case xml.EndElement:
+		x.depth--
+	}
+	return tok, err
 }
 
 var reportSlots = make(chan struct{}, 2)
@@ -204,7 +211,8 @@ func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
 		}
 		xmlData = bytes.NewReader(trimmed)
 	}
-	dec := xml.NewDecoder(&xmlShapeReader{r: io.LimitReader(xmlData, maxReportXML)})
+	depth := &xmlDepthReader{d: xml.NewDecoder(&xmlRunReader{r: io.LimitReader(xmlData, maxReportXML)})}
+	dec := xml.NewTokenDecoder(depth)
 	var fb dmarcFeedback
 	root := false
 	for len(fb.Records) < maxReportRecords {
