@@ -89,7 +89,7 @@ type dmarcAuthList []dmarcAuth
 
 func (l *dmarcAuthList) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	if len(*l) == maxRecordAuthResults {
-		return errors.New("record has too many authentication results")
+		return d.Skip()
 	}
 	var a dmarcAuth
 	if err := d.DecodeElement(&a, &start); err != nil {
@@ -150,6 +150,7 @@ func parseDMARCMessage(r io.Reader, store func(*dmarcFeedback) error) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	found := false
 	for range maxReportParts {
 		part, err := mr.NextPart()
@@ -163,15 +164,18 @@ func parseDMARCMessage(r io.Reader, store func(*dmarcFeedback) error) error {
 		if err != nil {
 			return err
 		}
-		if fb, err := decodeDMARCReport(body); err == nil {
-			found = true
-			if err := store(fb); err != nil {
-				return err
-			}
+		fb, err := decodeDMARCReport(body)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		found = true
+		if err := store(fb); err != nil {
+			return err
 		}
 	}
 	if !found {
-		return errors.New("no DMARC aggregate report found in the message")
+		return errors.Join(append([]error{errors.New("no DMARC aggregate report found in the message")}, errs...)...)
 	}
 	return nil
 }
@@ -250,6 +254,13 @@ func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
 		}
 		if v != nil {
 			err = dec.DecodeElement(v, &start)
+		}
+		var numErr *strconv.NumError
+		if start.Name.Local == "record" && errors.As(err, &numErr) {
+			fb.Records = fb.Records[:len(fb.Records)-1]
+			for err = nil; err == nil && depth.depth > 1; {
+				_, err = dec.Token()
+			}
 		}
 		if err != nil {
 			return nil, err

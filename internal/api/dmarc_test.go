@@ -100,6 +100,33 @@ func TestValidDMARCRecordAndTruncate(t *testing.T) {
 	}
 }
 
+func TestDecodeDMARCReportNestingAndComments(t *testing.T) {
+	head := `<?xml version="1.0"?><feedback><report_metadata><org_name>r</org_name><report_id>1</report_id></report_metadata><policy_published><domain>example.com</domain></policy_published>`
+	deep := head + "<!-- " + strings.Repeat("</a>", 1000) + " -->" + strings.Repeat("<x>", 100) + strings.Repeat("</x>", 100) + "</feedback>"
+	if _, err := decodeDMARCReport([]byte(deep)); err == nil {
+		t.Error("deep nesting after a comment of end tags was accepted")
+	}
+	commented := head + "<!-- " + strings.Repeat("a < b ", 100) + " -->" + "<record><row><source_ip>192.0.2.1</source_ip><count>1</count></row></record></feedback>"
+	if fb, err := decodeDMARCReport([]byte(commented)); err != nil || len(fb.Records) != 1 {
+		t.Errorf("report with a comment containing < was rejected: %v", err)
+	}
+}
+
+func TestDecodeDMARCReportSkipsBadRecords(t *testing.T) {
+	head := `<?xml version="1.0"?><feedback><report_metadata><org_name>r</org_name><report_id>1</report_id></report_metadata><policy_published><domain>example.com</domain></policy_published>`
+	record := func(count, auth string) string {
+		return "<record><row><source_ip>192.0.2.1</source_ip><count>" + count + "</count></row><identifiers><header_from>example.com</header_from></identifiers><auth_results>" + auth + "</auth_results></record>"
+	}
+	body := head + record("many", "") + record("2", strings.Repeat("<dkim><domain>example.com</domain><result>pass</result></dkim>", 25)) + record("3", "<spf><domain>example.com</domain><result>pass</result></spf>") + "</feedback>"
+	fb, err := decodeDMARCReport([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.Records) != 2 || fb.Records[0].Row.Count != 2 || len(fb.Records[0].Auth.DKIM) != maxRecordAuthResults || fb.Records[1].Row.Count != 3 || len(fb.Records[1].Auth.SPF) != 1 {
+		t.Fatalf("unexpected records %+v", fb.Records)
+	}
+}
+
 func TestReportSessionWaitsForASlotWithATimeout(t *testing.T) {
 	for range cap(reportSlots) {
 		reportSlots <- struct{}{}
@@ -122,17 +149,5 @@ func TestReportSessionWaitsForASlotWithATimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Data kept waiting for a report slot")
-	}
-}
-
-func TestDecodeDMARCReportNestingAndComments(t *testing.T) {
-	head := `<?xml version="1.0"?><feedback><report_metadata><org_name>r</org_name><report_id>1</report_id></report_metadata><policy_published><domain>example.com</domain></policy_published>`
-	deep := head + "<!-- " + strings.Repeat("</a>", 1000) + " -->" + strings.Repeat("<x>", 100) + strings.Repeat("</x>", 100) + "</feedback>"
-	if _, err := decodeDMARCReport([]byte(deep)); err == nil {
-		t.Error("deep nesting after a comment of end tags was accepted")
-	}
-	commented := head + "<!-- " + strings.Repeat("a < b ", 100) + " -->" + "<record><row><source_ip>192.0.2.1</source_ip><count>1</count></row></record></feedback>"
-	if fb, err := decodeDMARCReport([]byte(commented)); err != nil || len(fb.Records) != 1 {
-		t.Errorf("report with a comment containing < was rejected: %v", err)
 	}
 }
