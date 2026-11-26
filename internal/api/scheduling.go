@@ -415,16 +415,20 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 	if err := tx.Commit(ctx); err != nil {
 		return false
 	}
-	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
+	cleanup := func(sql string, args ...any) error {
+		done, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_, err := s.db.Exec(done, sql, args...)
+		return err
+	}
 	if err := s.mail.Send(address, fromAddress, recipients, raw); err != nil {
 		mailSends.WithLabelValues("rejected").Inc()
 		s.recordAlertEvent(ctx, "delivery_failures", address)
 		s.log.Warn("scheduled send failed", "mailbox", mailboxID, "attempt", attempts+1, "err", err)
 		if attempts+1 >= maxSendAttempts {
-			_, err = s.db.Exec(done, `UPDATE scheduled_messages SET claimed_at = NULL, attempts = attempts + 1, error = $2 WHERE id = $1`, id, "The mail server did not accept the message: "+err.Error())
+			err = cleanup(`UPDATE scheduled_messages SET claimed_at = NULL, attempts = attempts + 1, error = $2 WHERE id = $1`, id, "The mail server did not accept the message: "+err.Error())
 		} else {
-			_, err = s.db.Exec(done, `UPDATE scheduled_messages SET claimed_at = NULL, attempts = attempts + 1, send_at = now() + make_interval(mins => 5 * (attempts + 1)) WHERE id = $1`, id)
+			err = cleanup(`UPDATE scheduled_messages SET claimed_at = NULL, attempts = attempts + 1, send_at = now() + make_interval(mins => 5 * (attempts + 1)) WHERE id = $1`, id)
 		}
 		if err != nil {
 			s.log.Error("releasing a failed scheduled send failed", "id", id, "err", err)
@@ -437,7 +441,7 @@ func (s *Server) sendNextScheduled(ctx context.Context) bool {
 			s.log.Error("saving to Sent failed", "mailbox", mailboxID, "err", err)
 		}
 	}
-	if _, err := s.db.Exec(done, `DELETE FROM scheduled_messages WHERE id = $1`, id); err != nil {
+	if err := cleanup(`DELETE FROM scheduled_messages WHERE id = $1`, id); err != nil {
 		s.log.Error("scheduled message sent but not removed", "id", id, "err", err)
 		return false
 	}
