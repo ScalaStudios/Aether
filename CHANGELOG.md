@@ -19,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Mailboxes can only be created on verified domains, and creating a mailbox with a password for an existing account returns 409 instead of changing that account's password.
 - A domain another organization added but never verified can be claimed by publishing the TXT record shown at `_aether.<domain>`. Alias domains can only point at verified domains.
 - Custom CSS checks every `url()` and refuses targets that start with `//`, including escaped forms.
+- Recurring events stop expanding at the occurrence cap while iterating, listings stop at 20,000 events, and `SECONDLY` and `MINUTELY` repeat rules are refused.
+- An invitation only updates an event already in the calendar when it comes from that event's organizer and its `SEQUENCE` is not older.
+- A personal calendar or address book share only applies while owner and recipient are in the same organization.
+- Invitations to a single occurrence of a series now appear in the calendar.
+- Editors of a shared calendar cannot change or delete the owner's meetings over CalDAV, JMAP or the event API.
+- CalDAV and CardDAV request bodies are capped at twice the object size limit.
 
 ## 0.2.0 - 2026-11-25
 
