@@ -198,7 +198,9 @@ func normalizeAndValidateMailbox(in *mailboxCreateInput) *fieldError {
 func mailboxConflictError(code, address string) *fieldError {
 	switch code {
 	case "account_exists":
-		return &fieldError{http.StatusConflict, code, "An account with this address already has a password. Create the mailbox without a password; the account keeps its current sign-in."}
+		return &fieldError{http.StatusConflict, code, "An account with this address already exists. Create the mailbox without a password; the account keeps its current sign-in."}
+	case "domain_unverified":
+		return &fieldError{http.StatusUnprocessableEntity, "invalid_domain", "Verify this domain before adding mailboxes to it."}
 	case "address_is_account":
 		return &fieldError{http.StatusConflict, code, "An account already signs in with this address. Convert that person's mailbox to shared instead, or choose another address."}
 	case "address_taken":
@@ -207,32 +209,31 @@ func mailboxConflictError(code, address string) *fieldError {
 	return nil
 }
 
-func (s *Server) checkMailboxDryRun(ctx context.Context, p *principal, address, kind, password string) (*fieldError, error) {
-	var taken bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM aliases WHERE address = $1) OR EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, address).Scan(&taken); err != nil {
+func (s *Server) checkMailboxDryRun(ctx context.Context, domainID, address, kind, password string) (*fieldError, error) {
+	var verified, taken bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM domains WHERE id = $2 AND verified_at IS NOT NULL), EXISTS (SELECT 1 FROM aliases WHERE address = $1) OR EXISTS (SELECT 1 FROM mailboxes WHERE address = $1)`, address, domainID).Scan(&verified, &taken); err != nil {
 		return nil, err
+	}
+	if !verified {
+		return mailboxConflictError("domain_unverified", address), nil
 	}
 	if taken {
 		return mailboxConflictError("address_taken", address), nil
 	}
-	var hasPassword, isAdmin bool
-	err := s.db.QueryRow(ctx, `SELECT password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&hasPassword, &isAdmin)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
+	var exists bool
+	if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)`, address).Scan(&exists); err != nil || !exists {
 		return nil, err
 	}
 	if kind != "user" {
 		return mailboxConflictError("address_is_account", address), nil
 	}
-	if password != "" && (hasPassword || isAdmin) && !p.User.IsPlatformAdmin {
+	if password != "" {
 		return mailboxConflictError("account_exists", address), nil
 	}
 	return nil, nil
 }
 
-func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, domainName string, in mailboxCreateInput) (*mailbox, *fieldError, error) {
+func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName string, in mailboxCreateInput) (*mailbox, *fieldError, error) {
 	address := in.LocalPart + "@" + domainName
 	var m mailbox
 	var code string
@@ -241,17 +242,20 @@ func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, d
 		if err != nil {
 			return err
 		}
-		var aliasTaken bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, address).Scan(&aliasTaken); err != nil {
+		var verified, aliasTaken bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM domains WHERE id = $2 AND verified_at IS NOT NULL), EXISTS (SELECT 1 FROM aliases WHERE address = $1)`, address, in.DomainID).Scan(&verified, &aliasTaken); err != nil {
 			return err
+		}
+		if !verified {
+			code = "domain_unverified"
+			return nil
 		}
 		if aliasTaken {
 			code = "address_taken"
 			return nil
 		}
 		var userID string
-		var hasPassword, isAdmin bool
-		err = tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL, is_platform_admin FROM users WHERE email = $1`, address).Scan(&userID, &hasPassword, &isAdmin)
+		err = tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, address).Scan(&userID)
 		if in.Kind != "user" {
 			if err == nil {
 				code = "address_is_account"
@@ -268,13 +272,8 @@ func (s *Server) createMailboxRecord(ctx context.Context, p *principal, orgID, d
 			}
 			err = tx.QueryRow(ctx, `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id`, address, in.DisplayName, hash).Scan(&userID)
 		} else if err == nil && in.Password != "" {
-			if (hasPassword || isAdmin) && !p.User.IsPlatformAdmin {
-				code = "account_exists"
-				return nil
-			}
-			if _, err = tx.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, auth.HashPassword(in.Password)); err == nil {
-				_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
-			}
+			code = "account_exists"
+			return nil
 		}
 		if err != nil {
 			return err
@@ -358,7 +357,7 @@ func (s *Server) createMailbox(w http.ResponseWriter, r *http.Request, p *princi
 		forbidden(w)
 		return
 	}
-	m, ie, err := s.createMailboxRecord(r.Context(), p, orgID, domainName, req)
+	m, ie, err := s.createMailboxRecord(r.Context(), orgID, domainName, req)
 	if ie != nil {
 		writeError(w, ie.Status, ie.Code, ie.Message)
 		return

@@ -116,7 +116,7 @@ People without an identity provider sign in with their email address and an Aeth
 
 Under **Settings → Security**, people change their own password by entering the current one and a new one of at least 12 characters. Changing it signs out every other browser; app passwords keep working.
 
-A platform administrator can set a new password for someone under **Administration → Members → More actions → Reset password**, or with `PUT /api/v1/admin/users/{id}/password`. That signs the person out everywhere. Setting a password while creating a mailbox for an existing account does the same.
+A platform administrator can set a new password for someone under **Administration → Members → More actions → Reset password**, or with `PUT /api/v1/admin/users/{id}/password`. That signs the person out everywhere. Creating a mailbox for an existing account never changes its password.
 
 ### Two-factor authentication
 

@@ -219,7 +219,7 @@ func (s *Server) bulkImport(w http.ResponseWriter, r *http.Request, p *principal
 					failItem(i, opType, address, "address_taken", address+" appears more than once in this request.")
 					continue
 				}
-				ie, err := s.checkMailboxDryRun(r.Context(), p, address, req.Kind, req.Password)
+				ie, err := s.checkMailboxDryRun(r.Context(), domainID, address, req.Kind, req.Password)
 				if err != nil {
 					s.log.Error("bulk mailbox dry-run failed", "index", i, "address", address, "err", err)
 					failItem(i, opType, address, "internal", "Something went wrong on the server.")
@@ -238,7 +238,7 @@ func (s *Server) bulkImport(w http.ResponseWriter, r *http.Request, p *principal
 				results = append(results, bulkResult{Index: i, Type: opType, Address: address, Status: "valid"})
 				continue
 			}
-			m, ie, err := s.createMailboxRecord(r.Context(), p, orgID, domainName, req)
+			m, ie, err := s.createMailboxRecord(r.Context(), orgID, domainName, req)
 			if err != nil {
 				s.log.Error("bulk mailbox create failed", "index", i, "address", address, "err", err)
 				failItem(i, opType, address, "internal", "Something went wrong on the server.")
