@@ -243,6 +243,13 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 	slices.Sort(uids)
 	var targetHashes map[[32]byte]bool
 	body := &imap.FetchItemBodySection{Peek: true}
+	var fetching *imapclient.FetchCommand
+	defer func() {
+		if fetching != nil {
+			go from.Close()
+			fetching.Close()
+		}
+	}()
 	for start := 0; start < len(uids); start += importBatch {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -272,6 +279,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 		}
 		if len(wanted) > 0 {
 			cmd := from.Fetch(imap.UIDSetNum(wanted...), &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{body}})
+			fetching = cmd
 			for data := cmd.Next(); data != nil; data = cmd.Next() {
 				m, err := collectLimited(data, maxBytes)
 				if err != nil {
@@ -314,6 +322,7 @@ func copyFolder(ctx context.Context, from, to *imapclient.Client, source, target
 					seen[id] = true
 				}
 			}
+			fetching = nil
 			if err := cmd.Close(); err != nil {
 				return err
 			}

@@ -207,3 +207,27 @@ func TestCollectLimitedDropsBodiesOverTheLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestImportFailureReleasesTheSourceFetch(t *testing.T) {
+	from, to := memIMAP(t), memIMAP(t)
+	appendMessage(t, from, "INBOX", "one@example.com")
+	appendMessage(t, from, "INBOX", "two@example.com")
+	appendMessage(t, from, "INBOX", "three@example.com")
+
+	var p ImportProgress
+	closeTarget := func(p ImportProgress) {
+		if p.Copied == 1 {
+			to.Close()
+		}
+	}
+	if err := copyFolder(context.Background(), from, to, "INBOX", "INBOX", 1<<20, &p, closeTarget, nil); err == nil {
+		t.Fatal("copy into a closed destination succeeded")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- from.Close() }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the source connection is still waiting on an unread fetch")
+	}
+}
