@@ -90,7 +90,7 @@ What each request does:
 | `PUT /Users/{id}` | Updates the display name, replaces the linked `externalId`, and applies `active`. An `externalId` linked to another account returns `409`. The email address cannot change over SCIM, and a `userName` containing `*` or `?` returns `400 invalidValue` here too. |
 | `PATCH /Users/{id}` | Applies `replace` operations on `active` and `displayName`. |
 | `DELETE /Users/{id}` | Marks the account deprovisioned and ends its IMAP sessions, including sessions opened for delegated mailboxes with an app password or an access token. Its mail is kept. |
-| `POST /Groups` | Creates a group with `displayName`, an optional `externalId`, and `members` given as Aether user ids from `/Users`. A `displayName` already used by this provider returns `409 uniqueness`, and a member that is not an Aether user returns `400 invalidValue`. |
+| `POST /Groups` | Creates a group with `displayName`, an optional `externalId`, and `members` given as Aether user ids from `/Users`. A `displayName` already used by this provider returns `409 uniqueness`, and a member that is not an account linked to this provider, or is a platform administrator, returns `400 invalidValue`. |
 | `GET /Groups?filter=displayName eq "…"` | Finds a group by name. Only `displayName eq` filters are supported, and `excludedAttributes=members` leaves the members out. |
 | `PUT /Groups/{id}` | Replaces the name, `externalId` and the whole member list. |
 | `PATCH /Groups/{id}` | Applies `add`, `remove` and `replace` on `members`, `displayName` and `externalId`, including `remove` with a `members[value eq "…"]` path. `remove` on `members` without a value empties the group. |

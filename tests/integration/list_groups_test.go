@@ -50,6 +50,7 @@ func TestListsFromGroupsAndRules(t *testing.T) {
 	w.admin.must("POST", "/admin/identity-providers/"+provider.ID+"/scim-token", nil, &enabled, 200)
 	halo := newClient(t)
 	halo.bearer = enabled.Token
+	linkToProvider(t, f, slug, "alice@"+w.domain, "bob@"+w.domain)
 
 	name := "Sales " + randomSuffix()
 	var group scimGroupBody

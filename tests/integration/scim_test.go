@@ -296,3 +296,39 @@ func TestProvisioningSkipsAliasAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestSCIMGroupMembersMustBeLinked(t *testing.T) {
+	w := setupWorld(t)
+	db := testDB(t)
+	f := startFakeIssuer(t)
+	slug, _, halo := scimClient(t, w, f, false)
+	aliceID, bobID := userID(t, w.alice), userID(t, w.bob)
+	group := func(members ...string) map[string]any {
+		list := []map[string]string{}
+		for _, m := range members {
+			list = append(list, map[string]string{"value": m})
+		}
+		return map[string]any{"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}, "displayName": "Team " + randomSuffix(), "members": list}
+	}
+	if got := halo.do("POST", "/scim/"+slug+"/Groups", group(aliceID), nil); got != 400 {
+		t.Fatalf("group with an unlinked member returned %d, want 400", got)
+	}
+	linkToProvider(t, f, slug, "alice@"+w.domain)
+	var created struct {
+		ID string `json:"id"`
+	}
+	halo.must("POST", "/scim/"+slug+"/Groups", group(aliceID), &created, 201)
+	add := map[string]any{
+		"schemas":    []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
+		"Operations": []map[string]any{{"op": "add", "path": "members", "value": []map[string]string{{"value": bobID}}}},
+	}
+	if got := halo.do("PATCH", "/scim/"+slug+"/Groups/"+created.ID, add, nil); got != 400 {
+		t.Fatalf("adding an unlinked member returned %d, want 400", got)
+	}
+	if _, err := db.Exec(context.Background(), `UPDATE users SET is_platform_admin = true WHERE id = $1`, aliceID); err != nil {
+		t.Fatal(err)
+	}
+	if got := halo.do("POST", "/scim/"+slug+"/Groups", group(aliceID), nil); got != 400 {
+		t.Fatalf("group with a platform admin member returned %d, want 400", got)
+	}
+}

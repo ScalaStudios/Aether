@@ -178,6 +178,14 @@ func linkedIssuer(t *testing.T, w *world, email string) (*fakeIssuer, string, st
 	return f, slug, provider.ID
 }
 
+func linkToProvider(t *testing.T, f *fakeIssuer, slug string, emails ...string) {
+	t.Helper()
+	for _, email := range emails {
+		f.subject, f.email = "halo-"+randomSuffix(), email
+		oidcLogin(t, f, slug)
+	}
+}
+
 func TestOIDCLoginWithPKCE(t *testing.T) {
 	w := setupWorld(t)
 	f := startFakeIssuer(t)

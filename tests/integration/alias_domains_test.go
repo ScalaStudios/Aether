@@ -129,6 +129,7 @@ func TestAliasDomainModeratedGroupListAndDMARC(t *testing.T) {
 	w.admin.must("POST", "/admin/identity-providers/"+provider.ID+"/scim-token", nil, &enabled, 200)
 	halo := newClient(t)
 	halo.bearer = enabled.Token
+	linkToProvider(t, f, slug, "alice@"+w.domain, "bob@"+w.domain)
 	var group scimGroupBody
 	halo.must("POST", "/scim/"+slug+"/Groups", map[string]any{
 		"schemas": []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}, "displayName": "Everyone " + randomSuffix(), "members": []map[string]string{{"value": aliceID}},

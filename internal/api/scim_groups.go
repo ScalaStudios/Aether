@@ -152,7 +152,7 @@ func memberValues(members []scimMember) []string {
 	return out
 }
 
-func scimSetMembers(ctx context.Context, tx pgx.Tx, groupID, op string, values []string) error {
+func scimSetMembers(ctx context.Context, tx pgx.Tx, providerID, groupID, op string, values []string) error {
 	values = nonNil(slices.Compact(slices.Sorted(slices.Values(values))))
 	if op != "remove" {
 		for _, v := range values {
@@ -161,7 +161,7 @@ func scimSetMembers(ctx context.Context, tx pgx.Tx, groupID, op string, values [
 			}
 		}
 		var known int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users WHERE id::text = ANY($1)`, values).Scan(&known); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users u WHERE u.id::text = ANY($2) AND `+scimReach, providerID, values).Scan(&known); err != nil {
 			return err
 		}
 		if known != len(values) {
@@ -188,7 +188,7 @@ func (s *Server) scimGroupError(w http.ResponseWriter, r *http.Request, err erro
 	case isUniqueViolation(err):
 		scimError(w, http.StatusConflict, "uniqueness", "A group with this displayName already exists.")
 	case errors.Is(err, errSCIMUnknownMember):
-		scimError(w, http.StatusBadRequest, "invalidValue", "Every member value must be the id of a user in Aether.")
+		scimError(w, http.StatusBadRequest, "invalidValue", "Every member value must be the id of a user linked to this identity provider.")
 	default:
 		s.internalError(w, r, err)
 	}
@@ -208,7 +208,7 @@ func (s *Server) scimCreateGroup(w http.ResponseWriter, r *http.Request) {
 		if err := tx.QueryRow(r.Context(), `INSERT INTO directory_groups (provider_id, external_id, display_name) VALUES ($1, $2, $3) RETURNING id`, p.ID, in.ExternalID, in.DisplayName).Scan(&id); err != nil {
 			return err
 		}
-		return scimSetMembers(r.Context(), tx, id, "add", memberValues(in.Members))
+		return scimSetMembers(r.Context(), tx, p.ID, id, "add", memberValues(in.Members))
 	})
 	if err != nil {
 		s.scimGroupError(w, r, err)
@@ -238,7 +238,7 @@ func (s *Server) scimReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.Exec(r.Context(), `UPDATE directory_groups SET display_name = $2, external_id = $3, updated_at = now() WHERE id = $1`, g.ID, in.DisplayName, in.ExternalID); err != nil {
 			return err
 		}
-		return scimSetMembers(r.Context(), tx, g.ID, "replace", memberValues(in.Members))
+		return scimSetMembers(r.Context(), tx, p.ID, g.ID, "replace", memberValues(in.Members))
 	})
 	if err != nil {
 		s.scimGroupError(w, r, err)
@@ -322,7 +322,7 @@ func (s *Server) scimPatchGroup(w http.ResponseWriter, r *http.Request) {
 					if op == "remove" && value == nil {
 						mode = "replace"
 					}
-					if err := scimSetMembers(r.Context(), tx, g.ID, mode, ids); err != nil {
+					if err := scimSetMembers(r.Context(), tx, p.ID, g.ID, mode, ids); err != nil {
 						return err
 					}
 				case "displayname":
