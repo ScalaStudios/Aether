@@ -198,6 +198,8 @@ export function MembersTab({ orgId }: { orgId: string }) {
         form.setError("email", { message: t("admin.members.unknownUser") })
       } else if (error instanceof ApiError && error.code === "invalid_domains") {
         form.setError("domainIds", { message: error.message })
+      } else if (error instanceof ApiError && error.code === "self_membership") {
+        form.setError("email", { message: error.message })
       } else {
         toast.error(errorMessage(error))
       }

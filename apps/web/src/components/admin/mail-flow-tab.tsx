@@ -217,7 +217,7 @@ export function MailFlowTab({ orgId }: { orgId: string }) {
       {locked ? (
         <section className="flex flex-col gap-6">
           <SectionHeader title="Messages held by mail flow rules" />
-          <LockNote>Platform administrators need the owner or administrator role in this organization to read and decide on held messages. Give yourself the role under Members to review them.</LockNote>
+          <LockNote>Platform administrators need the owner or administrator role in this organization to read and decide on held messages. Ask one of its owners or administrators to grant you the role.</LockNote>
         </section>
       ) : (
         <FlowApprovals queryKey={["held", orgId]} path={`/organizations/${orgId}/mail-flow/held`} />
@@ -342,7 +342,7 @@ function RuleList({ orgId, lockedFor }: { orgId: string; lockedFor?: string }) {
         pending={save.isPending}
         onSubmit={form.handleSubmit((v) => {
           const refused = lockedFor && !v.reject ? flowTargets.filter((name) => (name === "approvers" ? v.approvers.some((a) => a.address.toLowerCase() === lockedFor) : v[name].length > 0)) : []
-          for (const name of refused) form.setError(name, { message: `Remove ${name === "approvers" ? "your own address" : "these addresses"}, or take the owner or administrator role under Members first.` })
+          for (const name of refused) form.setError(name, { message: `Remove ${name === "approvers" ? "your own address" : "these addresses"}, or ask an owner or administrator of this organization to grant you the role first.` })
           if (!refused.length) save.mutate(v)
         })}
       >
@@ -412,7 +412,7 @@ function RuleList({ orgId, lockedFor }: { orgId: string; lockedFor?: string }) {
                   />
                 </div>
               )}
-              {lockedFor && <LockNote>Sending copies, redirecting mail and approving held messages yourself need the owner or administrator role in this organization. Give yourself the role under Members to use them.</LockNote>}
+              {lockedFor && <LockNote>Sending copies, redirecting mail and approving held messages yourself need the owner or administrator role in this organization. Ask one of its owners or administrators to grant you the role.</LockNote>}
               {flowTargets.map((name) => (
                 <Controller
                   key={name}

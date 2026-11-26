@@ -203,7 +203,7 @@ function DelegatesDialog({ mailbox, canManage, onOpenChange }: { mailbox: Mailbo
         cancelLabel="Done"
         pending={add.isPending}
         onSubmit={form.handleSubmit((v) =>
-          v.email.toLowerCase() === self?.email.toLowerCase() ? form.setError("email", { message: "Take the owner or administrator role under Members before adding yourself." }) : add.mutate(v)
+          v.email.toLowerCase() === self?.email.toLowerCase() ? form.setError("email", { message: "You need the owner or administrator role here to add yourself. Ask an owner or administrator of this organization to grant it." }) : add.mutate(v)
         )}
       >
         <QueryView query={delegates} skeleton={<RowsSkeleton rows={2} />} empty={<p className="text-sm text-fg-tertiary">{shared ? "No members yet." : "No delegates yet."}</p>}>
@@ -977,7 +977,7 @@ export function MailboxesTab({ orgId }: { orgId: string }) {
                           <DropdownMenuContent align="end" className="w-auto min-w-64">
                             {exportLocked(m) && (
                               <>
-                                <LockNote className="max-w-72 px-3 py-2">Dimmed actions need the owner or administrator role here. Give yourself the role under Members.</LockNote>
+                                <LockNote className="max-w-72 px-3 py-2">Dimmed actions need the owner or administrator role here. Ask an owner or administrator to grant it.</LockNote>
                                 <DropdownMenuSeparator />
                               </>
                             )}
