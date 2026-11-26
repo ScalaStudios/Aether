@@ -25,6 +25,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Invitations to a single occurrence of a series now appear in the calendar.
 - Editors of a shared calendar cannot change or delete the owner's meetings over CalDAV, JMAP or the event API.
 - CalDAV and CardDAV request bodies are capped at twice the object size limit.
+- Saving an event from the web app edits the stored event, so moved occurrences, excluded dates, time zones and alarms are kept. Events created in the web app are stored in the browser's time zone, so repeating events keep their local time across daylight saving changes.
+- Forwarded copies and relayed mail whose From differs from the envelope sender are no longer DKIM signed with the hosted domain's key.
+- Submission ports defer mail when Rspamd is unavailable instead of sending it unscanned.
+- Recipients in the internal `aether-reports.internal` routing domain are refused.
+- The Helm network policy admits only the `monitoring` namespace to the API metrics port.
+- Mailbox, alias and sign-in provisioning take a per-address lock, so one address cannot become both a mailbox and an alias.
 
 ## 0.2.0 - 2026-11-25
 
