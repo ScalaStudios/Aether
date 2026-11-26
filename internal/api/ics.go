@@ -32,8 +32,8 @@ func newCalendar() *ical.Calendar {
 	return cal
 }
 
-func referencedTZIDs(comps []*ical.Component) map[string]int {
-	ids := map[string]int{}
+func referencedTZIDs(comps []*ical.Component) map[string][2]int {
+	ids := map[string][2]int{}
 	var walk func(c *ical.Component)
 	walk = func(c *ical.Component) {
 		for _, props := range c.Props {
@@ -46,9 +46,11 @@ func referencedTZIDs(comps []*ical.Component) map[string]int {
 				if t, err := p.DateTime(time.UTC); err == nil {
 					year = t.Year()
 				}
-				if seen, ok := ids[tz]; !ok || year < seen {
-					ids[tz] = year
+				span, ok := ids[tz]
+				if !ok {
+					span = [2]int{year, year}
 				}
+				ids[tz] = [2]int{min(span[0], year), max(span[1], year)}
 			}
 		}
 		for _, child := range c.Children {
@@ -61,35 +63,59 @@ func referencedTZIDs(comps []*ical.Component) map[string]int {
 	return ids
 }
 
+const propGeneratedTimezone = "X-AETHER-GENERATED"
+
 func addTimezones(cal *ical.Calendar) {
 	have := map[string]bool{}
 	var comps []*ical.Component
+	kept := cal.Children[:0]
 	for _, c := range cal.Children {
 		if c.Name == ical.CompTimezone {
+			if c.Props.Get(propGeneratedTimezone) != nil {
+				continue
+			}
 			id, _ := c.Props.Text(ical.PropTimezoneID)
 			have[id] = true
-			continue
+		} else {
+			comps = append(comps, c)
 		}
-		comps = append(comps, c)
+		kept = append(kept, c)
 	}
-	years := referencedTZIDs(comps)
+	cal.Children = kept
+	spans := referencedTZIDs(comps)
+	open := map[string]bool{}
+	for _, c := range comps {
+		if c.Props.Get(ical.PropRecurrenceRule) != nil {
+			for id := range referencedTZIDs([]*ical.Component{c}) {
+				open[id] = true
+			}
+		}
+	}
 	var ids []string
-	for id := range years {
+	for id := range spans {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		if loc, ok := validTimezone(id); ok && !have[id] {
-			cal.Children = append([]*ical.Component{vtimezone(id, loc, max(years[id]-1, 1970), time.Now().Year()+1)}, cal.Children...)
+		loc, ok := validTimezone(id)
+		if !ok || have[id] {
+			continue
 		}
+		from, to := max(spans[id][0]-1, 1970), spans[id][1]+1
+		if open[id] {
+			to = max(to, time.Now().Year()) + 10
+		}
+		cal.Children = append([]*ical.Component{vtimezone(id, loc, from, to)}, cal.Children...)
 	}
 }
 
 func vtimezone(id string, loc *time.Location, from, to int) *ical.Component {
 	tz := ical.NewComponent(ical.CompTimezone)
 	tz.Props.SetText(ical.PropTimezoneID, id)
+	tz.Props.SetText(propGeneratedTimezone, "TRUE")
+	var changes [][2]time.Time
 	t := time.Date(min(from, to), 1, 1, 0, 0, 0, 0, loc)
-	for i := 0; i < 50*maxObservances && len(tz.Children) < maxObservances; i++ {
+	for i := 0; i < 50*maxObservances && len(changes) < maxObservances; i++ {
 		_, next := t.ZoneBounds()
 		if next.IsZero() || next.Year() > to {
 			break
@@ -99,14 +125,52 @@ func vtimezone(id string, loc *time.Location, from, to int) *ical.Component {
 			continue
 		}
 		if !sameZone(t, next) {
-			tz.Children = append(tz.Children, observance(t, next, next.Year() == to))
+			changes = append(changes, [2]time.Time{t, next})
 		}
 		t = next
+	}
+	repeat := yearlyRuleHolds(changes, to)
+	for _, c := range changes {
+		tz.Children = append(tz.Children, observance(c[0], c[1], repeat && c[1].Year() == to))
 	}
 	if len(tz.Children) == 0 {
 		tz.Children = append(tz.Children, observance(t, t, false))
 	}
 	return tz
+}
+
+func yearlyRuleHolds(changes [][2]time.Time, to int) bool {
+	years := map[int][]string{}
+	first := to
+	for _, c := range changes {
+		years[c[1].Year()] = append(years[c[1].Year()], ruleKey(c[0], c[1]))
+		first = min(first, c[1].Year())
+	}
+	want := years[to]
+	if len(want) == 0 {
+		return false
+	}
+	for y := max(first, to-9); y < to; y++ {
+		if !slices.Equal(years[y], want) {
+			return false
+		}
+	}
+	return true
+}
+
+func ruleKey(before, at time.Time) string {
+	_, from := before.Zone()
+	name, to := at.Zone()
+	local := at.In(time.FixedZone("", from))
+	return fmt.Sprintf("%s %s %d %d %s %v", yearlyRule(local), local.Format("150405"), from, to, name, at.IsDST())
+}
+
+func yearlyRule(local time.Time) string {
+	n := (local.Day()-1)/7 + 1
+	if local.Day()+7 > time.Date(local.Year(), local.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day() {
+		n = -1
+	}
+	return fmt.Sprintf("FREQ=YEARLY;BYMONTH=%d;BYDAY=%d%s", local.Month(), n, strings.ToUpper(local.Weekday().String()[:2]))
 }
 
 func sameZone(a, b time.Time) bool {
@@ -126,12 +190,7 @@ func observance(before, at time.Time, repeat bool) *ical.Component {
 	local := at.In(time.FixedZone("", from))
 	c.Props.Set(&ical.Prop{Name: ical.PropDateTimeStart, Value: local.Format("20060102T150405"), Params: ical.Params{}})
 	if repeat {
-		n := (local.Day()-1)/7 + 1
-		if local.Day()+7 > time.Date(local.Year(), local.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day() {
-			n = -1
-		}
-		rule := fmt.Sprintf("FREQ=YEARLY;BYMONTH=%d;BYDAY=%d%s", local.Month(), n, strings.ToUpper(local.Weekday().String()[:2]))
-		c.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: rule, Params: ical.Params{}})
+		c.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: yearlyRule(local), Params: ical.Params{}})
 	}
 	c.Props.SetText(ical.PropTimezoneName, name)
 	c.Props.Set(&ical.Prop{Name: ical.PropTimezoneOffsetFrom, Value: utcOffset(from), Params: ical.Params{}})
@@ -290,7 +349,7 @@ func compileCalendar(objects []string) (string, error) {
 		for _, comp := range cal.Children {
 			if comp.Name == ical.CompTimezone {
 				id, _ := comp.Props.Text(ical.PropTimezoneID)
-				if id == "" || seenTZ[id] {
+				if id == "" || seenTZ[id] || comp.Props.Get(propGeneratedTimezone) != nil {
 					continue
 				}
 				seenTZ[id] = true
