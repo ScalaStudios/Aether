@@ -37,7 +37,7 @@ Dovecot runs the `lazy_expunge` plugin. An expunged message is copied into a hid
 
 While a mailbox is on a legal hold, the messages the hold keeps are not removed after the retention period and the person cannot remove them; see [Compliance](compliance.md#holds).
 
-When a retention keep policy applies to the mailbox, deleted items are also kept until they are older than the keep period, counted from the message date. Such mailboxes leave the purge to the API instead of Dovecot's 30-day `autoexpunge`; see [Retention](architecture.md#retention).
+When a retention keep policy applies to the mailbox, deleted items are also kept until they are older than the keep period, counted from the date the message was received. Such mailboxes leave the purge to the API instead of Dovecot's 30-day `autoexpunge`; see [Retention](architecture.md#retention).
 
 Disk use grows by the mail deleted during the retention period. `doveadm mailbox status -u <address> messages '.EXPUNGED/*'` shows what a mailbox holds.
 

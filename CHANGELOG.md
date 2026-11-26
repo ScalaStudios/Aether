@@ -139,7 +139,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Incoming mail with any of 57 dangerous attachment types is rejected by default. Change the list under **Administration → Attachments**.
 - The audit log is kept forever by default (`AETHER_AUDIT_RETENTION_DAYS` unset or 0). Set it, or a per-organization retention, to expire old events.
 - **Breaking:** `DELETE /api/v1/mailboxes/{mailboxId}` now removes the mailbox's mail, after an optional grace period, and needs Dovecot to be reachable.
-- The Flatcurve full-text index stores message text unencrypted next to mail that `mail_crypt` encrypts at rest. Treat the `vmail` volume as holding readable mail content.
+- The Flatcurve full-text index stores each message's search terms unencrypted in the mailbox's `fts-flatcurve` folder, next to mail that `mail_crypt` encrypts at rest, and words can be read from those files. Treat the `vmail` volume as holding readable mail content.
 - The audit log forwarding (`AETHER_AUDIT_SYSLOG_*`, `AETHER_AUDIT_OTLP_*`, `AETHER_AUDIT_RETENTION_DAYS`) and alerting (`AETHER_ALERT_FROM`, exporter URLs) settings are in `compose.yml` only. With Helm, set them through `api.extraEnv`.
 - Setting `AETHER_BACKUP_MX` changes each domain's MTA-STS policy id; update the `_mta-sts` TXT records.
 - The organization switch for forwarding outside the organization overrides the forwarding policy: while it is off, the policy reads `blocked` and cannot be changed.
