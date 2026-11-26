@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A JMAP edit that moves a repeating event's start or time zone, changes its rule or makes it all-day drops its excluded dates and moved occurrences, as web app edits do.
+- Resource bookings, booking page meetings and accepted invitations include `VTIMEZONE` definitions for their time zones.
+- In an organization with no owner or administrator, the admin console tells platform administrators to add someone as owner instead of asking an owner who does not exist.
+- The admin page no longer scrolls sideways while alerts are firing.
 - Unauthenticated mail whose From is a domain hosted here and that fails DMARC alignment is refused when the domain publishes `p=reject`, and otherwise filed in Junk, even when the sender is in the recipient's contacts or allow list.
 - Rspamd's sender block and allow list check reaches the API again; it previously failed to resolve the API's host name and was skipped.
 - IMAP imports stop when the source server sends more than 16 MiB outside message bodies for one batch, and stored import errors are capped at 500 characters.
