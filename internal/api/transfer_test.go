@@ -107,6 +107,9 @@ func TestLinkPasswordAndExpiry(t *testing.T) {
 	if _, _, msg = resolveLinkAccess(fileLinkRef{Password: ptr("short"), ClearPassword: true}, nil, nil, now); msg == "" {
 		t.Fatal("password and clear together was accepted")
 	}
+	if hash, _, msg = resolveLinkAccess(fileLinkRef{Password: ptr("correct horse battery"), passwordHash: "prehashed"}, nil, nil, now); msg != "" || hash == nil || *hash != "prehashed" {
+		t.Fatalf("new password did not use the hash made before the transaction: %v %q", hash, msg)
+	}
 }
 
 func TestFileToken(t *testing.T) {

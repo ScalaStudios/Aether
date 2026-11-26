@@ -35,6 +35,7 @@ type fileLinkRef struct {
 	ClearPassword bool       `json:"clearPassword"`
 	ExpiresAt     *time.Time `json:"expiresAt"`
 	ClearExpiry   bool       `json:"clearExpiry"`
+	passwordHash  string
 }
 
 type fileLinkSummary struct {
@@ -122,6 +123,11 @@ func (s *Server) stageFileLinks(w http.ResponseWriter, r *http.Request, p *princ
 	if len(refs) > maxFileLinks {
 		writeError(w, http.StatusUnprocessableEntity, "too_many_links", fmt.Sprintf("Send %d download links or fewer per message.", maxFileLinks))
 		return nil, false
+	}
+	for i, ref := range refs {
+		if !ref.ClearPassword && ref.Password != nil && *ref.Password != "" && validateLinkPassword(*ref.Password) == "" {
+			refs[i].passwordHash = auth.HashPassword(*ref.Password)
+		}
 	}
 	tx, err := s.db.Begin(r.Context())
 	if err != nil {
@@ -301,8 +307,7 @@ func resolveLinkAccess(ref fileLinkRef, currentHash *string, currentExpiry *time
 		if msg := validateLinkPassword(*ref.Password); msg != "" {
 			return nil, nil, msg
 		}
-		hashed := auth.HashPassword(*ref.Password)
-		hash = &hashed
+		hash = &ref.passwordHash
 	}
 	expires := currentExpiry
 	switch {

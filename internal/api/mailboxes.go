@@ -242,6 +242,11 @@ func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName stri
 	address := in.LocalPart + "@" + domainName
 	var m mailbox
 	var code string
+	var passwordHash *string
+	if in.Kind == "user" && in.Password != "" {
+		h := auth.HashPassword(in.Password)
+		passwordHash = &h
+	}
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if err := lockAddress(ctx, tx, address); err != nil {
 			return err
@@ -273,12 +278,7 @@ func (s *Server) createMailboxRecord(ctx context.Context, orgID, domainName stri
 				err = nil
 			}
 		} else if errors.Is(err, pgx.ErrNoRows) {
-			var hash *string
-			if in.Password != "" {
-				h := auth.HashPassword(in.Password)
-				hash = &h
-			}
-			err = tx.QueryRow(ctx, `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id`, address, in.DisplayName, hash).Scan(&userID)
+			err = tx.QueryRow(ctx, `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id`, address, in.DisplayName, passwordHash).Scan(&userID)
 		} else if err == nil && in.Password != "" {
 			code = "account_exists"
 			return nil
