@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/lib/api"
 import { dateValue, fromValues, timeValue, toRFC3339 } from "@/lib/calendar"
 import type { CalendarInfo, Task, TaskInput, TaskStatus } from "@/lib/types"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 const statuses: { value: TaskStatus; label: string }[] = [
   { value: "needs-action", label: "To do" },

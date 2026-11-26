@@ -1,6 +1,6 @@
 "use client"
 
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useState, useSyncExternalStore } from "react"
 
 import { apiUrl } from "@/lib/api"

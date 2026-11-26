@@ -3,7 +3,7 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query"
 import { AlarmClock, ArrowDownUp, Bookmark, Flag, FolderOpen, FunnelX, Info, Keyboard, Paperclip, PenSquare, SearchX, Tag } from "lucide-react"
 import { useEffect, useRef } from "react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { IconButton } from "@/components/icon-button"
 import { SearchInput } from "@/components/search-input"

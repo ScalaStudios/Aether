@@ -1,7 +1,7 @@
 "use client"
 
 import { FolderOpen } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { IconButton } from "@/components/icon-button"
 import { StatusBadge } from "@/components/status-badge"

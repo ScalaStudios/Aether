@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Bookmark, Ellipsis, Pencil, Tag, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { LabelDialog, LabelDot, SearchDialog } from "@/components/mail/label-controls"

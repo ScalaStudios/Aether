@@ -8,7 +8,7 @@ import { Fragment, useEffect, useState } from "react"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
-import { cn } from "cn"
+import { cn, setQueryParams } from "@/lib/utils"
 
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"
@@ -28,7 +28,6 @@ import { auditActionLabel, auditActor, auditCategories, auditDetail, auditTarget
 import { formatDateTime, plural } from "@/lib/format"
 import { organizationsQuery } from "@/lib/queries"
 import type { AuditEvent, AuditRetention, MailboxAuditSettings } from "@/lib/types"
-import { setQueryParams } from "@/lib/utils"
 
 const PAGE = 50
 const MAX_RETENTION_DAYS = 3650

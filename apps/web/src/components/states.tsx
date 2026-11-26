@@ -2,7 +2,7 @@
 
 import type { UseQueryResult } from "@tanstack/react-query"
 import { TriangleAlert, type LucideIcon } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"

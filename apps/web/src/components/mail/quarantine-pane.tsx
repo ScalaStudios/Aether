@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, ChevronRight, EyeOff, Paperclip, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { IconButton } from "@/components/icon-button"

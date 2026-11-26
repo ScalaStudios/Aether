@@ -5,7 +5,7 @@ import { ArchiveRestore, CalendarClock, Ellipsis, FolderInput, FolderPen, Folder
 import Link from "next/link"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { FolderDialog, folderLeaf, type FolderAction } from "@/components/mail/folder-dialog"
 import { RecoverDialog } from "@/components/mail/recover-dialog"

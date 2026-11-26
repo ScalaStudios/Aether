@@ -3,7 +3,7 @@
 import type { UseQueryResult } from "@tanstack/react-query"
 import { Plus, SearchX, X } from "lucide-react"
 import { useState } from "react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { IconButton } from "@/components/icon-button"
 import { SearchInput } from "@/components/search-input"

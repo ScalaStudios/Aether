@@ -4,7 +4,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import { BellOff, ChevronRight } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { AlertRules } from "@/components/admin/alert-rules"
 import { SectionHeader } from "@/components/page-header"

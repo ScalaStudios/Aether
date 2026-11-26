@@ -1,5 +1,5 @@
 import { CircleAlert, CircleCheck, CircleMinus, CircleX, Info, type LucideIcon } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral"
 

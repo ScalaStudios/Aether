@@ -3,7 +3,7 @@
 import { CircleAlert, X } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { IconButton } from "@/components/icon-button"
 import { Button } from "@/components/ui/button"

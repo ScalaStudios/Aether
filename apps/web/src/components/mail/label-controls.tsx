@@ -7,7 +7,7 @@ import { useState } from "react"
 import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { Field } from "@/components/field"
 import { FormDialog } from "@/components/form-dialog"

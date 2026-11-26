@@ -7,7 +7,7 @@ import { useState } from "react"
 import { type Control, Controller, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { RoomField, type RoomRange } from "@/components/calendar/room-finder"
 import { ConfirmDialog } from "@/components/confirm-dialog"

@@ -5,7 +5,7 @@ import { CalendarDays, CircleAlert, ImageUp, Mail } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useRef, useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { Field } from "@/components/field"
 import { SectionHeader } from "@/components/page-header"

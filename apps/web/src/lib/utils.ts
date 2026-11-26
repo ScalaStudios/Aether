@@ -1,4 +1,8 @@
-export { cn } from "cn"
+import { createCn } from "cn/config"
+
+export const cn = createCn({
+  extend: { classGroups: { "font-size": [{ text: ["h1", "h2", "h3", "label"] }] } },
+})
 
 export function setQueryParams(values: Record<string, string | null>, keep = true) {
   const params = new URLSearchParams(keep ? window.location.search : "")

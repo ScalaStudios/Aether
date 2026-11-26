@@ -17,7 +17,7 @@ import {
 } from "lucide-react"
 import { useEffect, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"

@@ -6,7 +6,7 @@ import { BookUser, CalendarDays, Gavel, LogOut, Mail, Settings, ShieldCheck, typ
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
 import { Avatar } from "@/components/avatar"

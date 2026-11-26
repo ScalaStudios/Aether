@@ -5,7 +5,7 @@ import { Inbox } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { useLiveConnected } from "@/components/live-events"
 import { Composer } from "@/components/mail/composer"

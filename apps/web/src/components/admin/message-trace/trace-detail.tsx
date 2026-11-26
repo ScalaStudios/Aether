@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { Ban, CircleCheck, Clock, Forward, Inbox, Mail, OctagonX, PauseCircle, PlayCircle, Send, ShieldAlert, ShieldCheck, Trash2, Undo2, type LucideIcon } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { arrival, formatTLS, traceStatuses } from "@/components/admin/message-trace/labels"
 import { CopyButton } from "@/components/copy-button"

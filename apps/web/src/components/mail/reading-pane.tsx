@@ -2,7 +2,7 @@
 
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { AlarmClock, AlarmClockOff, ArrowLeft, AtSign, Ban, ChevronDown, Copy, Download, Flag, FolderInput, Forward, Globe, Link2, Mail, MailOpen, OctagonAlert, Reply, ReplyAll, ShieldCheck, Trash2 } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useState } from "react"
 import { toast } from "sonner"
 

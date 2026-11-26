@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { ArrowDownLeft, ArrowUpRight, ChartColumn, ChevronDown, Clock, Download, HardDrive, Inbox, RefreshCw } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { LastSignIn, QuotaUsage } from "@/components/admin/usage-cells"
 import { SectionHeader } from "@/components/page-header"

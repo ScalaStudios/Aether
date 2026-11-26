@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { Globe, Info, Plus, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { Field } from "@/components/field"
 import { IconButton } from "@/components/icon-button"

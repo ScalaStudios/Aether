@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { CalendarCheck, CalendarClock, CalendarCog, ChevronLeft, ChevronRight, Download, Ellipsis, Plus, Upload } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { BookingRequestsDialog } from "@/components/calendar/booking-requests"
 import { BookingDialog } from "@/components/calendar/booking-dialog"

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient, type InfiniteData, type UseInfin
 import { FolderOpen, ShieldCheck, Trash2, UserCheck } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { IconButton } from "@/components/icon-button"
 import { EmptyState, ErrorState, QueryView, RowsSkeleton } from "@/components/states"

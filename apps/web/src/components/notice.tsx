@@ -1,5 +1,5 @@
 import { CircleAlert, CircleX } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 const tones = {
   warning: { icon: CircleAlert, role: "status", box: "border-warning/40 bg-warning/12", text: "text-warning" },

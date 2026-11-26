@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { SectionHeader } from "@/components/page-header"
 import { QueryView, RowsSkeleton } from "@/components/states"

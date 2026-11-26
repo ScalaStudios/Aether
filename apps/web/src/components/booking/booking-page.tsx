@@ -14,7 +14,7 @@ import { Input, Textarea } from "@/components/ui/input"
 import { ApiError, api } from "@/lib/api"
 import { addDays, dateValue, startOfDay, toRFC3339, useNow } from "@/lib/calendar"
 import type { BookingConfirmation, BookingSlots, PublicBookingPage, PublicBookingType } from "@/lib/types"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 const guestSchema = z.object({
   name: z.string().trim().min(1, "Enter your name.").max(200, "Use 200 characters or fewer."),

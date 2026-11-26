@@ -1,7 +1,7 @@
 "use client"
 
 import { ChevronDown, Info, ShieldAlert } from "lucide-react"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 import { useId, useState } from "react"
 
 import { StatusBadge } from "@/components/status-badge"

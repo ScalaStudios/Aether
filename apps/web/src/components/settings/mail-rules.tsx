@@ -7,7 +7,7 @@ import { useState } from "react"
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
-import { cn } from "cn"
+import { cn } from "@/lib/utils"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Field } from "@/components/field"
