@@ -124,8 +124,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if hash == "" {
+		if err := auth.BurnPasswordCheck(r.Context(), in.Password); err != nil {
+			passwordBusy(w)
+			return
+		}
 		authAttempts.WithLabelValues("password", "failure").Inc()
-		auth.BurnPasswordCheck(in.Password)
 		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
 		orgID := s.mailboxOrgForAccount(r.Context(), userID, email)
 		targetID := email
@@ -139,7 +142,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.")
 		return
 	}
-	ok, err := auth.VerifyPassword(hash, in.Password)
+	ok, err := auth.VerifyPassword(r.Context(), hash, in.Password)
+	if errors.Is(err, auth.ErrPasswordBusy) {
+		passwordBusy(w)
+		return
+	}
 	if err != nil || !ok {
 		authAttempts.WithLabelValues("password", "failure").Inc()
 		s.recordAuthFailure(r.Context(), s.clientIP(r), email, s.passwordTag(in.Password), "web")
@@ -345,4 +352,8 @@ func nonNil[T any](v []T) []T {
 		return []T{}
 	}
 	return v
+}
+
+func passwordBusy(w http.ResponseWriter) {
+	writeError(w, http.StatusServiceUnavailable, "busy", "Too many passwords are being checked right now. Try again in a moment.")
 }

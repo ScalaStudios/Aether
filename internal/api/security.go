@@ -320,7 +320,12 @@ func (s *Server) confirmPassword(w http.ResponseWriter, r *http.Request, p *prin
 		writeError(w, http.StatusConflict, "no_password", noPasswordMessage)
 		return false
 	}
-	if ok, err := auth.VerifyPassword(hash, password); err != nil || !ok {
+	ok, err := auth.VerifyPassword(r.Context(), hash, password)
+	if errors.Is(err, auth.ErrPasswordBusy) {
+		passwordBusy(w)
+		return false
+	}
+	if err != nil || !ok {
 		s.audit(r.Context(), r, p, nil, "auth.password.confirm_failed", "user", p.User.ID, nil)
 		writeError(w, http.StatusUnprocessableEntity, "wrong_password", "The current password is incorrect.")
 		return false
@@ -345,8 +350,9 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, p *princ
 		return
 	}
 	var ended int64
+	hash := auth.HashPassword(in.NewPassword)
 	err := pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, p.User.ID, auth.HashPassword(in.NewPassword)); err != nil {
+		if _, err := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, p.User.ID, hash); err != nil {
 			return err
 		}
 		tag, err := tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1 AND id_hash <> $2`, p.User.ID, p.sessionHash)
@@ -682,8 +688,9 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request, p *pr
 		return
 	}
 	var ended int64
+	hash := auth.HashPassword(in.Password)
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, auth.HashPassword(in.Password)); err != nil {
+		if _, err := tx.Exec(r.Context(), `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, hash); err != nil {
 			return err
 		}
 		tag, err := tx.Exec(r.Context(), `DELETE FROM sessions WHERE user_id = $1`, id)

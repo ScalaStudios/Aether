@@ -708,7 +708,11 @@ func (s *Server) downloadFileLink(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many password attempts. Wait a minute and try again.")
 			return
 		}
-		match, err := auth.VerifyPassword(*row.password, password)
+		match, err := auth.VerifyPassword(r.Context(), *row.password, password)
+		if errors.Is(err, auth.ErrPasswordBusy) {
+			passwordBusy(w)
+			return
+		}
 		if err != nil || !match {
 			writeError(w, http.StatusUnauthorized, "invalid_password", "That password is not correct.")
 			return
