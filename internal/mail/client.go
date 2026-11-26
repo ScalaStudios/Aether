@@ -282,6 +282,19 @@ func (c *Client) with(address string, fn func(*imapclient.Client) error) error {
 	return fn(ic)
 }
 
+func (c *Client) withReconnect(address string, fn func(*imapclient.Client) error) error {
+	lost := false
+	err := c.with(address, func(ic *imapclient.Client) error {
+		err := fn(ic)
+		lost = err != nil && ic.State() == imap.ConnStateLogout
+		return err
+	})
+	if lost {
+		return c.with(address, fn)
+	}
+	return err
+}
+
 type Folder struct {
 	Name       string `json:"name"`
 	SpecialUse string `json:"specialUse"`
@@ -313,7 +326,7 @@ func specialUse(l *imap.ListData) string {
 
 func (c *Client) Folders(address string) ([]Folder, error) {
 	var out []Folder
-	err := c.with(address, func(ic *imapclient.Client) error {
+	err := c.withReconnect(address, func(ic *imapclient.Client) error {
 		list, err := ic.List("", "*", &imap.ListOptions{ReturnStatus: &imap.StatusOptions{NumMessages: true, NumUnseen: true, Size: true}, ReturnSpecialUse: true, ReturnSubscribed: true}).Collect()
 		if err != nil {
 			return err
@@ -571,7 +584,8 @@ func (c *Client) List(address, folder string, o ListOptions) (*Page, error) {
 		return nil, ErrNotFound
 	}
 	page := &Page{Messages: []Summary{}}
-	err := c.with(address, func(ic *imapclient.Client) error {
+	err := c.withReconnect(address, func(ic *imapclient.Client) error {
+		*page = Page{Messages: []Summary{}}
 		if _, err := ic.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 			return ErrNotFound
 		}

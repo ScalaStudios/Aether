@@ -228,7 +228,8 @@ func (c *Client) ListAcross(address string, folders []string, o ListOptions) (*P
 	if o.Limit < 1 {
 		o.Limit = 50
 	}
-	err := c.with(address, func(ic *imapclient.Client) error {
+	err := c.withReconnect(address, func(ic *imapclient.Client) error {
+		*page = Page{Messages: []Summary{}}
 		var hits []mailHit
 		for _, folder := range folders {
 			if SharedFolder(folder) {
