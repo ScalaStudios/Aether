@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/mail"
+	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -768,6 +770,9 @@ func applyEventSchedule(comp *ical.Component, patch map[string]any) map[string]a
 	}
 	allDay := patch["showWithoutTime"] == true
 	raw, hasStart := patch["start"].(string)
+	if hasKey(patch, "start") && raw == "" || !hasStart && comp.Props.Get(ical.PropDateTimeStart) == nil {
+		return itemError("invalidProperties", "An event needs a start date or time.", "start")
+	}
 	if !hasStart && !prevStart.IsZero() {
 		raw = prevStart.In(zone).Format("2006-01-02T15:04:05")
 		if p := comp.Props.Get(ical.PropDateTimeStart); p.ValueType() == ical.ValueDate {
@@ -807,6 +812,12 @@ func applyEventSchedule(comp *ical.Component, patch map[string]any) map[string]a
 			if err != nil || length <= 0 {
 				return itemError("invalidProperties", "duration must look like PT1H or P1D.", "duration")
 			}
+			if allDay && length%(24*time.Hour) != 0 {
+				return itemError("invalidProperties", "An all-day event lasts whole days, like P1D.", "duration")
+			}
+		}
+		if allDay && length > 0 {
+			length = (length + 24*time.Hour - 1) / (24 * time.Hour) * (24 * time.Hour)
 		}
 		comp.Props.Del(ical.PropDuration)
 		if allDay {
@@ -822,24 +833,117 @@ func applyEventSchedule(comp *ical.Component, patch map[string]any) map[string]a
 			}
 		}
 	}
-	if rules, ok := patch["recurrenceRules"].([]any); ok && len(rules) > 0 {
-		rule, _ := rules[0].(map[string]any)
-		freq := strings.ToUpper(str(rule["frequency"]))
-		switch freq {
-		case "YEARLY", "MONTHLY", "WEEKLY", "DAILY":
+	if hasKey(patch, "recurrenceRules") {
+		rules, ok := patch["recurrenceRules"].([]any)
+		switch {
+		case !ok && patch["recurrenceRules"] != nil, len(rules) > 1:
+			return itemError("invalidProperties", "An event takes at most one recurrence rule.", "recurrenceRules")
+		case len(rules) == 0:
+			comp.Props.Del(ical.PropRecurrenceRule)
 		default:
-			return itemError("invalidProperties", "frequency must be yearly, monthly, weekly, or daily.", "recurrenceRules")
+			dates := comp.Props.Get(ical.PropDateTimeStart).ValueType() == ical.ValueDate
+			rr, uerr := recurrenceRule(rules[0], zone, dates)
+			if uerr != nil {
+				return uerr
+			}
+			if prev := comp.Props.Get(ical.PropRecurrenceRule); prev == nil || !reflect.DeepEqual(rruleObject(prev.Value), rruleObject(rr)) {
+				comp.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: rr, Params: ical.Params{}})
+			}
 		}
-		rr := "FREQ=" + freq
-		if n, ok := numberInt(rule["interval"]); ok && n > 1 {
-			rr += ";INTERVAL=" + strconv.Itoa(n)
-		}
-		if n, ok := numberInt(rule["count"]); ok && n > 0 {
-			rr += ";COUNT=" + strconv.Itoa(n)
-		}
-		comp.Props.Set(&ical.Prop{Name: ical.PropRecurrenceRule, Value: rr, Params: ical.Params{}})
 	}
 	return nil
+}
+
+var nDayPattern = regexp.MustCompile(`^(?i)([+-]?[1-9][0-9]?)?(mo|tu|we|th|fr|sa|su)$`)
+
+func recurrenceRule(raw any, zone *time.Location, dates bool) (string, map[string]any) {
+	invalid := func(desc string) (string, map[string]any) {
+		return "", itemError("invalidProperties", desc, "recurrenceRules")
+	}
+	rule, ok := raw.(map[string]any)
+	if !ok {
+		return invalid("A recurrence rule must be an object.")
+	}
+	for k := range rule {
+		switch k {
+		case "@type", "frequency", "interval", "count", "until", "byDay":
+		default:
+			return invalid("Recurrence rules support frequency, interval, count, until and byDay.")
+		}
+	}
+	freq := strings.ToUpper(str(rule["frequency"]))
+	switch freq {
+	case "YEARLY", "MONTHLY", "WEEKLY", "DAILY":
+	default:
+		return invalid("frequency must be yearly, monthly, weekly, or daily.")
+	}
+	rr := "FREQ=" + freq
+	if v, ok := rule["interval"]; ok {
+		n, ok := numberInt(v)
+		if !ok || n < 1 {
+			return invalid("interval must be a whole number of at least 1.")
+		}
+		if n > 1 {
+			rr += ";INTERVAL=" + strconv.Itoa(n)
+		}
+	}
+	if v, ok := rule["count"]; ok {
+		n, ok := numberInt(v)
+		if !ok || n < 1 || hasKey(rule, "until") {
+			return invalid("count must be at least 1 and cannot be combined with until.")
+		}
+		rr += ";COUNT=" + strconv.Itoa(n)
+	}
+	if v, ok := rule["until"]; ok {
+		raw, _ := v.(string)
+		var until time.Time
+		var err error = errUnsupportedFilter
+		for _, layout := range []string{"20060102T150405Z", "2006-01-02T15:04:05Z"} {
+			if until, err = time.Parse(layout, raw); err == nil {
+				break
+			}
+		}
+		if err != nil {
+			for _, layout := range []string{"20060102T150405", "2006-01-02T15:04:05", "20060102", "2006-01-02"} {
+				if until, err = time.ParseInLocation(layout, raw, zone); err == nil {
+					if len(layout) <= 10 && !dates {
+						until = until.Add(24*time.Hour - time.Second)
+					}
+					break
+				}
+			}
+		}
+		if err != nil {
+			return invalid("until must be a date or date and time.")
+		}
+		if dates {
+			rr += ";UNTIL=" + until.In(zone).Format("20060102")
+		} else {
+			rr += ";UNTIL=" + until.UTC().Format("20060102T150405Z")
+		}
+	}
+	if v, ok := rule["byDay"]; ok {
+		list, ok := v.([]any)
+		if !ok || len(list) == 0 {
+			return invalid("byDay must list days.")
+		}
+		days := make([]string, len(list))
+		for i, item := range list {
+			day, _ := item.(string)
+			if nday, ok := item.(map[string]any); ok {
+				day = str(nday["day"])
+				if n, ok := numberInt(nday["nthOfPeriod"]); ok {
+					day = strconv.Itoa(n) + day
+				}
+			}
+			if !nDayPattern.MatchString(day) {
+				return invalid("byDay days must look like mo, -1fr or 2su.")
+			}
+			days[i] = strings.ToUpper(strings.TrimPrefix(day, "+"))
+		}
+		rr += ";BYDAY=" + strings.Join(days, ",")
+	}
+	return rr, nil
 }
 
 func (s *Server) collectionAccess(ctx context.Context, userID, id string) (collectionRow, bool) {

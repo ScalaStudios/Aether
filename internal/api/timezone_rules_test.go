@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -245,5 +246,84 @@ END:VCALENDAR
 	}
 	if strings.Count(export, "BEGIN:VTIMEZONE") != 1 || !strings.Contains(export, "DTSTART:19890402T020000") || !strings.Contains(export, "DTSTART:20261101T020000") {
 		t.Errorf("export does not cover both events:\n%s", export)
+	}
+}
+
+func viaJSON(t *testing.T, v any) any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestJMAPRecurrenceRoundTripKeepsRule(t *testing.T) {
+	newEvent := func(rule string) *ical.Component {
+		cal := decodeCal(t, "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:test\nBEGIN:VEVENT\nUID:r\nDTSTAMP:20260101T000000Z\nDTSTART;TZID=Europe/Amsterdam:20261019T090000\nRRULE:"+rule+"\nEND:VEVENT\nEND:VCALENDAR\n")
+		return masterEvent(cal)
+	}
+	for _, rule := range []string{"FREQ=WEEKLY;UNTIL=20261231T000000Z;BYDAY=MO,WE", "FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU", "FREQ=DAILY;INTERVAL=2;COUNT=5"} {
+		comp := newEvent(rule)
+		if uerr := applyEventSchedule(comp, map[string]any{"title": "x", "recurrenceRules": viaJSON(t, []any{rruleObject(rule)})}); uerr != nil {
+			t.Fatalf("%s: %v", rule, uerr)
+		}
+		if got := comp.Props.Get(ical.PropRecurrenceRule).Value; got != rule {
+			t.Errorf("round trip changed %q to %q", rule, got)
+		}
+	}
+	comp := newEvent("FREQ=WEEKLY")
+	if uerr := applyEventSchedule(comp, map[string]any{"recurrenceRules": viaJSON(t, []any{map[string]any{"frequency": "weekly", "byDay": []any{"tu", map[string]any{"@type": "NDay", "day": "fr", "nthOfPeriod": -1}}, "until": "2026-12-31T09:00:00"}})}); uerr != nil {
+		t.Fatal(uerr)
+	}
+	if got := comp.Props.Get(ical.PropRecurrenceRule).Value; got != "FREQ=WEEKLY;UNTIL=20261231T080000Z;BYDAY=TU,-1FR" {
+		t.Errorf("written rule %q", got)
+	}
+	for _, bad := range []map[string]any{
+		{"frequency": "weekly", "byMonth": []any{"3"}},
+		{"frequency": "weekly", "byDay": []any{"xx"}},
+		{"frequency": "weekly", "until": "soon"},
+		{"frequency": "weekly", "count": 2, "until": "2026-12-31T09:00:00"},
+		{"frequency": "weekly", "interval": 0},
+	} {
+		if uerr := applyEventSchedule(newEvent("FREQ=WEEKLY"), map[string]any{"recurrenceRules": viaJSON(t, []any{bad})}); uerr == nil || uerr["type"] != "invalidProperties" {
+			t.Errorf("%v accepted: %v", bad, uerr)
+		}
+	}
+	if uerr := applyEventSchedule(newEvent("FREQ=WEEKLY"), map[string]any{"recurrenceRules": []any{map[string]any{"frequency": "weekly"}, map[string]any{"frequency": "daily"}}}); uerr == nil {
+		t.Error("two rules accepted")
+	}
+	cleared := newEvent("FREQ=WEEKLY")
+	if uerr := applyEventSchedule(cleared, map[string]any{"recurrenceRules": nil}); uerr != nil || cleared.Props.Get(ical.PropRecurrenceRule) != nil {
+		t.Errorf("rule not cleared: %v", uerr)
+	}
+}
+
+func TestJMAPStartAndAllDayDurationValidation(t *testing.T) {
+	fresh := func() *ical.Component { return ical.NewEvent().Component }
+	for _, patch := range []map[string]any{
+		{"start": ""},
+		{"start": nil},
+		{"title": "no start"},
+		{"start": "2026-10-19", "showWithoutTime": true, "duration": "PT12H"},
+		{"start": "2026-10-19", "showWithoutTime": true, "duration": "P1DT1H"},
+	} {
+		if uerr := applyEventSchedule(fresh(), patch); uerr == nil || uerr["type"] != "invalidProperties" {
+			t.Errorf("%v accepted: %v", patch, uerr)
+		}
+	}
+	comp := fresh()
+	if uerr := applyEventSchedule(comp, map[string]any{"start": "2026-10-19", "showWithoutTime": true, "duration": "P2D"}); uerr != nil {
+		t.Fatal(uerr)
+	}
+	if got := comp.Props.Get(ical.PropDateTimeEnd).Value; got != "20261021" {
+		t.Errorf("DTEND %q", got)
+	}
+	if uerr := applyEventSchedule(comp, map[string]any{"title": "renamed"}); uerr != nil {
+		t.Errorf("update without start rejected: %v", uerr)
 	}
 }
