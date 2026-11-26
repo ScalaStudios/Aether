@@ -126,7 +126,18 @@ func (s *Server) cancelScheduled(w http.ResponseWriter, r *http.Request, p *prin
 	var raw []byte
 	var bcc []string
 	err = tx.QueryRow(r.Context(), `DELETE FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 AND protected_reply_id IS NULL
-		RETURNING raw, bcc`, id, m.ID).Scan(&raw, &bcc)
+		AND ($3 OR sender_user_id = $4) RETURNING raw, bcc`, id, m.ID, m.Access != "read", p.User.ID).Scan(&raw, &bcc)
+	if errors.Is(err, pgx.ErrNoRows) && m.Access == "read" {
+		var other bool
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM scheduled_messages WHERE id = $1 AND mailbox_id = $2 AND protected_reply_id IS NULL)`, id, m.ID).Scan(&other); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if other {
+			writeError(w, http.StatusForbidden, "read_only", "You can only cancel messages you scheduled.")
+			return
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "not_found", "That message is no longer waiting to be sent. It may already have gone out.")
 		return
@@ -248,13 +259,9 @@ func (s *Server) cancellableMailbox(w http.ResponseWriter, r *http.Request, p *p
 	if !ok {
 		return nil, false
 	}
-	m, access, err := s.accessibleMailbox(r.Context(), id, p.User.ID)
+	m, _, err := s.accessibleMailbox(r.Context(), id, p.User.ID)
 	if err != nil {
 		notFound(w)
-		return nil, false
-	}
-	if access == "read" && !m.SendAs && !m.SendOnBehalf {
-		writeError(w, http.StatusForbidden, "read_only", "You have read-only access to this mailbox.")
 		return nil, false
 	}
 	return m, true

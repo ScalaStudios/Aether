@@ -3917,7 +3917,7 @@ paths:
     delete:
       tags: [mail]
       summary: Cancel a scheduled message, including an undo hold, and put it back in Drafts
-      description: Owners and members with full access can cancel. A read-only member can cancel when they are allowed to send from the mailbox.
+      description: Owners and members with full access can cancel any scheduled message. A read-only member can cancel only the messages they scheduled.
       parameters:
         - { $ref: "#/components/parameters/mailboxId" }
         - { name: scheduledId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3931,6 +3931,7 @@ paths:
                 properties:
                   uid: { type: integer }
                   folder: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
   /mailboxes/{mailboxId}/messages/{uid}/snooze:
     post:

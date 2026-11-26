@@ -481,6 +481,38 @@ func TestSharedMailboxScheduledSendChecksRights(t *testing.T) {
 	}
 }
 
+func TestSharedMailboxReadMemberCancelsOwnScheduled(t *testing.T) {
+	w := setupWorld(t)
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	shared := createSharedMailbox(t, w)
+	setDelegate(t, w.admin, shared.ID, map[string]any{"email": bob, "access": "full", "sendAs": true})
+	setDelegate(t, w.admin, shared.ID, map[string]any{"email": alice, "access": "read", "sendOnBehalf": true})
+	schedule := func(c *apiClient) string {
+		var item struct {
+			ID string `json:"id"`
+		}
+		c.must("POST", "/mailboxes/"+shared.ID+"/send", map[string]any{
+			"to": []map[string]string{{"address": bob}}, "subject": "later " + randomSuffix(), "text": "x",
+			"sendAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		}, &item, 202)
+		return item.ID
+	}
+	own, kept, others := schedule(w.alice), schedule(w.alice), schedule(w.bob)
+	w.alice.must("DELETE", "/mailboxes/"+shared.ID+"/scheduled/"+own, nil, nil, 200)
+	if code := w.alice.do("DELETE", "/mailboxes/"+shared.ID+"/scheduled/"+others, nil, nil); code != 403 {
+		t.Fatalf("a read member cancelled another member's scheduled message: %d, want 403", code)
+	}
+	setDelegate(t, w.admin, shared.ID, map[string]any{"email": alice, "access": "read", "sendOnBehalf": false})
+	w.alice.must("DELETE", "/mailboxes/"+shared.ID+"/scheduled/"+kept, nil, nil, 200)
+	var list []struct {
+		ID string `json:"id"`
+	}
+	w.bob.must("GET", "/mailboxes/"+shared.ID+"/scheduled", nil, &list, 200)
+	if len(list) != 1 || list[0].ID != others {
+		t.Fatalf("scheduled after cancels = %+v, want only %s", list, others)
+	}
+}
+
 func TestMailboxConversion(t *testing.T) {
 	w := setupWorld(t)
 	alice, bob := "alice@"+w.domain, "bob@"+w.domain
