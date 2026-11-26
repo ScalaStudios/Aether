@@ -4,6 +4,7 @@ package integration
 
 import (
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -264,5 +265,53 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 	if codes[429] < 2 || codes[401]+codes[429] != 12 {
 		t.Fatalf("expected the per-user limit of 10 to rate limit the last attempts, got %v", codes)
+	}
+}
+
+func TestOrganizationKeepsAnOwner(t *testing.T) {
+	w := setupWorld(t)
+	alice, bob := "alice@"+w.domain, "bob@"+w.domain
+	members := "/organizations/" + w.orgID + "/members"
+	owners := func() int {
+		var list []struct {
+			Role string `json:"role"`
+		}
+		w.admin.must("GET", members, nil, &list, 200)
+		n := 0
+		for _, m := range list {
+			if m.Role == "owner" {
+				n++
+			}
+		}
+		return n
+	}
+	w.admin.must("POST", members, map[string]string{"email": alice, "role": "owner"}, nil, 204)
+	if code, reason := w.alice.failure("POST", members, map[string]string{"email": alice, "role": "member"}); code != 409 || reason != "last_owner" {
+		t.Fatalf("sole owner demoted themselves: %d %s", code, reason)
+	}
+	w.admin.must("POST", members, map[string]string{"email": bob, "role": "owner"}, nil, 204)
+	w.alice.must("POST", members, map[string]string{"email": alice, "role": "admin"}, nil, 204)
+	w.admin.must("POST", members, map[string]string{"email": alice, "role": "owner"}, nil, 204)
+
+	ids := map[string]string{alice: memberID(t, w, alice), bob: memberID(t, w, bob)}
+	for i := range 10 {
+		var wg sync.WaitGroup
+		for email, id := range ids {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if i%2 == 0 {
+					w.admin.do("POST", members, map[string]string{"email": email, "role": "member"}, nil)
+				} else {
+					w.admin.do("DELETE", members+"/"+id, nil, nil)
+				}
+			}()
+		}
+		wg.Wait()
+		if n := owners(); n != 1 {
+			t.Fatalf("round %d left %d owners", i, n)
+		}
+		w.admin.must("POST", members, map[string]string{"email": alice, "role": "owner"}, nil, 204)
+		w.admin.must("POST", members, map[string]string{"email": bob, "role": "owner"}, nil, 204)
 	}
 }

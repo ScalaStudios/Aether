@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -322,19 +323,13 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 			forbidden(w)
 			return
 		}
-		if currentGrant.Role == roleOwner && in.Role != roleOwner {
-			var owners int
-			if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM organization_members WHERE org_id = $1 AND role = 'owner'`, orgID).Scan(&owners); err != nil {
-				s.internalError(w, r, err)
-				return
-			}
-			if owners == 1 {
-				writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
-				return
-			}
-		}
 	}
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if in.Role != roleOwner {
+			if err := refuseLastOwner(r.Context(), tx, orgID, userID); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(r.Context(), `
 			INSERT INTO organization_members (org_id, user_id, role, custom_role_id, compliance) VALUES ($1, $2, $3, $4, coalesce($5, false))
 			ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role, custom_role_id = EXCLUDED.custom_role_id, compliance = coalesce($5, organization_members.compliance)`,
@@ -351,6 +346,10 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 		}
 		return nil
 	})
+	if errors.Is(err, errLastOwner) {
+		writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -370,6 +369,23 @@ func (s *Server) setMember(w http.ResponseWriter, r *http.Request, p *principal)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+var errLastOwner = errors.New("last owner")
+
+func refuseLastOwner(ctx context.Context, tx pgx.Tx, orgID, userID string) error {
+	rows, err := tx.Query(ctx, `SELECT user_id FROM organization_members WHERE org_id = $1 AND role = 'owner' ORDER BY user_id FOR UPDATE`, orgID)
+	if err != nil {
+		return err
+	}
+	owners, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	if len(owners) == 1 && owners[0] == userID {
+		return errLastOwner
+	}
+	return nil
+}
+
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *principal) {
 	orgID, ok := s.orgPerm(w, r, p, permMembersWrite)
 	if !ok {
@@ -380,8 +396,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		return
 	}
 	var role, email string
-	var owners int
-	err := s.db.QueryRow(r.Context(), `SELECT om.role, (SELECT count(*) FROM organization_members WHERE org_id = $1 AND role = 'owner'), u.email FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.org_id = $1 AND om.user_id = $2`, orgID, userID).Scan(&role, &owners, &email)
+	err := s.db.QueryRow(r.Context(), `SELECT om.role, u.email FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.org_id = $1 AND om.user_id = $2`, orgID, userID).Scan(&role, &email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return
@@ -399,13 +414,12 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		forbidden(w)
 		return
 	}
-	if role == roleOwner && owners == 1 {
-		writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
-		return
-	}
 	type removed struct{ ID, Address string }
 	var mailboxes []removed
 	err = pgx.BeginFunc(r.Context(), s.db, func(tx pgx.Tx) error {
+		if err := refuseLastOwner(r.Context(), tx, orgID, userID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(r.Context(), `DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2`, orgID, userID); err != nil {
 			return err
 		}
@@ -429,6 +443,10 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request, p *princip
 		_, err = tx.Exec(r.Context(), `DELETE FROM alias_moderators WHERE user_id = $2 AND alias_id IN (SELECT id FROM aliases WHERE org_id = $1)`, orgID, userID)
 		return err
 	})
+	if errors.Is(err, errLastOwner) {
+		writeError(w, http.StatusConflict, "last_owner", "An organization needs at least one owner. Make someone else an owner first.")
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
