@@ -30,7 +30,7 @@ func (s *Server) setUserStatus(ctx context.Context, userID, status, by string) (
 }
 
 func (s *Server) applyUserStatus(ctx context.Context, tx pgx.Tx, userID, status, by string) (bool, []string, error) {
-	tag, err := tx.Exec(ctx, `UPDATE users SET status = $2, suspended_by = CASE WHEN $2 = 'active' THEN '' WHEN status = 'active' OR $3 = 'admin' THEN $3 ELSE suspended_by END, updated_at = now() WHERE id = $1 AND status <> $2 AND suspended_by <> 'mailbox-conversion'`, userID, status, by)
+	tag, err := tx.Exec(ctx, `UPDATE users SET status = $2, suspended_by = CASE WHEN $2 = 'active' THEN '' WHEN status = 'active' OR $3 = 'admin' THEN $3 ELSE suspended_by END, updated_at = now() WHERE id = $1 AND (status <> $2 OR ($3 = 'admin' AND status <> 'active' AND suspended_by <> 'admin')) AND suspended_by <> 'mailbox-conversion'`, userID, status, by)
 	if err != nil || tag.RowsAffected() == 0 {
 		return false, nil, err
 	}
