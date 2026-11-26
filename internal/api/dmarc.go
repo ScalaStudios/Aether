@@ -25,7 +25,9 @@ const (
 	maxReportMessage     = 20 << 20
 	maxReportXML         = 50 << 20
 	maxReportRecords     = 10000
-	maxRecordAuthResults = 100
+	maxRecordAuthResults = 20
+	maxReportXMLRun      = 64 << 10
+	maxReportXMLDepth    = 64
 	maxReportParts       = 10
 	maxReportTime        = 253402300799
 )
@@ -96,6 +98,44 @@ func (l *dmarcAuthList) UnmarshalXML(d *xml.Decoder, start xml.StartElement) err
 	return nil
 }
 
+type xmlShapeReader struct {
+	r     io.Reader
+	run   int
+	depth int
+	open  bool
+	prev  byte
+}
+
+func (x *xmlShapeReader) Read(p []byte) (int, error) {
+	n, err := x.r.Read(p)
+	for _, c := range p[:n] {
+		x.run++
+		switch {
+		case x.open:
+			x.open = false
+			if c == '/' {
+				x.depth--
+			} else if c != '!' && c != '?' {
+				x.depth++
+			}
+		case c == '<':
+			x.open = true
+		case c == '>':
+			x.run = 0
+			if x.prev == '/' {
+				x.depth--
+			}
+		}
+		x.prev = c
+		if x.run > maxReportXMLRun || x.depth > maxReportXMLDepth {
+			return 0, errors.New("report XML has an oversized tag or text, or is nested too deeply")
+		}
+	}
+	return n, err
+}
+
+var reportSlots = make(chan struct{}, 2)
+
 func parseDMARCMessage(r io.Reader, store func(*dmarcFeedback) error) error {
 	mr, err := mail.CreateReader(r)
 	if err != nil {
@@ -162,7 +202,7 @@ func decodeDMARCReport(body []byte) (*dmarcFeedback, error) {
 		}
 		xmlData = bytes.NewReader(trimmed)
 	}
-	dec := xml.NewDecoder(io.LimitReader(xmlData, maxReportXML))
+	dec := xml.NewDecoder(&xmlShapeReader{r: io.LimitReader(xmlData, maxReportXML)})
 	var fb dmarcFeedback
 	root := false
 	for len(fb.Records) < maxReportRecords {
@@ -313,6 +353,8 @@ func reportRecipientDomain(rcpt string) (string, bool) {
 func (r *reportSession) Data(body io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	reportSlots <- struct{}{}
+	defer func() { <-reportSlots }()
 	var domainIDs []string
 	for _, rcpt := range r.rcpts {
 		if id, ok := reportRecipientDomain(rcpt); ok {

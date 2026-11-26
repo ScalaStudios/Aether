@@ -27,6 +27,9 @@ func TestDecodeDMARCReportMemoryBoundedByRecordLimit(t *testing.T) {
 	cases := map[string][]byte{
 		"records":      gzipDMARC(t, head, "<record/>", "</feedback>", 6_000_000),
 		"auth results": gzipDMARC(t, head+"<record><auth_results>", "<dkim/>", "</auth_results></record></feedback>", 6_000_000),
+		"attributes":   gzipDMARC(t, "<feedback", ` a=""`, "></feedback>", 6_000_000),
+		"nesting":      gzipDMARC(t, head, "<x>", "", 6_000_000),
+		"text":         gzipDMARC(t, head+"<record><identifiers><header_from>", "aaaa", "</header_from></identifiers></record></feedback>", 10_000_000),
 	}
 	for name, body := range cases {
 		var before, after runtime.MemStats
@@ -37,8 +40,8 @@ func TestDecodeDMARCReportMemoryBoundedByRecordLimit(t *testing.T) {
 		if name == "records" && (err != nil || len(fb.Records) != maxReportRecords) {
 			t.Errorf("records: %v", err)
 		}
-		if name == "auth results" && err == nil {
-			t.Errorf("auth results: decoded %d dkim results", len(fb.Records[0].Auth.DKIM))
+		if name != "records" && err == nil {
+			t.Errorf("%s: decoded %d records", name, len(fb.Records))
 		}
 		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 32<<20 {
 			t.Errorf("%s: allocated %d MiB", name, alloc>>20)
