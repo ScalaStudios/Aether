@@ -80,7 +80,7 @@ func TestWatchReportsOnlyNewMail(t *testing.T) {
 	appendMessage(t, writer, "INBOX", "new@example.com")
 	select {
 	case change := <-got:
-		if change.Kind != "new" || len(change.Messages) != 1 || change.Messages[0].Subject != "new@example.com" || change.Messages[0].Seen {
+		if change.Kind != "new" || len(change.Messages) != 1 || change.Messages[0].Subject != "new@example.com" || change.Messages[0].Seen || change.Messages[0].Received.IsZero() {
 			t.Fatalf("change = %+v", change)
 		}
 	case err := <-errCh:

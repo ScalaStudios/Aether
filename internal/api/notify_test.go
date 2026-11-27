@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+
+	mailpkg "github.com/scalastudios/aether/internal/mail"
 )
 
 func TestFoldersForUsesInboxUnlessTurnedOff(t *testing.T) {
@@ -23,6 +25,19 @@ func TestFoldersForKeepsInboxForAnOpenSession(t *testing.T) {
 	got := foldersFor(map[string]bool{"INBOX": false}, "Archive", true)
 	if strings.Join(got, ",") != "INBOX,Archive" {
 		t.Fatalf("folders = %v", got)
+	}
+}
+
+func TestFreshMailIsUnreadAndJustDelivered(t *testing.T) {
+	now := time.Now()
+	if !freshMail(mailpkg.Summary{Received: now.Add(-5 * time.Second)}, now) {
+		t.Fatal("a message delivered seconds ago was not fresh")
+	}
+	if freshMail(mailpkg.Summary{Received: now.Add(-time.Hour)}, now) {
+		t.Fatal("a message moved in an hour after delivery was fresh")
+	}
+	if freshMail(mailpkg.Summary{Received: now, Seen: true}, now) {
+		t.Fatal("a read message was fresh")
 	}
 }
 

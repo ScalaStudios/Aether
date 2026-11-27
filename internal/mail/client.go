@@ -396,6 +396,8 @@ type Summary struct {
 	ThreadUIDs     []uint32  `json:"threadUids,omitempty"`
 	Keywords       []string  `json:"keywords,omitempty"`
 	FlagColor      string    `json:"flagColor,omitempty"`
+	Received       time.Time `json:"-"`
+	MessageID      string    `json:"-"`
 }
 
 type Page struct {
@@ -467,9 +469,10 @@ func addresses(in []imap.Address) []Address {
 }
 
 func summarize(m *imapclient.FetchMessageBuffer) Summary {
-	s := Summary{UID: uint32(m.UID), Size: m.RFC822Size, Date: m.InternalDate, From: []Address{}, To: []Address{}}
+	s := Summary{UID: uint32(m.UID), Size: m.RFC822Size, Date: m.InternalDate, Received: m.InternalDate, From: []Address{}, To: []Address{}}
 	if m.Envelope != nil {
 		s.Subject = m.Envelope.Subject
+		s.MessageID = m.Envelope.MessageID
 		s.From = addresses(m.Envelope.From)
 		s.To = addresses(m.Envelope.To)
 		if !m.Envelope.Date.IsZero() {

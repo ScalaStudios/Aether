@@ -1,8 +1,8 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient, useQueries } from "@tanstack/react-query"
-import { Bell, BellOff } from "lucide-react"
-import { useState } from "react"
+import { Bell, BellOff, Volume2 } from "lucide-react"
+import { useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 
 import { SectionHeader } from "@/components/page-header"
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { api, errorMessage } from "@/lib/api"
 import { folderTree } from "@/lib/mail"
+import { mailSoundEnabled, setMailSound, subscribeMailSound, testMailSound } from "@/lib/mail-sound"
 import { foldersQuery, myMailboxesQuery } from "@/lib/queries"
 import type { Folder, FolderNotification, Mailbox, NotificationSettings } from "@/lib/types"
 
@@ -76,6 +77,7 @@ export function Notifications() {
   const folderQueries = useQueries({ queries: boxes.map((mailbox) => foldersQuery(mailbox.id)) })
   const foldersReady = boxes.length === 0 || folderQueries.every((query) => query.isSuccess)
   const [pushPending, setPushPending] = useState(false)
+  const sound = useSyncExternalStore(subscribeMailSound, mailSoundEnabled, () => true)
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(() =>
     typeof Notification === "undefined" ? "unsupported" : Notification.permission
   )
@@ -198,6 +200,23 @@ export function Notifications() {
                 ) : (
                   <p className="text-sm text-fg-tertiary">You do not have a mailbox yet, so there are no folders to watch.</p>
                 )}
+              </div>
+              <div className="flex flex-col gap-3 border-t border-border pt-4">
+                <h3 className="text-label text-fg-tertiary">Sound</h3>
+                <Toggle
+                  id="notify-sound"
+                  label="Play a sound for new mail"
+                  hint="A short chime when unread mail arrives in a folder you chose above while Aether Mail is open. This choice is saved in this browser only."
+                  checked={sound}
+                  disabled={!data.mailEnabled}
+                  onCheckedChange={setMailSound}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="secondary" onClick={testMailSound}>
+                    <Volume2 aria-hidden />
+                    Play test sound
+                  </Button>
+                </div>
               </div>
               <div className="flex flex-col gap-3 border-t border-border pt-4">
                 <h3 className="text-label text-fg-tertiary">This browser</h3>

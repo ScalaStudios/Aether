@@ -32,6 +32,14 @@ Push endpoints are fetched with the same client as webhooks, so a subscription c
 
 The service worker shows the operating-system notification only when no Aether window is focused. A visible mail tab just refreshes. A visible calendar reminder also shows a toast.
 
+## New mail sound
+
+An open tab plays a short chime, synthesized with Web Audio, when a `mail` event brings unread mail to a folder that has notifications on. Each message in the event carries `fresh`. It is true only when the message is unread, was stored in the last two minutes and has not been announced for that mailbox before, which an `arrived:` row in `notification_deliveries` records. Unread mail that is moved or put back into a folder is still reported as new, but it is not fresh and does not chime. Mail from one of the person's own addresses is skipped as well.
+
+The tab that plays holds a Web Locks lock for four seconds, and a tab that cannot take the lock stays silent, so several tabs and a burst of messages make one sound. Where the browser has no Web Locks API, each open tab plays. Nothing plays until the person has clicked or typed in the tab, because browsers block audio before that.
+
+The switch and a test button are under **Settings → Notifications**. The choice is kept in that browser's local storage, not on the account, so each device can differ.
+
 ## Calendar reminders
 
 An event can store a reminder from the event dialog, or as a `DISPLAY` `VALARM` in CalDAV. `reminderMinutes` is the number of minutes before the start, `0` is at the start, and `null` clears it. The maximum is 7 days. For an all-day event the start is the beginning of that day in UTC.

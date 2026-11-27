@@ -5,7 +5,9 @@ import { createContext, useContext, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { api } from "@/lib/api"
-import type { NotificationSettings } from "@/lib/types"
+import { chimeForNewMail, unlockMailSound } from "@/lib/mail-sound"
+import { myMailboxesQuery } from "@/lib/queries"
+import type { Mailbox, NotificationSettings } from "@/lib/types"
 
 const LiveContext = createContext(false)
 
@@ -13,7 +15,7 @@ export function useLiveConnected() {
   return useContext(LiveContext)
 }
 
-type LiveMessage = { uid: number; subject: string; from: string; seen: boolean }
+type LiveMessage = { uid: number; subject: string; from: string; address: string; seen: boolean; fresh?: boolean }
 type LiveMail = { mailboxId?: string; folder?: string; kind?: string; messages?: LiveMessage[] }
 type LiveCalendar = { title?: string; body?: string; url?: string; tag?: string }
 
@@ -26,9 +28,15 @@ function wantsMail(settings: NotificationSettings | undefined, mailboxId: string
   return folder.toLowerCase() === "inbox"
 }
 
+function sentByMe(mailboxes: Mailbox[] | undefined, address: string) {
+  const sender = address.toLowerCase()
+  return !!mailboxes?.some((m) => m.access === "owner" && (m.address === sender || m.fromAddresses?.some((from) => from.address === sender)))
+}
+
 export function LiveEvents({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient()
   useQuery({ queryKey: ["notifications"], queryFn: () => api<NotificationSettings>("/me/notifications") })
+  useQuery(myMailboxesQuery)
   const [connected, setConnected] = useState(false)
   const hasPush = useRef(false)
   const pushKnown = useRef(false)
@@ -64,6 +72,8 @@ export function LiveEvents({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const source = new EventSource("/api/v1/events")
+    window.addEventListener("pointerup", unlockMailSound)
+    window.addEventListener("keydown", unlockMailSound)
     const refreshMail = () => {
       qc.invalidateQueries({ queryKey: ["messages"] })
       qc.invalidateQueries({ queryKey: ["folders"] })
@@ -94,6 +104,8 @@ export function LiveEvents({ children }: { children: React.ReactNode }) {
       const unseen = (data.messages ?? []).filter((m) => !m.seen)
       if (data.kind !== "new" || unseen.length === 0 || !data.mailboxId || !data.folder) return
       if (!wantsMail(qc.getQueryData<NotificationSettings>(["notifications"]), data.mailboxId, data.folder)) return
+      const mine = qc.getQueryData(myMailboxesQuery.queryKey)
+      if (unseen.some((m) => m.fresh && !sentByMe(mine, m.address))) chimeForNewMail()
       const first = unseen[0]
       const title = unseen.length > 1 ? `${unseen.length} new messages` : "New mail"
       const body = [first.from, first.subject].filter(Boolean).join("\n")
@@ -124,6 +136,8 @@ export function LiveEvents({ children }: { children: React.ReactNode }) {
     })
     return () => {
       source.close()
+      window.removeEventListener("pointerup", unlockMailSound)
+      window.removeEventListener("keydown", unlockMailSound)
       setConnected(false)
     }
   }, [qc])

@@ -178,7 +178,7 @@ func readNew(ic *imapclient.Client, next *imap.UID) ([]Summary, error) {
 	for _, uid := range fresh {
 		fetch.AddNum(uid)
 	}
-	found, err := ic.Fetch(fetch, &imap.FetchOptions{UID: true, Flags: true, Envelope: true}).Collect()
+	found, err := ic.Fetch(fetch, &imap.FetchOptions{UID: true, Flags: true, Envelope: true, InternalDate: true}).Collect()
 	if err != nil {
 		return nil, err
 	}

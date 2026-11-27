@@ -23,6 +23,7 @@ const (
 	notifyLeaderKey     = "aether:notify:leader"
 	maxWatchedFolders   = 8
 	maxNotificationRows = 200
+	justDelivered       = 2 * time.Minute
 )
 
 type liveEvent struct {
@@ -44,6 +45,7 @@ type liveMessage struct {
 	From    string `json:"from"`
 	Address string `json:"address"`
 	Seen    bool   `json:"seen"`
+	Fresh   bool   `json:"fresh"`
 }
 
 type notifyEnvelope struct {
@@ -870,6 +872,7 @@ func (s *Server) onMail(ctx context.Context, spec watchSpec, change mailpkg.Fold
 				item.From = item.Address
 			}
 		}
+		item.Fresh = freshMail(m, time.Now()) && (m.MessageID == "" || s.claimDelivery(ctx, "arrived:"+spec.mailboxID+":"+m.MessageID))
 		messages = append(messages, item)
 		if !m.Seen {
 			unseen = append(unseen, item)
@@ -886,6 +889,10 @@ func (s *Server) onMail(ctx context.Context, spec watchSpec, change mailpkg.Fold
 	}
 	s.pushMail(ctx, spec, change.UIDValidity, unseen)
 	s.pushIOS(ctx, spec, change.UIDValidity, unseen)
+}
+
+func freshMail(m mailpkg.Summary, now time.Time) bool {
+	return !m.Seen && now.Sub(m.Received) < justDelivered
 }
 
 func (s *Server) publishLive(ctx context.Context, name, userID, mailboxID string, data any) {
