@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Added
+
+- A short chime plays when new mail arrives in a folder you get notifications for, once across all open tabs. Turn it off or play a test sound under Settings → Notifications; the switch is stored per browser.
+
 ### Fixed
 
+- Live mail updates work again: the mailbox watch logged out before selecting its folder, so new mail only appeared on the slow poll. Every open session also watches each Inbox, and folder counts refresh every 30 seconds while live.
 - A JMAP edit that moves a repeating event's start or time zone, changes its rule or makes it all-day drops its excluded dates and moved occurrences, as web app edits do.
 - Resource bookings, booking page meetings and accepted invitations include `VTIMEZONE` definitions for their time zones.
 - In an organization with no owner or administrator, the admin console tells platform administrators to add someone as owner instead of asking an owner who does not exist.
