@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,4 +89,18 @@ func TestWatchReportsOnlyNewMail(t *testing.T) {
 		t.Fatal("timed out waiting for the new message")
 	}
 	cancel()
+}
+
+func TestWatchSelectsTheFolderBeforeLoggingOut(t *testing.T) {
+	c, afterLogin := fakeIMAP(t, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.Watch(ctx, "team@example.test", "INBOX", func(FolderChange) {}); err != nil {
+		t.Fatal(err)
+	}
+	got := string(<-afterLogin)
+	examine, logout := strings.Index(got, "EXAMINE"), strings.Index(got, "LOGOUT")
+	if examine < 0 || logout < examine {
+		t.Fatalf("commands after login = %q, want EXAMINE before LOGOUT", got)
+	}
 }

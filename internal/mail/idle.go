@@ -41,7 +41,7 @@ func (c *Client) Watch(ctx context.Context, address, folder string, emit func(Fo
 	if err := ic.Login(c.masterLogin(address), c.masterPassword).Wait(); err != nil {
 		return err
 	}
-	defer ic.Logout().Wait()
+	defer func() { ic.Logout().Wait() }()
 	return watchLoop(ctx, ic, folder, notes, emit)
 }
 
