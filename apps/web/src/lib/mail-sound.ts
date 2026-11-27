@@ -47,9 +47,14 @@ export function mailSoundEnabled() {
 }
 
 export function subscribeMailSound(listener: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === settingKey || event.key === null) listener()
+  }
   listeners.add(listener)
+  window.addEventListener("storage", onStorage)
   return () => {
     listeners.delete(listener)
+    window.removeEventListener("storage", onStorage)
   }
 }
 

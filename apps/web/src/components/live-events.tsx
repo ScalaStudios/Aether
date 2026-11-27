@@ -105,7 +105,7 @@ export function LiveEvents({ children }: { children: React.ReactNode }) {
       if (data.kind !== "new" || unseen.length === 0 || !data.mailboxId || !data.folder) return
       if (!wantsMail(qc.getQueryData<NotificationSettings>(["notifications"]), data.mailboxId, data.folder)) return
       const mine = qc.getQueryData(myMailboxesQuery.queryKey)
-      if (unseen.some((m) => m.fresh && !sentByMe(mine, m.address))) chimeForNewMail()
+      if (mine && unseen.some((m) => m.fresh && !sentByMe(mine, m.address))) chimeForNewMail()
       const first = unseen[0]
       const title = unseen.length > 1 ? `${unseen.length} new messages` : "New mail"
       const body = [first.from, first.subject].filter(Boolean).join("\n")
