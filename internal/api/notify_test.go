@@ -9,13 +9,20 @@ import (
 )
 
 func TestFoldersForUsesInboxUnlessTurnedOff(t *testing.T) {
-	got := foldersFor(map[string]bool{"Projects": true, "INBOX": false}, "Archive")
+	got := foldersFor(map[string]bool{"Projects": true, "INBOX": false}, "Archive", false)
 	if strings.Join(got, ",") != "Projects,Archive" {
 		t.Fatalf("folders = %v", got)
 	}
-	got = foldersFor(nil, "")
+	got = foldersFor(nil, "", false)
 	if strings.Join(got, ",") != "INBOX" {
 		t.Fatalf("default folders = %v", got)
+	}
+}
+
+func TestFoldersForKeepsInboxForAnOpenSession(t *testing.T) {
+	got := foldersFor(map[string]bool{"INBOX": false}, "Archive", true)
+	if strings.Join(got, ",") != "INBOX,Archive" {
+		t.Fatalf("folders = %v", got)
 	}
 }
 

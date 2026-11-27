@@ -671,7 +671,7 @@ func (s *Server) desiredWatches(ctx context.Context) (map[string]watchSpec, erro
 	for _, id := range pushUsers {
 		seenUser[id] = struct{}{}
 		for _, box := range boxes[id] {
-			for _, folder := range foldersFor(box.explicit, "") {
+			for _, folder := range foldersFor(box.explicit, "", false) {
 				specs = append(specs, watchSpec{mailboxID: box.id, address: box.address, folder: folder})
 			}
 		}
@@ -682,7 +682,7 @@ func (s *Server) desiredWatches(ctx context.Context) (map[string]watchSpec, erro
 			if live.focusMailbox == box.id {
 				focus = live.focusFolder
 			}
-			for _, folder := range foldersFor(box.explicit, focus) {
+			for _, folder := range foldersFor(box.explicit, focus, true) {
 				specs = append(specs, watchSpec{mailboxID: box.id, address: box.address, folder: folder, focus: folder == focus})
 			}
 		}
@@ -780,12 +780,12 @@ func (s *Server) redisPresence(ctx context.Context, users map[string]liveUser) e
 	}
 }
 
-func foldersFor(explicit map[string]bool, focus string) []string {
+func foldersFor(explicit map[string]bool, focus string, live bool) []string {
 	inbox := true
 	var extra []string
 	for folder, on := range explicit {
 		if strings.EqualFold(folder, "INBOX") {
-			inbox = on
+			inbox = on || live
 			continue
 		}
 		if on && validFolderName(folder) {

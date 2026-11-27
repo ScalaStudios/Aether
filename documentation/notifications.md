@@ -6,14 +6,15 @@ Aether Mail updates while it is open, and can notify a browser about new mail an
 
 The web app opens `GET /api/v1/events`, a server-sent event stream, after sign-in. The API holds an IMAP IDLE connection for the folders that need it:
 
-- Inbox, unless that person turned Inbox notifications off
+- Inbox of every mailbox a signed-in tab can open, whatever its notification switch says, so unread counts stay current
+- Inbox for people with a push subscription and no open tab, unless they turned Inbox notifications off
 - any other folder they turned on under **Settings → Notifications**
 - the folder they currently have open, even when it is not a notification folder
 - Inbox of a mailbox that has a registered iOS Mail device
 
 One API process takes a 30-second leader lock in Valkey (`aether:notify:leader`) and owns those IDLE connections. The others subscribe to the `aether:notify` channel and forward events to their own streams. If Valkey is down, every process watches; a delivery row stops a push from being sent twice. Each mailbox is watched in at most eight folders, with Inbox and the open folder kept ahead of the rest.
 
-The stream events are `mail`, `calendar`, `ping` (every 20 seconds) and `resync` (the client should reload). A dropped stream falls back to polling every 30 seconds. While the stream is up, the mail list still refreshes every two minutes.
+The stream events are `mail`, `calendar`, `ping` (every 20 seconds) and `resync` (the client should reload). A dropped stream falls back to polling every 30 seconds. While the stream is up, the mail list still refreshes every two minutes and folder counts every 30 seconds, which is how folders without a watch catch up.
 
 Dovecot allows 100 IMAP connections per user per IP, up from 50, because each watched folder holds one. The API's own webmail requests use the same address, so a busy mailbox can still run out of connections; the cap of eight watches is there for that reason.
 

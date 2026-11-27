@@ -65,7 +65,7 @@ export function MailView() {
   const identities = senderIdentities(mailboxes.data ?? [], mbx)
   const from = identities.find((i) => i.from.address === mailbox?.address) ?? identities[0]
 
-  const folderQueries = useQueries({ queries: sections.map((m) => ({ ...foldersQuery(m.id), refetchInterval: refresh })) })
+  const folderQueries = useQueries({ queries: sections.map((m) => ({ ...foldersQuery(m.id), refetchInterval: POLL })) })
   const trees = sections.map((m, i) => ({ mailbox: m, folders: folderQueries[i] }))
   const folders = trees.find((t) => t.mailbox.id === mbx)?.folders
   const [folderName, setFolderName] = useState<string | null>(null)
